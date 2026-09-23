@@ -1,0 +1,69 @@
+{% extends 'base.html' %}
+{% block title %}Мои траты{% endblock %}
+{% block content %}
+<div class="topbar">
+  <div class="brand" style="margin:0; font-size:20px;">💸 СпендТрекер</div>
+  <div class="hi">{{ username }} · <a href="{{ url_for('logout') }}">выйти</a></div>
+</div>
+
+<div class="stats-grid">
+  <div class="stat"><div class="value">{{ '%.0f'|format(today_total) }}</div><div class="label">Сегодня</div></div>
+  <div class="stat"><div class="value">{{ '%.0f'|format(week_total) }}</div><div class="label">Неделя</div></div>
+  <div class="stat"><div class="value">{{ '%.0f'|format(month_total) }}</div><div class="label">Месяц</div></div>
+</div>
+
+<div class="card">
+  <h3>Добавить трату</h3>
+  <form method="POST">
+    <label>Сумма</label>
+    <input type="text" name="amount" placeholder="Например 350" required autofocus>
+    <label>Категория</label>
+    <select name="category">
+      {% for c in categories %}
+      <option value="{{ c }}">{{ c }}</option>
+      {% endfor %}
+    </select>
+    <label>Дата</label>
+    <input type="date" name="expense_date" value="{{ today }}">
+    <label>Заметка (необязательно)</label>
+    <input type="text" name="note" placeholder="Кофе с другом">
+    <button type="submit">Добавить</button>
+  </form>
+</div>
+
+{% if by_category %}
+<div class="card">
+  <h3>По категориям (месяц)</h3>
+  {% set max_val = by_category.values() | max %}
+  {% for cat, val in by_category.items() | sort(attribute='1', reverse=true) %}
+  <div class="cat-bar">
+    <span style="width:90px;">{{ cat }}</span>
+    <div class="track"><div class="fill" style="width: {{ (val / max_val * 100) | round }}%;"></div></div>
+    <span>{{ '%.0f'|format(val) }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Последние записи</h3>
+  {% if recent %}
+    {% for e in recent %}
+    <div class="expense-row">
+      <div class="info">
+        {{ e.expense_date.strftime('%d.%m') }} — {{ e.note if e.note else e.category }}
+        <div class="cat">{{ e.category }}</div>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div class="amt">{{ '%.0f'|format(e.amount) }} ₽</div>
+        <form method="POST" action="{{ url_for('delete_expense', expense_id=e.id) }}">
+          <button type="submit" class="btn-danger">✕</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p style="color: var(--muted); font-size: 14px;">Пока нет записей — добавь первую трату выше.</p>
+  {% endif %}
+</div>
+{% endblock %}

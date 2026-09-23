@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}Трекер расходов{% endblock %}</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --card: #171a24;
+    --card-border: #262a38;
+    --text: #eef0f5;
+    --muted: #8b91a7;
+    --accent: #7c5cff;
+    --accent2: #22d3a5;
+    --danger: #ff5c7a;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: radial-gradient(1200px 600px at 10% -10%, #1c1f2e 0%, var(--bg) 60%);
+    color: var(--text);
+    min-height: 100vh;
+  }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 24px 18px 60px; }
+  .center-wrap { max-width: 380px; margin: 10vh auto; padding: 0 20px; }
+  h1, h2, h3 { margin: 0 0 6px; }
+  .brand {
+    font-weight: 800; font-size: 26px; letter-spacing: -0.5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    text-align: center; margin-bottom: 28px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius);
+    padding: 20px;
+    margin-bottom: 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.25);
+  }
+  input, select {
+    width: 100%;
+    padding: 12px 14px;
+    border-radius: 10px;
+    border: 1px solid var(--card-border);
+    background: #10131c;
+    color: var(--text);
+    font-size: 15px;
+    margin-bottom: 12px;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+  button, .btn {
+    width: 100%;
+    padding: 13px;
+    border-radius: 10px;
+    border: none;
+    font-weight: 600;
+    font-size: 15px;
+    cursor: pointer;
+    background: linear-gradient(90deg, var(--accent), #9b7bff);
+    color: white;
+    transition: transform .15s ease, opacity .15s ease;
+  }
+  button:hover, .btn:hover { opacity: 0.92; transform: translateY(-1px); }
+  .btn-secondary { background: #262a38; }
+  .btn-danger { background: transparent; color: var(--danger); border: 1px solid rgba(255,92,122,0.4); font-weight: 500; padding: 6px 10px; width: auto; font-size: 13px; }
+  a { color: var(--accent2); text-decoration: none; }
+  .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+  .stat { background: var(--card); border: 1px solid var(--card-border); border-radius: 14px; padding: 14px 10px; text-align: center; }
+  .stat .value { font-size: 20px; font-weight: 800; color: var(--accent2); }
+  .stat .label { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+  .topbar .hi { font-size: 14px; color: var(--muted); }
+  .flash { padding: 10px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 14px; }
+  .flash.success { background: rgba(34,211,165,0.12); color: var(--accent2); border: 1px solid rgba(34,211,165,0.3); }
+  .flash.error { background: rgba(255,92,122,0.12); color: var(--danger); border: 1px solid rgba(255,92,122,0.3); }
+  .expense-row { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--card-border); }
+  .expense-row:last-child { border-bottom: none; }
+  .expense-row .info { font-size: 14px; }
+  .expense-row .cat { color: var(--muted); font-size: 12px; }
+  .expense-row .amt { font-weight: 700; }
+  .cat-bar { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; font-size: 13px; }
+  .cat-bar .track { flex: 1; height: 8px; background: #10131c; border-radius: 6px; overflow: hidden; }
+  .cat-bar .fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); }
+  .footer-link { text-align: center; margin-top: 16px; font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+  <div class="{% block container_class %}wrap{% endblock %}">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+          <div class="flash {{ category }}">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

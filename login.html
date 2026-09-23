@@ -1,0 +1,17 @@
+{% extends 'base.html' %}
+{% block title %}Вход{% endblock %}
+{% block container_class %}center-wrap{% endblock %}
+{% block content %}
+<div class="brand">💸 СпендТрекер</div>
+<div class="card">
+  <h2>Вход</h2>
+  <form method="POST">
+    <label>Логин</label>
+    <input type="text" name="username" required autofocus>
+    <label>Пароль</label>
+    <input type="password" name="password" required>
+    <button type="submit">Войти</button>
+  </form>
+</div>
+<div class="footer-link">Нет аккаунта? <a href="{{ url_for('register') }}">Зарегистрироваться</a></div>
+{% endblock %}
