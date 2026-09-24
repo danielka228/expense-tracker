@@ -3,10 +3,10 @@
 {% block title %}Профиль{% endblock %}
 {% block content %}
 <div class="card" style="text-align:center; margin-top:20px;">
-  <div class="profile-avatar">{{ username[0]|upper }}</div>
-  <h2>{{ username }}</h2>
+  <div class="profile-avatar">{{ (username[0] if username else '?')|upper }}</div>
+  <h2>{{ username or 'Пользователь' }}</h2>
   <div style="color: var(--muted); font-size: 13px;">
-    На борту с {{ created_at.strftime('%d.%m.%Y') }}
+    На борту с {{ created_at.strftime('%d.%m.%Y') if created_at else '—' }}
   </div>
 
   <div class="profile-stats">
