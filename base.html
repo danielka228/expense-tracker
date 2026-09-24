@@ -18,14 +18,19 @@
     --radius: 16px;
   }
   * { box-sizing: border-box; }
+  html, body {
+    background-color: var(--bg);
+  }
   body {
     margin: 0;
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
     background: radial-gradient(1200px 600px at 10% -10%, #1c1f2e 0%, var(--bg) 60%);
     color: var(--text);
     min-height: 100vh;
+    overflow-y: scroll;
+    overscroll-behavior: none;
   }
-  .wrap { max-width: 480px; margin: 0 auto; padding: 24px 18px 100px; }
+  .wrap { max-width: 480px; margin: 0 auto; padding: 24px 18px 120px; }
   .center-wrap { max-width: 380px; margin: 10vh auto; padding: 0 20px; }
   h1, h2, h3 { margin: 0 0 6px; }
   .brand {
@@ -92,12 +97,14 @@
   .tabbar {
     position: fixed;
     bottom: 0; left: 0; right: 0;
+    height: 64px;
     display: flex;
     justify-content: space-around;
+    align-items: center;
     background: rgba(23,26,36,0.96);
     backdrop-filter: blur(10px);
     border-top: 1px solid var(--card-border);
-    padding: 8px 0 max(8px, env(safe-area-inset-bottom));
+    padding: 0 0 env(safe-area-inset-bottom);
     z-index: 10;
   }
   .tab {
