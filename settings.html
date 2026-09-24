@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% set active_tab = 'settings' %}
+{% block title %}Настройки{% endblock %}
+{% block content %}
+<div class="brand" style="margin-bottom:16px; font-size:22px;">⚙️ Настройки</div>
+
+<div class="card">
+  <h3>Сменить пароль</h3>
+  <form method="POST">
+    <input type="hidden" name="action" value="change_password">
+    <label>Текущий пароль</label>
+    <input type="password" name="current_password" required>
+    <label>Новый пароль</label>
+    <input type="password" name="new_password" required>
+    <button type="submit">Сохранить</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Валюта</h3>
+  <form method="POST">
+    <input type="hidden" name="action" value="change_currency">
+    <label>Валюта для отображения сумм</label>
+    <select name="currency" onchange="this.form.submit()">
+      {% for code, info in currencies.items() %}
+      <option value="{{ code }}" {% if code == current_currency %}selected{% endif %}>{{ info.label }} ({{ info.symbol }})</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Аккаунт</h3>
+  <p style="color: var(--muted); font-size: 13px;">Логин: {{ username }}</p>
+  <form method="POST" action="{{ url_for('delete_account') }}" onsubmit="return confirm('Точно удалить аккаунт? Это необратимо.');">
+    <button type="submit" class="btn-danger" style="width:100%; text-align:center;">Удалить аккаунт</button>
+  </form>
+</div>
+{% endblock %}
