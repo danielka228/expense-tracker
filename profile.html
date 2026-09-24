@@ -1,0 +1,13 @@
+{% extends 'base.html' %} {% set active_tab = 'profile' %} {% block title %}ÐŸÑ€Ð¾Ñ„Ð¸Ð»ÑŒ{% endblock %} {% block content %}
+{{ username[0]|upper }}
+{{ username }}
+
+ÐÐ° Ð±Ð¾Ñ€Ñ‚Ñƒ Ñ {{ created_at.strftime('%d.%m.%Y') }}
+{{ '%.0f'|format(total_all_time) }} {{ currency_symbol }}
+Ð’ÑÐµÐ³Ð¾ Ð¿Ð¾Ñ‚Ñ€Ð°Ñ‡ÐµÐ½Ð¾
+{{ expense_count }}
+Ð—Ð°Ð¿Ð¸ÑÐµÐ¹
+{{ friend_count }}
+Ð”Ñ€ÑƒÐ·ÐµÐ¹
+Ð’Ñ‹Ð¹Ñ‚Ð¸ Ð¸Ð· Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚Ð°
+{% endblock %}
