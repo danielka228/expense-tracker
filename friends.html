@@ -1,24 +1,54 @@
-{% extends 'base.html' %} {% set active_tab = 'friends' %} {% block title %}Ð”Ñ€ÑƒÐ·ÑŒÑ{% endblock %} {% block content %}
-ðŸ† Ð ÐµÐ¹Ñ‚Ð¸Ð½Ð³ Ð´Ñ€ÑƒÐ·ÐµÐ¹
-Ð”ÐµÐ½ÑŒ ÐÐµÐ´ÐµÐ»Ñ ÐœÐµÑÑÑ†
-{% if board %} {% for row in board %}
-{{ loop.index }}
-{{ 'Ð¢Ñ‹' if row.is_me else row.username }}
-{{ '%.0f'|format(row.total) }} {{ currency_symbol }}
-{% endfor %} {% else %}
-ÐŸÐ¾ÐºÐ° Ð½Ð¸ÐºÐ¾Ð³Ð¾ Ð½ÐµÑ‚ Ð² ÑÐ¿Ð¸ÑÐºÐµ.
+{% extends 'base.html' %}
+{% set active_tab = 'friends' %}
+{% block title %}Друзья{% endblock %}
+{% block content %}
+<div class="brand" style="margin-bottom:16px; font-size:22px;">🏆 Рейтинг друзей</div>
 
-{% endif %}
+<div class="period-switch">
+  <a href="{{ url_for('friends', period='day') }}" class="{% if period == 'day' %}active{% endif %}">День</a>
+  <a href="{{ url_for('friends', period='week') }}" class="{% if period == 'week' %}active{% endif %}">Неделя</a>
+  <a href="{{ url_for('friends', period='month') }}" class="{% if period == 'month' %}active{% endif %}">Месяц</a>
+</div>
+
+<div class="card">
+  {% if board %}
+    {% for row in board %}
+    <div class="board-row {% if loop.index == 1 %}rank-1{% endif %} {% if row.is_me %}me{% endif %}">
+      <div class="rank">{{ loop.index }}</div>
+      <div class="name">{{ 'Ты' if row.is_me else row.username }}</div>
+      <div class="amount">{{ '%.0f'|format(row.total) }} {{ currency_symbol }}</div>
+    </div>
+    {% endfor %}
+  {% else %}
+    <p style="color: var(--muted); font-size: 14px;">Пока никого нет в списке.</p>
+  {% endif %}
+</div>
+
 {% if incoming %}
-Ð—Ð°ÑÐ²ÐºÐ¸ Ð² Ð´Ñ€ÑƒÐ·ÑŒÑ
-
-{% for r in incoming %}
-{{ r.username }}
-ÐŸÑ€Ð¸Ð½ÑÑ‚ÑŒ
-ÐžÑ‚ÐºÐ»Ð¾Ð½Ð¸Ñ‚ÑŒ
-{% endfor %}
+<div class="card">
+  <h3>Заявки в друзья</h3>
+  {% for r in incoming %}
+  <div class="friend-req-row">
+    <div>{{ r.username }}</div>
+    <div class="req-actions">
+      <form method="POST" action="{{ url_for('accept_friend', request_id=r.id) }}">
+        <button type="submit" class="btn-accept">Принять</button>
+      </form>
+      <form method="POST" action="{{ url_for('decline_friend', request_id=r.id) }}">
+        <button type="submit" class="btn-danger">Отклонить</button>
+      </form>
+    </div>
+  </div>
+  {% endfor %}
+</div>
 {% endif %}
-Ð”Ð¾Ð±Ð°Ð²Ð¸Ñ‚ÑŒ Ð´Ñ€ÑƒÐ³Ð°
 
-Ð›Ð¾Ð³Ð¸Ð½ Ð¿Ð¾Ð»ÑŒÐ·Ð¾Ð²Ð°Ñ‚ÐµÐ»Ñ    ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð¸Ñ‚ÑŒ Ð·Ð°ÑÐ²ÐºÑƒ
+<div class="card">
+  <h3>Добавить друга</h3>
+  <form method="POST" action="{{ url_for('add_friend') }}">
+    <label>Логин пользователя</label>
+    <input type="text" name="username" placeholder="username" required>
+    <button type="submit">Отправить заявку</button>
+  </form>
+</div>
 {% endblock %}
