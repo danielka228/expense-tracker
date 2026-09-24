@@ -45,9 +45,10 @@
 
 <div class="card">
   <h3>Добавить друга</h3>
-  <form method="POST" action="{{ url_for('add_friend') }}">
+  <form method="POST" action="{{ url_for('add_friend') }}" autocomplete="off">
     <label>Логин пользователя</label>
-    <input type="text" name="username" placeholder="username" required>
+    <input type="text" name="username" placeholder="username" required
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
     <button type="submit">Отправить заявку</button>
   </form>
 </div>
