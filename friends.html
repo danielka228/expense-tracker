@@ -1,0 +1,24 @@
+{% extends 'base.html' %} {% set active_tab = 'friends' %} {% block title %}Ð”Ñ€ÑƒÐ·ÑŒÑ{% endblock %} {% block content %}
+ðŸ† Ð ÐµÐ¹Ñ‚Ð¸Ð½Ð³ Ð´Ñ€ÑƒÐ·ÐµÐ¹
+Ð”ÐµÐ½ÑŒ ÐÐµÐ´ÐµÐ»Ñ ÐœÐµÑÑÑ†
+{% if board %} {% for row in board %}
+{{ loop.index }}
+{{ 'Ð¢Ñ‹' if row.is_me else row.username }}
+{{ '%.0f'|format(row.total) }} {{ currency_symbol }}
+{% endfor %} {% else %}
+ÐŸÐ¾ÐºÐ° Ð½Ð¸ÐºÐ¾Ð³Ð¾ Ð½ÐµÑ‚ Ð² ÑÐ¿Ð¸ÑÐºÐµ.
+
+{% endif %}
+{% if incoming %}
+Ð—Ð°ÑÐ²ÐºÐ¸ Ð² Ð´Ñ€ÑƒÐ·ÑŒÑ
+
+{% for r in incoming %}
+{{ r.username }}
+ÐŸÑ€Ð¸Ð½ÑÑ‚ÑŒ
+ÐžÑ‚ÐºÐ»Ð¾Ð½Ð¸Ñ‚ÑŒ
+{% endfor %}
+{% endif %}
+Ð”Ð¾Ð±Ð°Ð²Ð¸Ñ‚ÑŒ Ð´Ñ€ÑƒÐ³Ð°
+
+Ð›Ð¾Ð³Ð¸Ð½ Ð¿Ð¾Ð»ÑŒÐ·Ð¾Ð²Ð°Ñ‚ÐµÐ»Ñ    ÐžÑ‚Ð¿Ñ€Ð°Ð²Ð¸Ñ‚ÑŒ Ð·Ð°ÑÐ²ÐºÑƒ
+{% endblock %}
