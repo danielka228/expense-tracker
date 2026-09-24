@@ -53,7 +53,6 @@ class Expense(db.Model):
 
 
 class Friendship(db.Model):
-    # from_user sent a request to to_user. status: pending / accepted
     id = db.Column(db.Integer, primary_key=True)
     from_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
     to_user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -65,6 +64,12 @@ def login_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
         if 'user_id' not in session:
+            return redirect(url_for('login'))
+        # Проверяем, что пользователь реально существует в БД
+        user = User.query.get(session['user_id'])
+        if not user:
+            session.clear()
+            flash('Сессия устарела, войдите заново', 'error')
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return wrapper
@@ -267,10 +272,18 @@ def friends():
     board.sort(key=lambda x: x['total'], reverse=True)
 
     incoming_requests = Friendship.query.filter_by(to_user_id=user_id, status='pending').all()
-    incoming = [{'id': r.id, 'username': User.query.get(r.from_user_id).username} for r in incoming_requests]
+    incoming = []
+    for r in incoming_requests:
+        u = User.query.get(r.from_user_id)
+        if u:
+            incoming.append({'id': r.id, 'username': u.username})
 
     outgoing_requests = Friendship.query.filter_by(from_user_id=user_id, status='pending').all()
-    outgoing_usernames = {User.query.get(r.to_user_id).username for r in outgoing_requests}
+    outgoing_usernames = set()
+    for r in outgoing_requests:
+        u = User.query.get(r.to_user_id)
+        if u:
+            outgoing_usernames.add(u.username)
 
     return render_template(
         'friends.html',
@@ -341,6 +354,9 @@ def decline_friend(request_id):
 @login_required
 def profile():
     user = User.query.get(session['user_id'])
+    if not user:
+        session.clear()
+        return redirect(url_for('login'))
     total_all_time = spent_since(user.id, date(2000, 1, 1))
     expense_count = Expense.query.filter_by(user_id=user.id).count()
     friend_count = len(get_friend_ids(user.id))
@@ -359,6 +375,9 @@ def profile():
 @login_required
 def settings():
     user = User.query.get(session['user_id'])
+    if not user:
+        session.clear()
+        return redirect(url_for('login'))
 
     if request.method == 'POST':
         action = request.form.get('action')
@@ -400,6 +419,9 @@ def settings():
 @login_required
 def delete_account():
     user = User.query.get(session['user_id'])
+    if not user:
+        session.clear()
+        return redirect(url_for('login'))
     Friendship.query.filter(
         db.or_(Friendship.from_user_id == user.id, Friendship.to_user_id == user.id)
     ).delete()
@@ -416,5 +438,3 @@ with app.app_context():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
-
-
