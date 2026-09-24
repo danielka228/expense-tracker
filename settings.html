@@ -6,12 +6,12 @@
 
 <div class="card">
   <h3>Сменить пароль</h3>
-  <form method="POST">
+  <form method="POST" autocomplete="off">
     <input type="hidden" name="action" value="change_password">
     <label>Текущий пароль</label>
-    <input type="password" name="current_password" required>
+    <input type="password" name="current_password" required autocomplete="current-password">
     <label>Новый пароль</label>
-    <input type="password" name="new_password" required>
+    <input type="password" name="new_password" required autocomplete="new-password">
     <button type="submit">Сохранить</button>
   </form>
 </div>
