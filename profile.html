@@ -1,13 +1,22 @@
-{% extends 'base.html' %} {% set active_tab = 'profile' %} {% block title %}ÐŸÑ€Ð¾Ñ„Ð¸Ð»ÑŒ{% endblock %} {% block content %}
-{{ username[0]|upper }}
-{{ username }}
+{% extends 'base.html' %}
+{% set active_tab = 'profile' %}
+{% block title %}Профиль{% endblock %}
+{% block content %}
+<div class="card" style="text-align:center; margin-top:20px;">
+  <div class="profile-avatar">{{ username[0]|upper }}</div>
+  <h2>{{ username }}</h2>
+  <div style="color: var(--muted); font-size: 13px;">
+    На борту с {{ created_at.strftime('%d.%m.%Y') }}
+  </div>
 
-ÐÐ° Ð±Ð¾Ñ€Ñ‚Ñƒ Ñ {{ created_at.strftime('%d.%m.%Y') }}
-{{ '%.0f'|format(total_all_time) }} {{ currency_symbol }}
-Ð’ÑÐµÐ³Ð¾ Ð¿Ð¾Ñ‚Ñ€Ð°Ñ‡ÐµÐ½Ð¾
-{{ expense_count }}
-Ð—Ð°Ð¿Ð¸ÑÐµÐ¹
-{{ friend_count }}
-Ð”Ñ€ÑƒÐ·ÐµÐ¹
-Ð’Ñ‹Ð¹Ñ‚Ð¸ Ð¸Ð· Ð°ÐºÐºÐ°ÑƒÐ½Ñ‚Ð°
+  <div class="profile-stats">
+    <div class="stat"><div class="value">{{ '%.0f'|format(total_all_time) }} {{ currency_symbol }}</div><div class="label">Всего потрачено</div></div>
+    <div class="stat"><div class="value">{{ expense_count }}</div><div class="label">Записей</div></div>
+    <div class="stat"><div class="value">{{ friend_count }}</div><div class="label">Друзей</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <a href="{{ url_for('logout') }}" class="btn btn-secondary" style="display:block; text-align:center;">Выйти из аккаунта</a>
+</div>
 {% endblock %}
