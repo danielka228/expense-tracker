@@ -45,3 +45,4 @@ pip install -r requirements.txt
 python app.py
 ```
 Открой в браузере: http://localhost:5000
+
