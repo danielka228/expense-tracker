@@ -1,8 +1,9 @@
 import os
+import secrets
 from datetime import datetime, date, timedelta
 from io import BytesIO
 
-from flask import Flask, render_template, request, redirect, url_for, flash, session, Response, abort
+from flask import Flask, render_template, request, redirect, url_for, flash, session, Response, abort, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
@@ -44,12 +45,19 @@ class User(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     expenses = db.relationship('Expense', backref='user', lazy=True, cascade='all, delete-orphan')
     avatar = db.relationship('Avatar', backref='user', uselist=False, cascade='all, delete-orphan')
+    api_token = db.relationship('ApiToken', backref='user', uselist=False, cascade='all, delete-orphan')
 
 
 class Avatar(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key=True)
     data = db.Column(db.LargeBinary, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ApiToken(db.Model):
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key=True)
+    token = db.Column(db.String(64), unique=True, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class Expense(db.Model):
@@ -382,6 +390,7 @@ def profile():
     expense_count = Expense.query.filter_by(user_id=user.id).count()
     friend_count = len(get_friend_ids(user.id))
     av = Avatar.query.filter_by(user_id=user.id).first()
+    tok = ApiToken.query.filter_by(user_id=user.id).first()
 
     return render_template(
         'profile.html',
@@ -392,7 +401,8 @@ def profile():
         expense_count=expense_count,
         friend_count=friend_count,
         has_avatar=bool(av),
-        avatar_v=int(av.updated_at.timestamp()) if av else 0
+        avatar_v=int(av.updated_at.timestamp()) if av else 0,
+        api_token=tok.token if tok else None
     )
 
 
@@ -438,6 +448,58 @@ def delete_avatar():
     db.session.commit()
     flash('Фото удалено', 'success')
     return redirect(url_for('profile'))
+
+
+@app.route('/profile/token', methods=['POST'])
+@login_required
+def regenerate_token():
+    """Создаёт новый токен для быстрых команд (старый перестаёт работать)."""
+    new_token = secrets.token_urlsafe(24)
+    rec = ApiToken.query.filter_by(user_id=session['user_id']).first()
+    if rec:
+        rec.token = new_token
+        rec.created_at = datetime.utcnow()
+    else:
+        db.session.add(ApiToken(user_id=session['user_id'], token=new_token))
+    db.session.commit()
+    flash('Токен создан', 'success')
+    return redirect(url_for('profile'))
+
+
+@app.route('/api/add', methods=['POST'])
+def api_add():
+    """Добавление траты из «Быстрых команд». Авторизация по личному токену."""
+    data = request.get_json(silent=True) or {}
+
+    def field(name):
+        return request.form.get(name) or data.get(name) or ''
+
+    token = (request.headers.get('X-Token') or field('token')).strip()
+    rec = ApiToken.query.filter_by(token=token).first() if token else None
+    if not rec:
+        return jsonify(ok=False, error='Неверный токен'), 401
+
+    try:
+        amount = float(str(field('amount')).replace(',', '.').replace(' ', ''))
+    except ValueError:
+        return jsonify(ok=False, error='Некорректная сумма'), 400
+    if amount <= 0:
+        return jsonify(ok=False, error='Сумма должна быть больше нуля'), 400
+
+    category = str(field('category')).strip()
+    if category not in CATEGORIES:
+        category = 'Прочее'
+    note = str(field('note')).strip()[:255]
+
+    db.session.add(Expense(
+        user_id=rec.user_id,
+        amount=amount,
+        category=category,
+        note=note,
+        expense_date=date.today()
+    ))
+    db.session.commit()
+    return jsonify(ok=True, amount=amount, category=category)
 
 
 @app.errorhandler(413)
@@ -513,4 +575,5 @@ with app.app_context():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
 
