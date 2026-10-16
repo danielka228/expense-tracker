@@ -12,14 +12,25 @@ from PIL import Image, ImageOps
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
+
+def normalize_db_url(url):
+    """Приводит строку подключения к виду, который понимает наш драйвер psycopg2."""
+    url = url.strip()
+    if url.startswith('psql '):
+        url = url[5:].strip()
+    url = url.strip('\'"')
+    return re.sub(r'^postgres(ql)?(\+\w+)?://', 'postgresql+psycopg2://', url)
+
+
 app = Flask(__name__, template_folder='.')
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'change-me-in-production')
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=90)
 app.config['SESSION_COOKIE_SECURE'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
+app.config['SQLALCHEMY_DATABASE_URI'] = normalize_db_url(os.environ.get(
     'DATABASE_URL', f"sqlite:///{os.path.join(basedir, 'expenses.db')}"
-).replace('postgres://', 'postgresql://', 1)
+))
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'pool_pre_ping': True, 'pool_recycle': 280}
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # фото с телефона до 10 МБ
 
@@ -596,4 +607,3 @@ with app.app_context():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
-
