@@ -2,8 +2,54 @@
 {% set active_tab = 'profile' %}
 {% block title %}Профиль{% endblock %}
 {% block content %}
+<style>
+  .avatar-wrap { position: relative; width: 104px; height: 104px; margin: 0 auto 16px; }
+  .avatar-wrap .profile-avatar,
+  .avatar-wrap img.avatar-img {
+    width: 104px; height: 104px; border-radius: 50%; margin: 0; display: flex;
+    object-fit: cover; font-size: 40px;
+  }
+  .avatar-edit {
+    position: absolute; right: -2px; bottom: -2px;
+    width: 36px; height: 36px; border-radius: 50%;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+    border: 3px solid var(--card);
+    cursor: pointer; margin: 0; padding: 0;
+  }
+  .avatar-edit svg {
+    width: 18px; height: 18px; fill: none; stroke: currentColor;
+    stroke-width: 2; stroke-linecap: round; stroke-linejoin: round;
+  }
+  .avatar-edit:active { transform: scale(0.92); }
+  .avatar-remove {
+    background: none; color: var(--muted); font-size: 13px; font-weight: 500;
+    padding: 6px 12px; width: auto; display: inline-block; margin-top: -4px;
+  }
+</style>
+
 <div class="card" style="text-align:center; margin-top:20px;">
-  <div class="profile-avatar">{{ (username[0] if username else '?')|upper }}</div>
+  <form id="avatar-form" method="POST" action="{{ url_for('upload_avatar') }}" enctype="multipart/form-data">
+    <div class="avatar-wrap">
+      {% if has_avatar %}
+        <img class="avatar-img" src="{{ url_for('avatar', user_id=user_id) }}?v={{ avatar_v }}" alt="Фото профиля">
+      {% else %}
+        <div class="profile-avatar">{{ (username[0] if username else '?')|upper }}</div>
+      {% endif %}
+      <label class="avatar-edit" for="avatar-input" title="Сменить фото">
+        <svg viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h1.5l1.2-2h6.6l1.2 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
+      </label>
+      <input id="avatar-input" type="file" name="avatar" accept="image/*" style="display:none;"
+             onchange="document.getElementById('avatar-form').submit()">
+    </div>
+  </form>
+
+  {% if has_avatar %}
+  <form method="POST" action="{{ url_for('delete_avatar') }}">
+    <button type="submit" class="avatar-remove">Удалить фото</button>
+  </form>
+  {% endif %}
+
   <h2>{{ username or 'Пользователь' }}</h2>
   <div style="color: var(--muted); font-size: 13px;">
     На борту с {{ created_at.strftime('%d.%m.%Y') if created_at else '—' }}
