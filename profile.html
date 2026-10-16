@@ -1,5 +1,6 @@
 {% extends 'base.html' %}
 {% set active_tab = 'profile' %}
+{% set shortcut_url = 'https://www.icloud.com/shortcuts/4f0e5cce76fe4bf5a66309194c7c1da0' %}
 {% block title %}Профиль{% endblock %}
 {% block content %}
 <style>
@@ -33,8 +34,45 @@
     margin: 10px 0 12px; text-align: left;
   }
   .token-hint { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 0 0 12px; }
-  .row-btns { display: flex; gap: 10px; }
-  .row-btns button { flex: 1; }
+  .row-btns { display: flex; gap: 10px; margin-bottom: 10px; }
+  .row-btns > * { flex: 1; margin: 0; }
+  .row-btns .btn, .row-btns button { padding: 13px 8px; font-size: 15px; }
+  .btn-green { background: var(--accent2); color: #0b2415; }
+
+  /* Instruction sheet */
+  .sheet-back {
+    position: fixed; inset: 0; z-index: 50;
+    background: rgba(0,0,0,0.6);
+    -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+    display: none; align-items: flex-end; justify-content: center;
+  }
+  .sheet-back.open { display: flex; }
+  .sheet {
+    width: 100%; max-width: 480px; max-height: 88vh; overflow-y: auto;
+    background: var(--card); border-radius: 28px 28px 0 0;
+    padding: 12px 18px calc(24px + env(safe-area-inset-bottom));
+    animation: slideup .25s ease;
+  }
+  @keyframes slideup { from { transform: translateY(40px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .sheet-grip { width: 40px; height: 5px; border-radius: 3px; background: var(--card-2); margin: 0 auto 14px; }
+  .sheet h3 { font-size: 20px; margin-bottom: 4px; }
+  .sheet .sub { color: var(--muted); font-size: 14px; margin-bottom: 16px; }
+  .step { display: flex; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--sep); }
+  .step:last-of-type { border-bottom: none; }
+  .step .num {
+    flex: none; width: 32px; height: 32px; border-radius: 50%;
+    background: linear-gradient(145deg, #7aa8ff, #4a7fe0);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 15px; color: #fff;
+  }
+  .step .t { font-weight: 700; font-size: 16px; margin-bottom: 3px; }
+  .step .d { color: var(--muted); font-size: 14px; line-height: 1.45; }
+  .step .d b { color: var(--text); font-weight: 600; }
+  .tip {
+    background: var(--card-2); border-radius: 16px; padding: 12px 14px;
+    font-size: 13px; line-height: 1.45; color: var(--muted); margin-top: 6px;
+  }
+  .tip b { color: var(--text); }
 </style>
 
 <div class="card" style="text-align:center; margin-top:20px;">
@@ -72,29 +110,28 @@
 </div>
 
 <div class="card">
-  <h3 style="margin-bottom:6px;">Быстрые команды</h3>
+  <h3 style="margin-bottom:6px;">⚡ Быстрая трата с iPhone</h3>
   <p class="token-hint">
-    Токен нужен, чтобы добавлять траты из приложения «Команды» на iPhone. Никому его не показывай:
+    Добавляй траты в два касания через приложение «Команды». Токен никому не показывай:
     с ним можно добавлять траты от твоего имени.
   </p>
 
   {% if api_token %}
     <div class="token-box" id="token-text">{{ api_token }}</div>
     <div class="row-btns">
-      <button type="button" class="btn-secondary" id="copy-btn" onclick="copyToken()">Скопировать</button>
-      <form method="POST" action="{{ url_for('regenerate_token') }}" style="flex:1; margin:0;"
-            onsubmit="return confirm('Старый токен перестанет работать, и команду придётся обновить. Продолжить?');">
-        <button type="submit" class="btn-secondary" style="width:100%;">Создать новый</button>
-      </form>
+      <button type="button" id="copy-btn" onclick="copyToken()">1. Скопировать токен</button>
+      <a class="btn btn-green" href="{{ shortcut_url }}" style="display:block;">2. Добавить команду</a>
     </div>
-    <p class="token-hint" style="margin-top:12px; margin-bottom:0;">
-      Адрес для команды:<br>
-      <span style="color: var(--text); word-break: break-all;" id="api-url"></span>
-    </p>
+    <button type="button" class="btn-secondary" onclick="openHelp()" style="margin-bottom:10px;">Открыть инструкцию</button>
+    <form method="POST" action="{{ url_for('regenerate_token') }}" style="margin:0;"
+          onsubmit="return confirm('Старый токен перестанет работать, и команду придётся обновить. Продолжить?');">
+      <button type="submit" class="avatar-remove" style="display:block; margin:0 auto;">Создать новый токен</button>
+    </form>
   {% else %}
-    <form method="POST" action="{{ url_for('regenerate_token') }}" style="margin:0;">
+    <form method="POST" action="{{ url_for('regenerate_token') }}" style="margin:0 0 10px;">
       <button type="submit">Создать токен</button>
     </form>
+    <button type="button" class="btn-secondary" onclick="openHelp()">Открыть инструкцию</button>
   {% endif %}
 </div>
 
@@ -102,22 +139,70 @@
   <a href="{{ url_for('logout') }}" class="btn btn-secondary" style="display:block; text-align:center;">Выйти из аккаунта</a>
 </div>
 
+<div class="sheet-back" id="help" onclick="if (event.target === this) closeHelp()">
+  <div class="sheet">
+    <div class="sheet-grip"></div>
+    <h3>Как добавить команду</h3>
+    <div class="sub">Это нужно сделать один раз, займёт минуту.</div>
+
+    <div class="step"><div class="num">1</div><div>
+      <div class="t">Создай токен</div>
+      <div class="d">Закрой это окно и нажми кнопку <b>«Создать токен»</b> в карточке «Быстрая трата». Если токен уже есть, переходи к шагу 2.</div>
+    </div></div>
+
+    <div class="step"><div class="num">2</div><div>
+      <div class="t">Скопируй токен</div>
+      <div class="d">Нажми <b>«1. Скопировать токен»</b>. Кнопка на секунду покажет «Скопировано».</div>
+    </div></div>
+
+    <div class="step"><div class="num">3</div><div>
+      <div class="t">Открой команду</div>
+      <div class="d">Нажми <b>«2. Добавить команду»</b>. Откроется приложение «Команды» с командой «Трата».</div>
+    </div></div>
+
+    <div class="step"><div class="num">4</div><div>
+      <div class="t">Вставь токен</div>
+      <div class="d">Телефон спросит токен. Нажми на поле, выбери <b>«Вставить»</b> и нажми <b>«Добавить команду»</b>.</div>
+    </div></div>
+
+    <div class="step"><div class="num">5</div><div>
+      <div class="t">Готово, пользуйся</div>
+      <div class="d">Запусти команду «Трата»: введи сумму, выбери категорию и напиши заметку. Трата сразу появится в приложении.</div>
+    </div></div>
+
+    <div class="tip">
+      <b>Совет:</b> чтобы запускать команду с главного экрана, открой её в «Командах», нажми «Поделиться» и выбери <b>«На экран Домой»</b>.<br><br>
+      Если долго не заходить на сайт, первый запуск может выдать ошибку «Сетевое соединение потеряно». Это сайт просыпается. Подожди минуту и запусти команду ещё раз.
+    </div>
+
+    <button type="button" onclick="closeHelp()" style="margin-top:16px;">Понятно</button>
+  </div>
+</div>
+
 <script>
-  var urlEl = document.getElementById('api-url');
-  if (urlEl) urlEl.textContent = location.origin + '/api/add';
+  function openHelp() {
+    document.getElementById('help').classList.add('open');
+    document.body.style.overflow = 'hidden';
+  }
+  function closeHelp() {
+    document.getElementById('help').classList.remove('open');
+    document.body.style.overflow = '';
+  }
 
   function copyToken() {
-    var text = document.getElementById('token-text').textContent.trim();
+    var el = document.getElementById('token-text');
+    if (!el) return;
+    var text = el.textContent.trim();
     var btn = document.getElementById('copy-btn');
     function done() {
-      btn.textContent = 'Скопировано';
-      setTimeout(function () { btn.textContent = 'Скопировать'; }, 1800);
+      btn.textContent = 'Скопировано ✓';
+      setTimeout(function () { btn.textContent = '1. Скопировать токен'; }, 1800);
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done);
     } else {
       var range = document.createRange();
-      range.selectNodeContents(document.getElementById('token-text'));
+      range.selectNodeContents(el);
       var sel = window.getSelection();
       sel.removeAllRanges(); sel.addRange(range);
       document.execCommand('copy');
@@ -126,4 +211,5 @@
   }
 </script>
 {% endblock %}
+
 
