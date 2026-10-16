@@ -1,4 +1,5 @@
 import os
+import re
 import secrets
 from datetime import datetime, date, timedelta
 from io import BytesIO
@@ -131,6 +132,16 @@ def make_avatar(file_storage):
     buf = BytesIO()
     img.save(buf, 'JPEG', quality=85)
     return buf.getvalue()
+
+
+def parse_amount(raw):
+    """Достаёт число из строки: убирает пробелы (в т.ч. неразрывные), знаки валюты и т.п."""
+    s = str(raw).replace(',', '.')
+    s = re.sub(r'[^0-9.]', '', s)
+    if s.count('.') > 1:
+        head, _, tail = s.rpartition('.')
+        s = head.replace('.', '') + '.' + tail
+    return float(s)
 
 
 @app.context_processor
@@ -469,22 +480,32 @@ def regenerate_token():
 @app.route('/api/add', methods=['POST'])
 def api_add():
     """Добавление траты из «Быстрых команд». Авторизация по личному токену."""
-    data = request.get_json(silent=True) or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
 
     def field(name):
         return request.form.get(name) or data.get(name) or ''
 
-    token = (request.headers.get('X-Token') or field('token')).strip()
+    token = (request.headers.get('X-Token') or str(field('token'))).strip()
     rec = ApiToken.query.filter_by(token=token).first() if token else None
     if not rec:
         return jsonify(ok=False, error='Неверный токен'), 401
 
+    raw_amount = field('amount')
     try:
-        amount = float(str(field('amount')).replace(',', '.').replace(' ', ''))
+        amount = parse_amount(raw_amount)
     except ValueError:
-        return jsonify(ok=False, error='Некорректная сумма'), 400
+        # Диагностика: показываем, что реально пришло
+        return jsonify(
+            ok=False,
+            error='Некорректная сумма',
+            received=str(raw_amount),
+            keys=list(data.keys()) + list(request.form.keys()),
+            content_type=request.content_type
+        ), 400
     if amount <= 0:
-        return jsonify(ok=False, error='Сумма должна быть больше нуля'), 400
+        return jsonify(ok=False, error='Сумма должна быть больше нуля', received=str(raw_amount)), 400
 
     category = str(field('category')).strip()
     if category not in CATEGORIES:
@@ -575,5 +596,4 @@ with app.app_context():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
-
 
