@@ -12,6 +12,9 @@
   }
   .av img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
   .board-row .rank { width: 20px; }
+  input[type="search"] { -webkit-appearance: none; appearance: none; }
+  input[type="search"]::-webkit-search-cancel-button,
+  input[type="search"]::-webkit-search-decoration { -webkit-appearance: none; display: none; }
 </style>
 
 {% macro av(uid, name) %}
@@ -67,11 +70,13 @@
   <h3 style="margin-bottom:14px;">Добавить друга</h3>
   <form method="POST" action="{{ url_for('add_friend') }}" autocomplete="off">
     <label>Логин пользователя</label>
-    <input type="text" name="friend_login" placeholder="Логин друга" required
+    <input type="search" name="friend_login" placeholder="Логин друга" required
+           inputmode="text" enterkeyhint="send"
            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
            data-lpignore="true" data-1p-ignore>
     <button type="submit">Отправить заявку</button>
   </form>
 </div>
 {% endblock %}
+
 
