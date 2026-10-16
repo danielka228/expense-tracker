@@ -1,10 +1,12 @@
 import os
 from datetime import datetime, date, timedelta
+from io import BytesIO
 
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, Response, abort
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from functools import wraps
+from PIL import Image, ImageOps
 
 basedir = os.path.abspath(os.path.dirname(__file__))
 
@@ -17,6 +19,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
     'DATABASE_URL', f"sqlite:///{os.path.join(basedir, 'expenses.db')}"
 ).replace('postgres://', 'postgresql://', 1)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # фото с телефона до 10 МБ
 
 db = SQLAlchemy(app)
 
@@ -40,6 +43,13 @@ class User(db.Model):
     currency = db.Column(db.String(10), nullable=False, default='RUB')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     expenses = db.relationship('Expense', backref='user', lazy=True, cascade='all, delete-orphan')
+    avatar = db.relationship('Avatar', backref='user', uselist=False, cascade='all, delete-orphan')
+
+
+class Avatar(db.Model):
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), primary_key=True)
+    data = db.Column(db.LargeBinary, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class Expense(db.Model):
@@ -102,6 +112,17 @@ def get_friend_ids(user_id):
     for f in accepted:
         ids.add(f.to_user_id if f.from_user_id == user_id else f.from_user_id)
     return ids
+
+
+def make_avatar(file_storage):
+    """Приводит фото к квадрату 256x256 и сжимает в JPEG."""
+    img = Image.open(file_storage.stream)
+    img = ImageOps.exif_transpose(img)
+    img = img.convert('RGB')
+    img = ImageOps.fit(img, (256, 256), Image.LANCZOS)
+    buf = BytesIO()
+    img.save(buf, 'JPEG', quality=85)
+    return buf.getvalue()
 
 
 @app.context_processor
@@ -360,15 +381,69 @@ def profile():
     total_all_time = spent_since(user.id, date(2000, 1, 1))
     expense_count = Expense.query.filter_by(user_id=user.id).count()
     friend_count = len(get_friend_ids(user.id))
+    av = Avatar.query.filter_by(user_id=user.id).first()
 
     return render_template(
         'profile.html',
         username=user.username,
+        user_id=user.id,
         created_at=user.created_at,
         total_all_time=total_all_time,
         expense_count=expense_count,
-        friend_count=friend_count
+        friend_count=friend_count,
+        has_avatar=bool(av),
+        avatar_v=int(av.updated_at.timestamp()) if av else 0
     )
+
+
+@app.route('/avatar/<int:user_id>')
+@login_required
+def avatar(user_id):
+    a = Avatar.query.filter_by(user_id=user_id).first()
+    if not a:
+        abort(404)
+    resp = Response(a.data, mimetype='image/jpeg')
+    resp.headers['Cache-Control'] = 'private, max-age=86400'
+    return resp
+
+
+@app.route('/profile/avatar', methods=['POST'])
+@login_required
+def upload_avatar():
+    f = request.files.get('avatar')
+    if not f or not f.filename:
+        flash('Выберите фото', 'error')
+        return redirect(url_for('profile'))
+    try:
+        data = make_avatar(f)
+    except Exception:
+        flash('Не удалось обработать фото, попробуйте другое', 'error')
+        return redirect(url_for('profile'))
+
+    a = Avatar.query.filter_by(user_id=session['user_id']).first()
+    if a:
+        a.data = data
+        a.updated_at = datetime.utcnow()
+    else:
+        db.session.add(Avatar(user_id=session['user_id'], data=data))
+    db.session.commit()
+    flash('Фото обновлено', 'success')
+    return redirect(url_for('profile'))
+
+
+@app.route('/profile/avatar/delete', methods=['POST'])
+@login_required
+def delete_avatar():
+    Avatar.query.filter_by(user_id=session['user_id']).delete()
+    db.session.commit()
+    flash('Фото удалено', 'success')
+    return redirect(url_for('profile'))
+
+
+@app.errorhandler(413)
+def too_large(e):
+    flash('Фото слишком большое (максимум 10 МБ)', 'error')
+    return redirect(url_for('profile'))
 
 
 @app.route('/settings', methods=['GET', 'POST'])
