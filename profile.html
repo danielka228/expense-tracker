@@ -26,6 +26,15 @@
     background: none; color: var(--muted); font-size: 13px; font-weight: 500;
     padding: 6px 12px; width: auto; display: inline-block; margin-top: -4px;
   }
+  .token-box {
+    background: var(--card-2); border-radius: 16px; padding: 14px 16px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px; word-break: break-all; user-select: all; -webkit-user-select: all;
+    margin: 10px 0 12px; text-align: left;
+  }
+  .token-hint { color: var(--muted); font-size: 13px; line-height: 1.45; margin: 0 0 12px; }
+  .row-btns { display: flex; gap: 10px; }
+  .row-btns button { flex: 1; }
 </style>
 
 <div class="card" style="text-align:center; margin-top:20px;">
@@ -63,6 +72,58 @@
 </div>
 
 <div class="card">
+  <h3 style="margin-bottom:6px;">Быстрые команды</h3>
+  <p class="token-hint">
+    Токен нужен, чтобы добавлять траты из приложения «Команды» на iPhone. Никому его не показывай:
+    с ним можно добавлять траты от твоего имени.
+  </p>
+
+  {% if api_token %}
+    <div class="token-box" id="token-text">{{ api_token }}</div>
+    <div class="row-btns">
+      <button type="button" class="btn-secondary" id="copy-btn" onclick="copyToken()">Скопировать</button>
+      <form method="POST" action="{{ url_for('regenerate_token') }}" style="flex:1; margin:0;"
+            onsubmit="return confirm('Старый токен перестанет работать, и команду придётся обновить. Продолжить?');">
+        <button type="submit" class="btn-secondary" style="width:100%;">Создать новый</button>
+      </form>
+    </div>
+    <p class="token-hint" style="margin-top:12px; margin-bottom:0;">
+      Адрес для команды:<br>
+      <span style="color: var(--text); word-break: break-all;" id="api-url"></span>
+    </p>
+  {% else %}
+    <form method="POST" action="{{ url_for('regenerate_token') }}" style="margin:0;">
+      <button type="submit">Создать токен</button>
+    </form>
+  {% endif %}
+</div>
+
+<div class="card">
   <a href="{{ url_for('logout') }}" class="btn btn-secondary" style="display:block; text-align:center;">Выйти из аккаунта</a>
 </div>
+
+<script>
+  var urlEl = document.getElementById('api-url');
+  if (urlEl) urlEl.textContent = location.origin + '/api/add';
+
+  function copyToken() {
+    var text = document.getElementById('token-text').textContent.trim();
+    var btn = document.getElementById('copy-btn');
+    function done() {
+      btn.textContent = 'Скопировано';
+      setTimeout(function () { btn.textContent = 'Скопировать'; }, 1800);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done);
+    } else {
+      var range = document.createRange();
+      range.selectNodeContents(document.getElementById('token-text'));
+      var sel = window.getSelection();
+      sel.removeAllRanges(); sel.addRange(range);
+      document.execCommand('copy');
+      done();
+    }
+  }
+</script>
 {% endblock %}
+
