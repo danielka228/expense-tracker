@@ -297,7 +297,7 @@ def friends():
     for r in incoming_requests:
         u = User.query.get(r.from_user_id)
         if u:
-            incoming.append({'id': r.id, 'username': u.username})
+            incoming.append({'id': r.id, 'user_id': u.id, 'username': u.username})
 
     outgoing_requests = Friendship.query.filter_by(from_user_id=user_id, status='pending').all()
     outgoing_usernames = set()
@@ -319,7 +319,7 @@ def friends():
 @app.route('/friends/add', methods=['POST'])
 @login_required
 def add_friend():
-    target_username = request.form.get('username', '').strip()
+    target_username = request.form.get('friend_login', '').strip()
     user_id = session['user_id']
 
     if target_username == session.get('username'):
@@ -513,3 +513,4 @@ with app.app_context():
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port, debug=True)
+
