@@ -1,8 +1,9 @@
 // Telegram-бот: записывает траты из сообщений («кофе 250»), показывает сводку и последние записи.
+// Инлайн-режим: «@бот сигареты 250» в любом чате → карточка «Записать» → трата записана, сообщение в чате.
 // Telegram присылает обновления на POST /tg/webhook (см. index.ts), а workflow при деплое
 // регистрирует этот адрес через setWebhook с секретом webhookSecret(токен).
 
-import { CATEGORY_RULES, parseExpense } from './parse';
+import { CATEGORY_RULES, parseExpense, type ParsedExpense } from './parse';
 import { fmt0, MONTHS_NOM, MONTHS_SHORT, type ExpenseRow } from './views';
 
 interface TgUser {
@@ -20,11 +21,25 @@ interface TgCallback {
   id: string;
   from: TgUser;
   message?: TgMessage;
+  inline_message_id?: string; // кнопка под сообщением, отправленным через инлайн-режим
   data?: string;
+}
+interface TgInlineQuery {
+  id: string;
+  from: TgUser;
+  query: string;
+}
+interface TgChosenInline {
+  result_id: string;
+  from: TgUser;
+  query: string;
+  inline_message_id?: string;
 }
 export interface TgUpdate {
   message?: TgMessage;
   callback_query?: TgCallback;
+  inline_query?: TgInlineQuery;
+  chosen_inline_result?: TgChosenInline;
 }
 type Button = { text: string; callback_data?: string; url?: string };
 type Keyboard = { inline_keyboard: Button[][] };
@@ -71,6 +86,8 @@ const HELP = `Просто напиши или надиктуй голосовы
 <code>вчера такси 540</code>
 <code>полторы тысячи продукты</code>
 Можно несколько трат сразу, каждую с новой строки или отдельной фразой.
+
+В любом чате с человеком набери @ и имя бота, затем трату: <code>сигареты 250</code>. Нажми на появившуюся карточку, и трата запишется, а в чате останется сообщение о ней.
 
 Категорию угадываю сам. Под каждой записью есть кнопки, чтобы поменять категорию или удалить запись.
 
@@ -166,6 +183,8 @@ function linkedUser(d: BotDeps, chatId: number) {
 
 export async function handleUpdate(d: BotDeps, u: TgUpdate) {
   if (u.callback_query) return onCallback(d, u.callback_query);
+  if (u.inline_query) return onInlineQuery(d, u.inline_query);
+  if (u.chosen_inline_result) return onChosenInline(d, u.chosen_inline_result);
   const msg = u.message;
   if (!msg || msg.chat.type !== 'private') return;
   const chatId = msg.chat.id;
@@ -241,12 +260,12 @@ async function addFromText(d: BotDeps, user: Linked, chatId: number, text: strin
   // Каждая строка или фраза — отдельная трата. Кусок без суммы («Кофе.» из «Кофе. 250 рублей.»)
   // приклеиваем к следующему: так распознавание речи нередко расставляет точки.
   const parts = text.split(/\n|(?<=[.!?;])\s+/).map((l) => l.trim()).filter(Boolean).slice(0, 20);
-  const parsed: ReturnType<typeof parseExpense>[] = [];
+  const parsed: ParsedExpense[] = [];
   let pending = '';
   for (const part of parts) {
     const chunk = pending ? `${pending} ${part}` : part;
     const p = parseExpense(chunk, d.today, CATEGORY_RULES);
-    if (p.amount && p.amount > 0 && p.amount < 1e9) {
+    if (validAmount(p)) {
       parsed.push(p);
       pending = '';
     } else {
@@ -258,19 +277,76 @@ async function addFromText(d: BotDeps, user: Linked, chatId: number, text: strin
     return send(d, chatId, 'Не нашёл сумму. Напиши, например: <code>кофе 250</code> или <code>вчера такси 540</code>');
   }
   for (const p of parsed) {
-    const e: ExpenseRow = {
-      id: 0,
-      amount: p.amount as number,
-      category: p.category && d.categories.includes(p.category) ? p.category : 'Прочее',
-      note: p.note || null,
-      expense_date: p.date ?? d.today,
-    };
-    const ins = await d.db
-      .prepare('INSERT INTO expenses (user_id, amount, category, note, expense_date) VALUES (?, ?, ?, ?, ?) RETURNING id')
-      .bind(user.id, e.amount, e.category, e.note, e.expense_date)
-      .first<{ id: number }>();
-    e.id = ins?.id ?? 0;
+    const e = await insertExpense(d, user, p);
     await send(d, chatId, card(d, e, sym), mainKeyboard(e.id));
+  }
+}
+
+const validAmount = (p: ParsedExpense) => !!p.amount && p.amount > 0 && p.amount < 1e9;
+
+function toExpense(d: BotDeps, p: ParsedExpense): ExpenseRow {
+  return {
+    id: 0,
+    amount: p.amount as number,
+    category: p.category && d.categories.includes(p.category) ? p.category : 'Прочее',
+    note: p.note || null,
+    expense_date: p.date ?? d.today,
+  };
+}
+
+async function insertExpense(d: BotDeps, user: Linked, p: ParsedExpense) {
+  const e = toExpense(d, p);
+  const ins = await d.db
+    .prepare('INSERT INTO expenses (user_id, amount, category, note, expense_date) VALUES (?, ?, ?, ?, ?) RETURNING id')
+    .bind(user.id, e.amount, e.category, e.note, e.expense_date)
+    .first<{ id: number }>();
+  e.id = ins?.id ?? 0;
+  return e;
+}
+
+// ---------- инлайн-режим: «@бот сигареты 250» в любом чате ----------
+
+async function onInlineQuery(d: BotDeps, q: TgInlineQuery) {
+  const answer = (results: unknown[], button?: { text: string; start_parameter: string }) =>
+    tg(d.api, 'answerInlineQuery', { inline_query_id: q.id, results, cache_time: 0, is_personal: true, ...(button ? { button } : {}) });
+  const user = await linkedUser(d, q.from.id);
+  // start_parameter короче 8 символов, поэтому /start не примет его за код привязки
+  if (!user) return answer([], { text: 'Подключить бота к СпендТрекеру', start_parameter: 'connect' });
+  const p = parseExpense(q.query, d.today, CATEGORY_RULES);
+  if (!validAmount(p)) return answer([], { text: 'Напиши трату и сумму: «кофе 250»', start_parameter: 'help' });
+
+  const e = toExpense(d, p);
+  const sym = d.symbol(user.currency);
+  // Сообщение уходит в чат сразу, а трата записывается, когда Telegram пришлёт chosen_inline_result.
+  // Кнопка нужна, чтобы Telegram дал inline_message_id и сообщение можно было поправить на «✅».
+  return answer([
+    {
+      type: 'article',
+      id: 'add',
+      title: `Записать ${fmt0(e.amount)} ${sym}`,
+      description: `${emoji(e.category)} ${e.note || e.category} · ${e.category} · ${dayLabel(e.expense_date, d.today)}`,
+      input_message_content: {
+        message_text: `⏳ <b>${fmt0(e.amount)} ${esc(sym)}</b>${e.note ? ` · ${esc(e.note)}` : ''}`,
+        parse_mode: 'HTML',
+      },
+      reply_markup: { inline_keyboard: [[{ text: '⏳ Записываю…', callback_data: 'w' }]] },
+    },
+  ]);
+}
+
+async function onChosenInline(d: BotDeps, r: TgChosenInline) {
+  const user = await linkedUser(d, r.from.id);
+  if (!user) return;
+  const p = parseExpense(r.query, d.today, CATEGORY_RULES);
+  if (!validAmount(p)) return;
+  const e = await insertExpense(d, user, p);
+  if (r.inline_message_id) {
+    await tg(d.api, 'editMessageText', {
+      inline_message_id: r.inline_message_id,
+      text: card(d, e, d.symbol(user.currency)),
+      parse_mode: 'HTML',
+      reply_markup: mainKeyboard(e.id),
+    });
   }
 }
 
@@ -308,21 +384,20 @@ async function undo(d: BotDeps, user: Linked, chatId: number) {
 async function onCallback(d: BotDeps, q: TgCallback) {
   const answer = (text?: string) => tg(d.api, 'answerCallbackQuery', { callback_query_id: q.id, ...(text ? { text } : {}) });
   const msg = q.message;
+  const edit = msg ? { chat_id: msg.chat.id, message_id: msg.message_id } : q.inline_message_id ? { inline_message_id: q.inline_message_id } : null;
   const m = (q.data ?? '').match(/^([cdsb]):(\d+)(?::(\d+))?$/);
-  if (!msg || !m) return answer();
-  const user = await linkedUser(d, msg.chat.id);
-  if (!user) return answer('Бот не подключён к аккаунту');
+  if (q.data === 'w') return answer('Секунду, записываю…');
+  if (!edit || !m) return answer();
+  // Кнопки видит и собеседник в общем чате, поэтому трату ищем у того, кто нажал
+  const user = await linkedUser(d, q.from.id);
+  if (!user) return answer('Это не твоя запись');
 
   const id = Number(m[2]);
   const e = await d.db
     .prepare('SELECT id, amount, category, note, expense_date FROM expenses WHERE id = ? AND user_id = ?')
     .bind(id, user.id)
     .first<ExpenseRow>();
-  const edit = { chat_id: msg.chat.id, message_id: msg.message_id };
-  if (!e) {
-    await tg(d.api, 'editMessageReplyMarkup', { ...edit, reply_markup: { inline_keyboard: [] } });
-    return answer('Этой записи уже нет');
-  }
+  if (!e) return answer('Этой записи нет — её удалили или она не твоя');
   const sym = d.symbol(user.currency);
 
   if (m[1] === 'c') {
