@@ -11,6 +11,8 @@
   "build": { "command": "node scripts/build-vendor.mjs" },
   // Статика (иконки, распознаватель штрих-кодов) отдаётся напрямую, остальное — в Worker
   "assets": { "directory": "./public" },
+  // Workers AI: распознаёт голосовые сообщения Telegram-боту (модель Whisper)
+  "ai": { "binding": "AI" },
   "d1_databases": [
     {
       "binding": "DB",

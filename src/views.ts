@@ -735,14 +735,14 @@ ${d.telegram
   ${d.telegram.linked
     ? html`<p class="token-hint" style="margin-top:0">
     Подключён${d.telegram.tgUsername ? html` к <b style="color:var(--text)">@${d.telegram.tgUsername}</b>` : ''}.
-    Пиши боту траты сообщением, например <b style="color:var(--text)">кофе 250</b>, и они сразу появятся здесь.
+    Пиши или надиктуй боту траты, например <b style="color:var(--text)">кофе 250</b>, и они сразу появятся здесь.
   </p>
   <a class="btn" href="https://t.me/${d.telegram.bot}">Открыть @${d.telegram.bot}</a>
   <form method="POST" action="/profile/telegram/unlink" style="margin:0;" onsubmit="return confirm('Отключить Telegram-бота?');">
     <button type="submit" class="btn-plain" style="color:var(--text-2)">Отключить</button>
   </form>`
     : html`<p class="token-hint" style="margin-top:0">
-    Записывай траты сообщением в Telegram: <b style="color:var(--text)">кофе 250</b>, <b style="color:var(--text)">вчера такси 540</b>.
+    Записывай траты сообщением или голосовым в Telegram: <b style="color:var(--text)">кофе 250</b>, <b style="color:var(--text)">вчера такси 540</b>.
     Бот сам угадает категорию и пришлёт сводку по команде /stats.
   </p>
   <form method="POST" action="/profile/telegram" style="margin:0 0 4px;"><button type="submit">Подключить Telegram</button></form>`}

@@ -1,9 +1,10 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
+import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
-import { botApi, botUsername, handleUpdate, webhookSecret, type TgUpdate } from './telegram';
+import { botApi, botFileApi, botUsername, handleUpdate, webhookSecret, type TgUpdate } from './telegram';
 import {
   authPage,
   landingPage,
@@ -24,6 +25,7 @@ type Env = {
   DEMO?: string; // "1" — демо-версия с кнопкой «Войти в демо»
   TELEGRAM_BOT_TOKEN?: string; // токен от @BotFather; workflow кладёт его из секрета GitHub
   TELEGRAM_API?: string; // только для локальной проверки: адрес заглушки вместо api.telegram.org
+  AI?: Ai; // Workers AI: распознавание голосовых в Telegram-боте
 };
 
 interface User {
@@ -625,6 +627,17 @@ app.post('/profile/telegram/unlink', async (c) => {
   return c.redirect('/profile');
 });
 
+// Распознавание голосовых: Whisper на Workers AI. Подсказка с цифрами — чтобы суммы приходили цифрами, а не словами.
+async function transcribe(ai: Ai, audio: ArrayBuffer) {
+  const r = await ai.run('@cf/openai/whisper-large-v3-turbo', {
+    audio: Buffer.from(audio).toString('base64'),
+    language: 'ru',
+    vad_filter: true,
+    initial_prompt: 'Кофе 250 рублей. Вчера такси 540. Продукты 1200.',
+  });
+  return r.text ?? '';
+}
+
 app.post('/tg/webhook', async (c) => {
   // Сюда Telegram присылает сообщения боту. Чужие запросы отсекаем по секрету из setWebhook.
   const token = c.env.TELEGRAM_BOT_TOKEN;
@@ -642,6 +655,8 @@ app.post('/tg/webhook', async (c) => {
       {
         db,
         api: botApi(token, c.env.TELEGRAM_API),
+        file: botFileApi(token, c.env.TELEGRAM_API),
+        transcribe: c.env.AI ? (audio) => transcribe(c.env.AI as Ai, audio) : null,
         siteUrl: new URL(c.req.url).origin,
         categories: CATEGORIES,
         today: periodStart('day'),

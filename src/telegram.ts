@@ -14,7 +14,7 @@ interface TgMessage {
   from?: TgUser;
   chat: { id: number; type: string };
   text?: string;
-  voice?: unknown;
+  voice?: { file_id: string; duration: number };
 }
 interface TgCallback {
   id: string;
@@ -32,6 +32,8 @@ type Keyboard = { inline_keyboard: Button[][] };
 export interface BotDeps {
   db: D1Database;
   api: string; // https://api.telegram.org/bot<токен>, см. botApi
+  file: string; // откуда скачивать файлы (голосовые), см. botFileApi
+  transcribe: ((audio: ArrayBuffer) => Promise<string>) | null; // распознавание речи; null — голосовые не понимаем
   siteUrl: string;
   categories: string[];
   today: string;
@@ -64,11 +66,11 @@ const EMOJI: Record<string, string> = {
 const emoji = (cat: string) => EMOJI[cat] ?? '📦';
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-const HELP = `Просто напиши трату, и я её запишу:
+const HELP = `Просто напиши или надиктуй голосовым трату, и я её запишу:
 <code>кофе 250</code>
 <code>вчера такси 540</code>
 <code>полторы тысячи продукты</code>
-Можно несколько строк сразу: каждая станет отдельной тратой.
+Можно несколько трат сразу, каждую с новой строки или отдельной фразой.
 
 Категорию угадываю сам. Под каждой записью есть кнопки, чтобы поменять категорию или удалить запись.
 
@@ -79,6 +81,7 @@ const HELP = `Просто напиши трату, и я её запишу:
 
 /** Адрес Bot API. TELEGRAM_API можно подменить для локальной проверки без настоящего Telegram. */
 export const botApi = (token: string, base?: string) => `${base || 'https://api.telegram.org'}/bot${token}`;
+export const botFileApi = (token: string, base?: string) => `${base || 'https://api.telegram.org'}/file/bot${token}`;
 
 export async function tg(api: string, method: string, payload: Record<string, unknown>) {
   const res = await fetch(`${api}/${method}`, {
@@ -86,7 +89,7 @@ export async function tg(api: string, method: string, payload: Record<string, un
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  return (await res.json()) as { ok: boolean; result?: { username?: string }; description?: string };
+  return (await res.json()) as { ok: boolean; result?: { username?: string; file_path?: string }; description?: string };
 }
 
 /** Секрет, который Telegram присылает в заголовке каждого запроса. Workflow считает так же: sha256(токен), первые 48 символов. */
@@ -191,9 +194,8 @@ export async function handleUpdate(d: BotDeps, u: TgUpdate) {
     return send(d, chatId, 'Бот отключён от аккаунта. Подключить снова можно в профиле на сайте.');
   }
   if (cmd) return send(d, chatId, 'Не знаю такой команды. /help — что я умею.');
-  if (!text) {
-    return send(d, chatId, msg.voice ? 'Голосовые пока не понимаю. Напиши текстом: <code>кофе 250</code>' : 'Напиши трату текстом: <code>кофе 250</code>');
-  }
+  if (msg.voice) return addFromVoice(d, user, chatId, msg.voice);
+  if (!text) return send(d, chatId, 'Напиши трату текстом или надиктуй голосовым: <code>кофе 250</code>');
   return addFromText(d, user, chatId, text);
 }
 
@@ -217,10 +219,41 @@ async function link(d: BotDeps, msg: TgMessage, code: string) {
   return send(d, chatId, `Готово! Бот подключён к аккаунту <b>${esc(user?.username ?? '')}</b>.\n\n${HELP}`);
 }
 
+async function addFromVoice(d: BotDeps, user: Linked, chatId: number, voice: { file_id: string; duration: number }) {
+  if (!d.transcribe) return send(d, chatId, 'Голосовые пока не понимаю. Напиши текстом: <code>кофе 250</code>');
+  if (voice.duration > 60) return send(d, chatId, 'Голосовое длиннее минуты. Скажи покороче, например: «кофе 250».');
+  await tg(d.api, 'sendChatAction', { chat_id: chatId, action: 'typing' });
+  let text = '';
+  try {
+    const path = (await tg(d.api, 'getFile', { file_id: voice.file_id })).result?.file_path;
+    const audio = path ? await fetch(`${d.file}/${path}`) : null;
+    if (audio?.ok) text = (await d.transcribe(await audio.arrayBuffer())).trim();
+  } catch (e) {
+    console.error('voice transcription failed', e);
+  }
+  if (!text) return send(d, chatId, 'Не получилось разобрать голосовое. Попробуй ещё раз или напиши текстом.');
+  await send(d, chatId, `🎙 <i>${esc(text)}</i>`);
+  return addFromText(d, user, chatId, text);
+}
+
 async function addFromText(d: BotDeps, user: Linked, chatId: number, text: string) {
   const sym = d.symbol(user.currency);
-  const lines = text.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 10);
-  const parsed = lines.map((l) => parseExpense(l, d.today, CATEGORY_RULES)).filter((p) => p.amount && p.amount > 0 && p.amount < 1e9);
+  // Каждая строка или фраза — отдельная трата. Кусок без суммы («Кофе.» из «Кофе. 250 рублей.»)
+  // приклеиваем к следующему: так распознавание речи нередко расставляет точки.
+  const parts = text.split(/\n|(?<=[.!?;])\s+/).map((l) => l.trim()).filter(Boolean).slice(0, 20);
+  const parsed: ReturnType<typeof parseExpense>[] = [];
+  let pending = '';
+  for (const part of parts) {
+    const chunk = pending ? `${pending} ${part}` : part;
+    const p = parseExpense(chunk, d.today, CATEGORY_RULES);
+    if (p.amount && p.amount > 0 && p.amount < 1e9) {
+      parsed.push(p);
+      pending = '';
+    } else {
+      pending = chunk.replace(/[.!?;]+$/, '');
+    }
+  }
+  parsed.splice(10);
   if (!parsed.length) {
     return send(d, chatId, 'Не нашёл сумму. Напиши, например: <code>кофе 250</code> или <code>вчера такси 540</code>');
   }
