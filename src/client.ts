@@ -1,3 +1,5 @@
+import { CATEGORY_RULES, parseExpense } from './parse';
+
 // Скрипты, которые выполняются в браузере. Хранятся строками и вставляются в страницу.
 // Внутри строк нельзя использовать обратные кавычки и подстановки, а обратные слэши удваиваются.
 
@@ -167,66 +169,11 @@ export const COMMON_JS = `
 
 
 // Разбор фразы: «кофе с другом 350», «вчера такси 1 200 рублей», «2 тысячи на продукты»
+// Тот же разбор, что у Telegram-бота (src/parse.ts), — исходным текстом функции
 export const PARSE_JS = `
-var VOICE_RULES = [
-  ['Табак', ['сигарет', 'табак', 'вейп', 'стики', 'стиков', 'айкос', 'iqos', 'электронк', 'одноразк', 'жидкость для', 'пачк']],
-  ['Еда', ['еда', 'еду', 'кофе', 'обед', 'ужин', 'завтрак', 'продукт', 'кафе', 'ресторан', 'пицц', 'бургер', 'шаурм', 'перекус', 'доставк', 'суши', 'ролл', 'чай', 'хлеб', 'молок', 'магазин', 'пятерочк', 'перекрест', 'магнит', 'вкусвилл', 'макдон', 'столов', 'фрукт', 'овощ', 'мясо', 'сладк', 'сок', 'напит']],
-  ['Транспорт', ['такси', 'метро', 'автобус', 'бензин', 'заправк', 'транспорт', 'проезд', 'парковк', 'поезд', 'электричк', 'каршеринг', 'самокат', 'трамва', 'троллейбус', 'билет на', 'маршрутк']],
-  ['Жильё', ['квартир', 'аренд', 'коммунал', 'жкх', 'ремонт', 'жиль', 'ипотек', 'свет за', 'газ за']],
-  ['Развлечения', ['кино', 'игр', 'концерт', 'бар', 'клуб', 'развлеч', 'подписк', 'театр', 'боулинг', 'музей', 'кальян', 'стрим', 'нетфликс', 'спотифа']],
-  ['Здоровье', ['аптек', 'лекарств', 'врач', 'здоров', 'стоматолог', 'зуб', 'анализ', 'спортзал', 'зал', 'таблет', 'клиник', 'витамин', 'массаж']],
-  ['Одежда', ['одежд', 'кроссовк', 'футболк', 'джинс', 'куртк', 'обув', 'шопинг', 'плать', 'кофт', 'штан', 'носк', 'худи', 'рубашк', 'ботинк']]
-];
-var SP = '(^|\\\\s)', END = '(?=\\\\s|$|[.,!?])';
-function voiceRe(body, flags) { return new RegExp(SP + '(' + body + ')' + END, flags || ''); }
-
-function parseVoice(text, todayIso) {
-  var t = ' ' + String(text || '').toLowerCase().replace(/ё/g, 'е').replace(/[«»"]/g, ' ') + ' ';
-  t = t.replace(/(\\d)\\s+(?=\\d{3}(\\D|$))/g, '$1');
-  t = t.replace(voiceRe('полторы тысячи|полторы тыщи'), '$11500');
-  t = t.replace(voiceRe('пол ?тысячи|пол ?тыщи'), '$1500');
-  t = t.replace(/(\\d+(?:[.,]\\d+)?)\\s*(тысяч[аиу]?|тыщ[иау]?|тыс\\.?|к)(?=\\s|$|[.,!?])/g, function (_, n) {
-    return String(Math.round(parseFloat(n.replace(',', '.')) * 1000));
-  });
-  t = t.replace(voiceRe('тысяча|тысячу|тыща|тыщу'), '$11000');
-
-  var shift = 0;
-  if (voiceRe('позавчера').test(t)) shift = -2; else if (voiceRe('вчера').test(t)) shift = -1;
-  t = t.replace(voiceRe('позавчера|вчера|сегодня', 'g'), ' ');
-
-  var amount = null;
-  var m = t.match(/(\\d+(?:[.,]\\d{1,2})?)/);
-  if (m) {
-    amount = parseFloat(m[1].replace(',', '.'));
-    t = t.slice(0, m.index) + ' ' + t.slice(m.index + m[0].length);
-  }
-  t = t.replace(voiceRe('рубл\\\\S*|руб\\\\.?|р\\\\.?|тенге|доллар\\\\S*|бакс\\\\S*|евро|сом\\\\S*|сум\\\\S*|дирхам\\\\S*|копе\\\\S*', 'g'), ' ');
-  t = t.replace(/[₽$€₸]/g, ' ');
-
-  var category = null;
-  for (var i = 0; i < VOICE_RULES.length && !category; i++) {
-    for (var j = 0; j < VOICE_RULES[i][1].length; j++) {
-      if (t.indexOf(' ' + VOICE_RULES[i][1][j]) !== -1) { category = VOICE_RULES[i][0]; break; }
-    }
-  }
-
-  var note = t.replace(/\\s+/g, ' ').trim();
-  var prev;
-  do {
-    prev = note;
-    note = note.replace(/^(я|ну|короче|так|запиши|добавь|потратил[аи]?|заплатил[аи]?|купил[аи]?|отдал[аи]?|трата|расход)\\s+/, '');
-  } while (note !== prev);
-  note = note.replace(/^(на|за)\\s+/, '').replace(/\\s+(на|за|в|и)$/, '').replace(/[.,!?]+$/, '').trim();
-  if (note) note = note.charAt(0).toUpperCase() + note.slice(1);
-
-  var date = null;
-  if (shift && todayIso) {
-    var d = new Date(todayIso + 'T00:00:00Z');
-    d.setUTCDate(d.getUTCDate() + shift);
-    date = d.toISOString().slice(0, 10);
-  }
-  return { amount: amount, category: category, note: note.slice(0, 255), date: date };
-}
+var VOICE_RULES = ${JSON.stringify(CATEGORY_RULES)};
+var parseExpense = ${parseExpense.toString()};
+function parseVoice(text, todayIso) { return parseExpense(text, todayIso, VOICE_RULES); }
 `;
 
 // Форма на главной: быстрые действия и магазины рядом

@@ -301,8 +301,8 @@ export interface ExpenseRow {
 }
 
 const MONTHS_IN = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
-const MONTHS_NOM = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
-const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+export const MONTHS_NOM = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+export const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const WEEKDAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
 function dayTitle(iso: string, today: string) {
@@ -694,6 +694,7 @@ export function profilePage(d: {
   friendCount: number;
   avatarV: string | null;
   apiToken: string | null;
+  telegram: { bot: string; linked: boolean; tgUsername: string | null } | null;
 }) {
   const created = d.createdAt
     ? `${d.createdAt.slice(8, 10)}.${d.createdAt.slice(5, 7)}.${d.createdAt.slice(0, 4)}`
@@ -727,6 +728,26 @@ export function profilePage(d: {
     <div><div class="value">${countUp(d.friendCount)}</div><div class="label">Друзей</div></div>
   </div>
 </div>
+
+${d.telegram
+  ? html`<div class="section-h">Telegram-бот</div>
+<div class="card reveal">
+  ${d.telegram.linked
+    ? html`<p class="token-hint" style="margin-top:0">
+    Подключён${d.telegram.tgUsername ? html` к <b style="color:var(--text)">@${d.telegram.tgUsername}</b>` : ''}.
+    Пиши боту траты сообщением, например <b style="color:var(--text)">кофе 250</b>, и они сразу появятся здесь.
+  </p>
+  <a class="btn" href="https://t.me/${d.telegram.bot}">Открыть @${d.telegram.bot}</a>
+  <form method="POST" action="/profile/telegram/unlink" style="margin:0;" onsubmit="return confirm('Отключить Telegram-бота?');">
+    <button type="submit" class="btn-plain" style="color:var(--text-2)">Отключить</button>
+  </form>`
+    : html`<p class="token-hint" style="margin-top:0">
+    Записывай траты сообщением в Telegram: <b style="color:var(--text)">кофе 250</b>, <b style="color:var(--text)">вчера такси 540</b>.
+    Бот сам угадает категорию и пришлёт сводку по команде /stats.
+  </p>
+  <form method="POST" action="/profile/telegram" style="margin:0 0 4px;"><button type="submit">Подключить Telegram</button></form>`}
+</div>`
+  : ''}
 
 <div class="section-h">Быстрая трата с iPhone</div>
 <div class="card reveal">
