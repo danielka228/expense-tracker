@@ -45,7 +45,7 @@ const CURRENCIES: Record<string, Currency> = {
   UZS: { label: 'Узбекский сум', symbol: 'сум' },
 };
 
-const DEFAULT_SHORTCUT_URL = 'https://www.icloud.com/shortcuts/4f0e5cce76fe4bf5a66309194c7c1da0';
+const DEFAULT_SHORTCUT_URL = 'https://www.icloud.com/shortcuts/6c88ade890e541c9b81532cfbc4cdb59';
 const SESSION_COOKIE = 'session';
 const FLASH_COOKIE = 'flash';
 const SESSION_MAX_AGE = 90 * 24 * 3600;
