@@ -40,8 +40,10 @@ export function parseOffProduct(barcode: string, json: unknown): Product {
   if (!p || j.status === 0) return { barcode, found: false, name: null, brand: null, quantity: null, image: null, category: null };
   const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
   const name = str(p.product_name_ru) ?? str(p.product_name) ?? str(p.generic_name_ru) ?? str(p.generic_name);
-  // В brands бывает и торговая марка, и юрлицо («Coca-Cola, COCA-COLA SERVICES SA/NV») — берём самое короткое
-  const brand = (str(p.brands) ?? '').split(',').map((b) => b.trim()).filter(Boolean).sort((a, b) => a.length - b.length)[0] ?? null;
+  // В brands бывает и торговая марка, и юрлицо («COCA-COLA SERVICES SA/NV») — юрлица отбрасываем, из остального берём самое короткое
+  // Граница слова задана вручную: \b в JavaScript не работает с кириллицей
+  const LEGAL = /(^|[\s.(\/])(s\.?a\.?|n\.?v\.?|llc|ltd|gmbh|inc|corp|company|services|ооо|оао|зао|пао|ао)(?=$|[\s.,)\/])/i;
+  const brand = (str(p.brands) ?? '').split(',').map((b) => b.trim()).filter((b) => b && !LEGAL.test(b)).sort((a, b) => a.length - b.length)[0] ?? null;
   const tags = Array.isArray(p.categories_tags) ? (p.categories_tags as unknown[]).filter((x): x is string => typeof x === 'string') : [];
   return {
     barcode,
@@ -204,7 +206,13 @@ function byDistance(stores: PlacedStore[], lat: number, lon: number): Store[] {
     .slice(0, 8);
 }
 
-const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
+// Зеркала OpenStreetMap Overpass по очереди: главный сервер не всегда принимает запросы из Cloudflare
+const OVERPASS = [
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
 
 export async function nearbyStores(db: D1Database, lat: number, lon: number): Promise<{ stores: Store[]; error?: string }> {
   // Округляем до ~100 м: соседние запросы попадают в один кэш, а точные координаты не хранятся

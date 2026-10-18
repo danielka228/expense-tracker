@@ -172,9 +172,13 @@ jobs:
             wasm=$(curl -s -o /dev/null -w '%{http_code} %{size_download}' "$url/vendor/zxing_reader.wasm")
             product=$(curl -s -b "$jar" "$url/api/product/5449000000996" | jq -c '{found: .product.found, name: .product.name, brand: .product.brand, image: (.product.image != null), price_stores: [.prices.stores[] | "\(.store) \(.avg)"]}')
             stores=$(curl -s -b "$jar" "$url/api/stores?lat=55.7646&lon=37.6050" | jq -c '{stores: [.stores[] | "\(.name) \(.distance) м"], error}')
-            # Для сравнения — тот же запрос к OpenStreetMap напрямую с машины GitHub
-            direct=$(curl -s -m 20 -o /dev/null -w '%{http_code} %{time_total}s' -X POST https://overpass-api.de/api/interpreter \
-              --data-urlencode 'data=[out:json][timeout:10];nwr(around:300,55.765,37.605)["shop"]["name"];out center 5;')
+            # Для сравнения — тот же запрос к зеркалам OpenStreetMap напрямую с машины GitHub
+            direct=""
+            for m in maps.mail.ru/osm/tools/overpass overpass.private.coffee overpass-api.de overpass.kumi.systems; do
+              r=$(curl -s -m 20 -o /dev/null -w '%{http_code}' -X POST "https://$m/api/interpreter" \
+                --data-urlencode 'data=[out:json][timeout:10];nwr(around:300,55.765,37.605)["shop"]["name"];out center 5;' || true)
+              direct="$direct ${m%%/*}=$r"
+            done
             echo "Overpass напрямую с GitHub: $direct"
             echo "Главная демо: $dash | распознаватель: $wasm"
             echo "Товар по штрих-коду Coca-Cola: $product"
