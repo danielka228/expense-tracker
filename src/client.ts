@@ -500,17 +500,29 @@ export const SCAN_JS = `
   var esc = window.esc;
   var FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'data_matrix'];
   var torchBtn = document.getElementById('scan-torch'), torchOn = false;
-  // Код → штрих-код товара. В DataMatrix «Честного знака» (сигареты, пиво) после 01 идёт GTIN-14 с EAN-13 внутри
+  // Код со сканера → штрих-код товара. Понимает обычные штрих-коды и DataMatrix «Честного знака»:
+  //  • пачка сигарет — 29 символов: 14 цифр GTIN, серийный номер, код цены, проверка;
+  //  • блок, пиво, вода — GS1: 01 + GTIN-14, у табака ещё 8005 + МРЦ в копейках
+  function gtinToEan(g) {
+    if (/^0{6}/.test(g)) return g.slice(6);
+    return g.charAt(0) === '0' ? g.slice(1) : g;
+  }
   function toCode(raw) {
     var s = String(raw).replace(/[\\x1d\\s]/g, '');
-    if (/^\\d{8,14}$/.test(s)) return s;
+    var gs = String(raw);
+    if (/^\\d{8,14}$/.test(s)) return { code: s.length === 14 ? gtinToEan(s) : s };
+    if (s.length === 29 && /^\\d{14}/.test(s) && !/^\\d{29}$/.test(s)) return { code: gtinToEan(s.slice(0, 14)), tobacco: true };
     var m = s.match(/^\\(?01\\)?(\\d{14})/);
     if (!m) return null;
-    return m[1].charAt(0) === '0' ? m[1].slice(1) : m[1];
+    var res = { code: gtinToEan(m[1]) };
+    // МРЦ ищем после серийного номера (AI 21), он отделён символом GS
+    var mrp = gs.match(/(?:\\x1d|\\()8005\\)?(\\d{6})/);
+    if (mrp) { res.tobacco = true; res.mrp = parseInt(mrp[1], 10) / 100; }
+    return res;
   }
   var BOX_SVG = '<svg viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>';
 
-  var stream = null, detector = null, timer = 0, busy = false, code = null;
+  var stream = null, detector = null, timer = 0, busy = false, code = null, meta = {};
   var product = null, prices = { mine: [], stores: [] }, stores = [], selStore = null, amountTouched = false;
 
   function setMsg(t) { msg.textContent = t || ''; }
@@ -591,14 +603,15 @@ export const SCAN_JS = `
         busy = false;
         var hit = null;
         for (var i = 0; i < codes.length && !hit; i++) hit = toCode(codes[i].rawValue);
-        if (hit) onCode(hit); else loop();
+        if (hit) onCode(hit.code, hit); else loop();
       }).catch(function () { busy = false; loop(); });
     }, 140);
   }
 
-  function onCode(c) {
+  function onCode(c, m) {
     if (code) return;
     code = c;
+    meta = m || {};
     if (navigator.vibrate) navigator.vibrate(35);
     vf.classList.add('hit');
     setMsg(c);
@@ -625,7 +638,9 @@ export const SCAN_JS = `
     var pic = p.image ? '<div class="pic" style="background-image:url(&quot;' + esc(p.image) + '&quot;)"></div>' : '<div class="pic none">' + BOX_SVG + '</div>';
     prodEl.innerHTML = pic + '<div style="min-width:0"><div class="pn">' + esc(title) + '</div><div class="pb">' + esc(sub || p.barcode) + '</div></div>';
     nameEl.value = p.found ? [p.name || p.brand, p.quantity].filter(Boolean).join(' ') : '';
-    if (p.category) catEl.value = p.category;
+    nameEl.placeholder = meta.tobacco ? 'Например, Winston Blue' : 'Что купил';
+    // Код с пачки однозначно говорит, что это табак — категорию ставим сами
+    if (p.category) catEl.value = p.category; else if (meta.tobacco) catEl.value = 'Табак';
     if (!p.found) setTimeout(function () { nameEl.focus(); }, 300);
   }
 
@@ -638,9 +653,10 @@ export const SCAN_JS = `
     if (here) lines.push(esc(here.store) + ': обычно <b>' + money(here.avg) + '</b>' + (here.n > 1 ? ' · покупок: ' + here.n : ''));
     var others = all.filter(function (s) { return s.store && (!selStore || s.store !== selStore.name); }).slice(0, 3);
     if (others.length) lines.push('Рядом: ' + others.map(function (s) { return esc(s.store) + ' <b>' + money(s.avg) + '</b>'; }).join(' · '));
+    if (meta.mrp) lines.push('МРЦ на упаковке — <b>' + money(meta.mrp) + '</b>');
     pricesEl.innerHTML = lines.join('<br>');
     pricesEl.hidden = !lines.length;
-    suggest = mineHere ? mineHere.amount : here ? here.avg : mine[0] ? mine[0].amount : null;
+    suggest = mineHere ? mineHere.amount : here ? here.avg : mine[0] ? mine[0].amount : meta.mrp || null;
     if (suggest !== null && !amountTouched) {
       amountEl.value = String(Math.round(suggest * 100) / 100).replace('.', ',');
       if (amountEl.fit) amountEl.fit();
@@ -669,7 +685,7 @@ export const SCAN_JS = `
 
   function reset() {
     stopCamera();
-    code = null; product = null; prices = { mine: [], stores: [] }; amountTouched = false;
+    code = null; meta = {}; product = null; prices = { mine: [], stores: [] }; amountTouched = false;
     vf.classList.remove('hit', 'done');
     snap.hidden = true;
     result.hidden = true; manualBox.hidden = true; manualToggle.hidden = false;
