@@ -165,11 +165,17 @@ jobs:
           # Демо-версия: заходим в демо-аккаунт и проверяем сканер с настоящими внешними сервисами
           if [ "$TARGET" = "preview" ]; then
             jar=$(mktemp)
+            # Кэш товаров в демо-базе сбрасываем, чтобы проверка шла по свежему ответу Open Food Facts
+            npx wrangler d1 execute "$DB_NAME" --remote $ENV_ARGS --command "DELETE FROM products" > /dev/null
             curl -s -c "$jar" -o /dev/null -X POST "$url/demo"
             dash=$(curl -s -b "$jar" -o /dev/null -w '%{http_code}' "$url/dashboard")
             wasm=$(curl -s -o /dev/null -w '%{http_code} %{size_download}' "$url/vendor/zxing_reader.wasm")
             product=$(curl -s -b "$jar" "$url/api/product/5449000000996" | jq -c '{found: .product.found, name: .product.name, brand: .product.brand, image: (.product.image != null), price_stores: [.prices.stores[] | "\(.store) \(.avg)"]}')
-            stores=$(curl -s -b "$jar" "$url/api/stores?lat=55.7646&lon=37.6050" | jq -c '[.stores[] | "\(.name) \(.distance) м"]')
+            stores=$(curl -s -b "$jar" "$url/api/stores?lat=55.7646&lon=37.6050" | jq -c '{stores: [.stores[] | "\(.name) \(.distance) м"], error}')
+            # Для сравнения — тот же запрос к OpenStreetMap напрямую с машины GitHub
+            direct=$(curl -s -m 20 -o /dev/null -w '%{http_code} %{time_total}s' -X POST https://overpass-api.de/api/interpreter \
+              --data-urlencode 'data=[out:json][timeout:10];nwr(around:300,55.765,37.605)["shop"]["name"];out center 5;')
+            echo "Overpass напрямую с GitHub: $direct"
             echo "Главная демо: $dash | распознаватель: $wasm"
             echo "Товар по штрих-коду Coca-Cola: $product"
             echo "Магазины рядом с Тверской, 12: $stores"
@@ -180,6 +186,7 @@ jobs:
               echo "- Распознаватель штрих-кодов: $wasm"
               echo "- Товар 5449000000996: \`$product\`"
               echo "- Магазины рядом (Тверская): \`$stores\`"
+              echo "- OpenStreetMap напрямую: $direct"
             } >> "$GITHUB_STEP_SUMMARY"
             [ "$dash" = "200" ] || { echo "::error::Демо-главная ответила $dash"; exit 1; }
           fi

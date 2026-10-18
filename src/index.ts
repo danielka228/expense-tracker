@@ -336,7 +336,7 @@ app.get('/api/stores', async (c) => {
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
     return c.json({ stores: [], error: 'bad coords' }, 400);
   }
-  return c.json({ stores: await nearbyStores(c.env.DB, lat, lon) });
+  return c.json(await nearbyStores(c.env.DB, lat, lon));
 });
 
 // ---------- демо-версия ----------

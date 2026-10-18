@@ -40,7 +40,8 @@ export function parseOffProduct(barcode: string, json: unknown): Product {
   if (!p || j.status === 0) return { barcode, found: false, name: null, brand: null, quantity: null, image: null, category: null };
   const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
   const name = str(p.product_name_ru) ?? str(p.product_name) ?? str(p.generic_name_ru) ?? str(p.generic_name);
-  const brand = str(p.brands)?.split(',')[0].trim() ?? null;
+  // В brands бывает и торговая марка, и юрлицо («Coca-Cola, COCA-COLA SERVICES SA/NV») — берём самое короткое
+  const brand = (str(p.brands) ?? '').split(',').map((b) => b.trim()).filter(Boolean).sort((a, b) => a.length - b.length)[0] ?? null;
   const tags = Array.isArray(p.categories_tags) ? (p.categories_tags as unknown[]).filter((x): x is string => typeof x === 'string') : [];
   return {
     barcode,
@@ -205,14 +206,14 @@ function byDistance(stores: PlacedStore[], lat: number, lon: number): Store[] {
 
 const OVERPASS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter'];
 
-export async function nearbyStores(db: D1Database, lat: number, lon: number): Promise<Store[]> {
+export async function nearbyStores(db: D1Database, lat: number, lon: number): Promise<{ stores: Store[]; error?: string }> {
   // Округляем до ~100 м: соседние запросы попадают в один кэш, а точные координаты не хранятся
   const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
   const cached = await db
     .prepare(`SELECT json FROM stores_cache WHERE key = ? AND fetched_at > datetime('now', ?)`)
     .bind(key, `-${STORES_TTL_HOURS} hours`)
     .first<{ json: string }>();
-  if (cached) return byDistance(JSON.parse(cached.json) as PlacedStore[], lat, lon);
+  if (cached) return { stores: byDistance(JSON.parse(cached.json) as PlacedStore[], lat, lon) };
 
   const cLat = Number(lat.toFixed(3));
   const cLon = Number(lon.toFixed(3));
@@ -223,18 +224,23 @@ export async function nearbyStores(db: D1Database, lat: number, lon: number): Pr
   );out center 60;`;
 
   let json: unknown = null;
+  const errors: string[] = [];
   for (const url of OVERPASS) {
     try {
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
         body: 'data=' + encodeURIComponent(q),
         signal: AbortSignal.timeout(9000),
       });
       if (res.ok) { json = await res.json(); break; }
-    } catch { /* пробуем следующее зеркало */ }
+      errors.push(`${new URL(url).host}: HTTP ${res.status} ${(await res.text()).slice(0, 120).replace(/\s+/g, ' ')}`);
+    } catch (e) {
+      // Пробуем следующее зеркало
+      errors.push(`${new URL(url).host}: ${(e as Error).message}`);
+    }
   }
-  if (!json) return [];
+  if (!json) return { stores: [], error: errors.join('; ') };
 
   const stores = parseOverpass(json, cLat, cLon);
   await db
@@ -244,5 +250,5 @@ export async function nearbyStores(db: D1Database, lat: number, lon: number): Pr
     )
     .bind(key, JSON.stringify(stores))
     .run();
-  return byDistance(stores, lat, lon);
+  return { stores: byDistance(stores, lat, lon) };
 }
