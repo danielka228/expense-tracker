@@ -1,0 +1,116 @@
+# Переезд на Cloudflare одной кнопкой: GitHub → Actions → «Переезд на Cloudflare» → Run workflow.
+# Нужны секреты репозитория: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, DATABASE_URL.
+name: Переезд на Cloudflare
+
+on:
+  workflow_dispatch:
+    inputs:
+      import_data:
+        description: 'Перенести данные из старой базы (только если в D1 ещё пусто)'
+        type: boolean
+        default: true
+
+concurrency: cloudflare-migrate
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DB_NAME: expense-tracker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Проверка секретов
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          missing=""
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          if [ "${{ inputs.import_data }}" = "true" ] && [ -z "$DATABASE_URL" ]; then missing="$missing DATABASE_URL"; fi
+          if [ -n "$missing" ]; then
+            echo "::error::Не заданы секреты:$missing (Settings → Secrets and variables → Actions)"
+            exit 1
+          fi
+
+      - name: Адрес workers.dev
+        id: subdomain
+        run: |
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain"
+          sub=$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api" | jq -r '.result.subdomain // empty')
+          if [ -z "$sub" ]; then
+            want="spendtracker-$(echo "$CLOUDFLARE_ACCOUNT_ID" | cut -c1-8)"
+            echo "Регистрирую поддомен $want.workers.dev"
+            curl -sS -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+              --data "{\"subdomain\":\"$want\"}" "$api" | jq '{success, errors}'
+            sub=$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api" | jq -r '.result.subdomain // empty')
+          fi
+          [ -n "$sub" ] || { echo "::error::Не удалось получить поддомен workers.dev. Открой в Cloudflare раздел Workers & Pages один раз и запусти снова."; exit 1; }
+          echo "url=https://expense-tracker.$sub.workers.dev" >> "$GITHUB_OUTPUT"
+
+      - name: База D1
+        run: |
+          find_id() { npx wrangler d1 list --json | jq -r --arg n "$DB_NAME" '.[] | select(.name == $n) | .uuid'; }
+          id=$(find_id)
+          if [ -z "$id" ]; then
+            npx wrangler d1 create "$DB_NAME"
+            id=$(find_id)
+          fi
+          [ -n "$id" ] || { echo "::error::Не удалось создать базу D1"; exit 1; }
+          echo "D1 database_id: $id"
+          sed -i "s/00000000-0000-0000-0000-000000000000/$id/" wrangler.jsonc
+          npx wrangler d1 migrations apply "$DB_NAME" --remote
+
+      - name: Деплой сайта
+        run: |
+          npx wrangler deploy
+          if ! npx wrangler secret list --format json | jq -e '.[] | select(.name == "SECRET_KEY")' > /dev/null; then
+            echo "Создаю SECRET_KEY"
+            openssl rand -hex 32 | npx wrangler secret put SECRET_KEY
+          fi
+
+      - name: Перенос данных
+        if: inputs.import_data
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          n=$(npx wrangler d1 execute "$DB_NAME" --remote --json --command "SELECT COUNT(*) AS n FROM users" | jq -r '.[0].results[0].n')
+          if [ "$n" != "0" ]; then
+            echo "::warning::В D1 уже есть пользователи ($n) — перенос пропущен, чтобы ничего не задвоить."
+            exit 0
+          fi
+          python3 -m pip install -q sqlalchemy psycopg2-binary
+          python3 migrate/export_to_d1.py migrate/dump.sql
+          npx wrangler d1 execute "$DB_NAME" --remote --yes --file=migrate/dump.sql
+          rm -f migrate/dump.sql
+
+      - name: Проверка
+        run: |
+          url="${{ steps.subdomain.outputs.url }}"
+          counts=$(npx wrangler d1 execute "$DB_NAME" --remote --json --command \
+            "SELECT (SELECT COUNT(*) FROM users) AS users, (SELECT COUNT(*) FROM expenses) AS expenses, (SELECT COUNT(*) FROM friendships) AS friendships, (SELECT COUNT(*) FROM avatars) AS avatars, (SELECT COUNT(*) FROM api_tokens) AS tokens" \
+            | jq -c '.[0].results[0]')
+          echo "В D1: $counts"
+          code=000
+          for i in 1 2 3 4 5 6; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "$url/login" || true)
+            [ "$code" = "200" ] && break
+            sleep 10
+          done
+          {
+            echo "## Сайт: $url"
+            echo
+            echo "Страница входа отвечает: $code"
+            echo
+            echo "Данные в D1: \`$counts\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          [ "$code" = "200" ] || { echo "::error::$url/login ответил $code"; exit 1; }
