@@ -22,13 +22,15 @@ export interface Store {
   category: string | null;
   distance: number;
   color: string;
+  custom?: boolean; // магазин добавили сами пользователи
 }
 
 // ---------- товары ----------
 
-// Категории Open Food Facts почти все про еду и напитки; остальное оставляем пустым
+// Категория по тегам открытых баз; почти всё в Open Food Facts — еда и напитки
 function productCategory(tags: string[]): string | null {
   const t = tags.join(' ');
+  if (/:(tobacco|cigarettes|cigars|heated-tobacco|e-cigarettes|vapes)/.test(t)) return 'Табак';
   if (/en:(beauty|cosmetics|hygiene|toothpastes|shampoos)/.test(t)) return 'Здоровье';
   if (tags.length) return 'Еда';
   return null;
@@ -56,40 +58,64 @@ export function parseOffProduct(barcode: string, json: unknown): Product {
   };
 }
 
+// Открытые базы одного проекта с одинаковым API: еда и напитки, прочие товары, косметика и бытовое
+const PRODUCT_SOURCES = ['world.openfoodfacts.org', 'world.openproductsfacts.org', 'world.openbeautyfacts.org'];
+const NOT_FOUND = (barcode: string): Product => ({ barcode, found: false, name: null, brand: null, quantity: null, image: null, category: null });
+
 export async function lookupProduct(db: D1Database, barcode: string): Promise<Product> {
+  // Названия, которые вписали пользователи, не устаревают; ответы баз кэшируются на время
   const cached = await db
     .prepare(
       `SELECT barcode, found, name, brand, quantity, image, category FROM products
-       WHERE barcode = ? AND fetched_at > datetime('now', CASE WHEN found THEN ? ELSE ? END)`,
+       WHERE barcode = ? AND (source = 'user' OR fetched_at > datetime('now', CASE WHEN found THEN ? ELSE ? END))`,
     )
     .bind(barcode, `-${PRODUCT_TTL_DAYS} days`, `-${MISSING_TTL_DAYS} days`)
     .first<Omit<Product, 'found'> & { found: number }>();
   if (cached) return { ...cached, found: Boolean(cached.found) };
 
-  let product: Product;
-  try {
-    const res = await fetch(
-      `https://world.openfoodfacts.org/api/v2/product/${barcode}.json?fields=product_name,product_name_ru,generic_name,generic_name_ru,brands,quantity,image_front_small_url,image_small_url,categories_tags&lc=ru`,
-      { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(6000) },
-    );
-    if (res.status === 404) product = parseOffProduct(barcode, { status: 0 });
-    else if (!res.ok) throw new Error(`OFF ${res.status}`);
-    else product = parseOffProduct(barcode, await res.json());
-  } catch {
-    // Сервис недоступен — не кэшируем, попробуем в следующий раз
-    return { barcode, found: false, name: null, brand: null, quantity: null, image: null, category: null };
+  let product = NOT_FOUND(barcode);
+  let answered = false;
+  for (const host of PRODUCT_SOURCES) {
+    try {
+      const res = await fetch(
+        `https://${host}/api/v2/product/${barcode}.json?fields=product_name,product_name_ru,generic_name,generic_name_ru,brands,quantity,image_front_small_url,image_small_url,categories_tags&lc=ru`,
+        { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(5000) },
+      );
+      if (res.status !== 404 && !res.ok) continue;
+      answered = true;
+      if (res.ok) product = parseOffProduct(barcode, await res.json());
+      if (product.found) break;
+    } catch {
+      /* база недоступна — пробуем следующую */
+    }
   }
+  // Ни одна база не ответила — не кэшируем, попробуем в следующий раз
+  if (!answered) return product;
 
   await db
     .prepare(
-      `INSERT INTO products (barcode, found, name, brand, quantity, image, category, fetched_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+      `INSERT INTO products (barcode, found, name, brand, quantity, image, category, source, fetched_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'off', datetime('now'))
        ON CONFLICT(barcode) DO UPDATE SET found = excluded.found, name = excluded.name, brand = excluded.brand,
-         quantity = excluded.quantity, image = excluded.image, category = excluded.category, fetched_at = excluded.fetched_at`,
+         quantity = excluded.quantity, image = excluded.image, category = excluded.category, fetched_at = excluded.fetched_at
+       WHERE products.source <> 'user'`,
     )
     .bind(barcode, product.found ? 1 : 0, product.name, product.brand, product.quantity, product.image, product.category)
     .run();
   return product;
+}
+
+// Товара нет ни в одной базе, а пользователь вписал название — запоминаем его для всех.
+// Найденные в базах товары не перезаписываем.
+export async function rememberProduct(db: D1Database, barcode: string, name: string, category: string) {
+  await db
+    .prepare(
+      `INSERT INTO products (barcode, found, name, category, source, fetched_at) VALUES (?, 1, ?, ?, 'user', datetime('now'))
+       ON CONFLICT(barcode) DO UPDATE SET found = 1, name = excluded.name, category = excluded.category, source = 'user', fetched_at = excluded.fetched_at
+       WHERE products.found = 0 OR products.source = 'user'`,
+    )
+    .bind(barcode, name.slice(0, 120), category)
+    .run();
 }
 
 // История цен по штрих-коду: свои покупки и средние цены у всех по магазинам за 90 дней
@@ -155,6 +181,7 @@ const KIND_CATEGORY: Record<string, string> = {
   alcohol: 'Еда', beverages: 'Еда', confectionery: 'Еда', deli: 'Еда', cafe: 'Еда', restaurant: 'Еда',
   fast_food: 'Еда', bar: 'Развлечения', pub: 'Развлечения', cinema: 'Развлечения', pharmacy: 'Здоровье',
   chemist: 'Здоровье', cosmetics: 'Здоровье', clothes: 'Одежда', shoes: 'Одежда', fuel: 'Транспорт',
+  tobacco: 'Табак', 'e-cigarette': 'Табак', kiosk: 'Еда', pastry: 'Еда', seafood: 'Еда', ice_cream: 'Еда',
 };
 const PALETTE = ['#5f8cf7', '#2fc487', '#f68a41', '#ef6a9c', '#9a72f7', '#30c2b4', '#efb73d', '#ec5a70'];
 
@@ -199,7 +226,10 @@ export function parseOverpass(json: unknown, lat: number, lon: number): PlacedSt
 }
 
 // Запасной источник — Nominatim (поиск OpenStreetMap): ищем типы мест в квадрате ~300 м вокруг точки
-const NOMINATIM_QUERIES = ['supermarket', 'convenience store', 'cafe', 'pharmacy', 'fast food'];
+const NOMINATIM_QUERIES = [
+  'supermarket', 'convenience store', 'bakery', 'cafe', 'fast food', 'restaurant',
+  'pharmacy', 'kiosk', 'tobacco shop', 'alcohol shop', 'butcher', 'greengrocer',
+];
 
 export function parseNominatim(lists: unknown[], lat: number, lon: number): PlacedStore[] {
   const elements = lists.flatMap((l) => (Array.isArray(l) ? l : [])).map((it) => {
@@ -218,29 +248,79 @@ async function nominatimStores(lat: number, lon: number, errors: string[]): Prom
   const box = [lon - d * 1.8, lat + d, lon + d * 1.8, lat - d].map((x) => x.toFixed(5)).join(',');
   const lists: unknown[] = [];
   let ok = false;
-  // По очереди, а не параллельно: так просят правила публичного Nominatim
-  for (const q of NOMINATIM_QUERIES) {
-    try {
-      const res = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&viewbox=${box}&bounded=1&format=jsonv2&limit=15&namedetails=1&accept-language=ru`,
-        { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(5000) },
-      );
-      if (!res.ok) { errors.push(`nominatim ${q}: HTTP ${res.status}`); continue; }
-      lists.push(await res.json());
-      ok = true;
-    } catch (e) {
-      errors.push(`nominatim ${q}: ${(e as Error).message}`);
-    }
+  // Запросы идут группами по 3, чтобы не долбить публичный Nominatim; результат кэшируется на сутки
+  for (let i = 0; i < NOMINATIM_QUERIES.length; i += 3) {
+    await Promise.all(
+      NOMINATIM_QUERIES.slice(i, i + 3).map(async (q) => {
+        try {
+          const res = await fetch(
+            `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&viewbox=${box}&bounded=1&format=jsonv2&limit=15&namedetails=1&accept-language=ru`,
+            { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(5000) },
+          );
+          if (!res.ok) { errors.push(`nominatim ${q}: HTTP ${res.status}`); return; }
+          lists.push(await res.json());
+          ok = true;
+        } catch (e) {
+          errors.push(`nominatim ${q}: ${(e as Error).message}`);
+        }
+      }),
+    );
   }
   return ok ? parseNominatim(lists, lat, lon) : null;
 }
 
 // Расстояния всегда считаем от настоящей точки пользователя, а не от округлённой
-function byDistance(stores: PlacedStore[], lat: number, lon: number): Store[] {
-  return stores
-    .map(({ lat: sLat, lon: sLon, ...st }) => ({ ...st, distance: Math.round(distanceM(lat, lon, sLat, sLon)) }))
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, 8);
+// Магазины, которые добавили пользователи, стоят в общем списке и вытесняют одноимённые с карты
+function byDistance(stores: PlacedStore[], lat: number, lon: number, own: PlacedStore[] = []): Store[] {
+  const all = new Map<string, Store>();
+  for (const { lat: sLat, lon: sLon, ...st } of [...stores, ...own]) {
+    const s = { ...st, distance: Math.round(distanceM(lat, lon, sLat, sLon)) };
+    const k = s.name.toLowerCase();
+    const prev = all.get(k);
+    if (!prev || s.custom || s.distance < prev.distance) all.set(k, s);
+  }
+  return [...all.values()].sort((a, b) => a.distance - b.distance).slice(0, 12);
+}
+
+// ---------- магазины, добавленные пользователями ----------
+
+const PLACE_RADIUS_DEG = 0.004; // ~400 м по широте
+
+async function customPlaces(db: D1Database, lat: number, lon: number): Promise<PlacedStore[]> {
+  const dLon = PLACE_RADIUS_DEG / Math.max(0.2, Math.cos((lat * Math.PI) / 180));
+  const { results } = await db
+    .prepare('SELECT name, category, lat, lon FROM places WHERE lat BETWEEN ? AND ? AND lon BETWEEN ? AND ? LIMIT 50')
+    .bind(lat - PLACE_RADIUS_DEG, lat + PLACE_RADIUS_DEG, lon - dLon, lon + dLon)
+    .all<{ name: string; category: string | null; lat: number; lon: number }>();
+  return results.map((r) => {
+    const chain = CHAINS.find((c) => c.name && c.re.test(r.name));
+    return {
+      name: chain?.name || r.name,
+      kind: 'custom',
+      category: r.category ?? chain?.category ?? null,
+      lat: r.lat,
+      lon: r.lon,
+      distance: 0,
+      color: chain?.color ?? PALETTE[[...r.name].reduce((s, ch) => s + ch.charCodeAt(0), 0) % PALETTE.length],
+      custom: true,
+    };
+  });
+}
+
+// Пользователь вписал магазин, которого не было в подсказках, — запоминаем его в этом месте.
+// Если рядом (~100 м) уже есть место с таким же названием, второй раз не добавляем.
+export async function rememberPlace(db: D1Database, name: string, category: string | null, lat: number, lon: number, userId: number) {
+  const d = 0.001;
+  const exists = await db
+    .prepare('SELECT 1 FROM places WHERE lower(name) = lower(?) AND lat BETWEEN ? AND ? AND lon BETWEEN ? AND ?')
+    .bind(name, lat - d, lat + d, lon - d * 2, lon + d * 2)
+    .first();
+  if (exists) return;
+  // Координаты округляем до ~10 м: этого хватает, чтобы найти магазин, и не хранит точную точку
+  await db
+    .prepare('INSERT INTO places (name, category, lat, lon, added_by) VALUES (?, ?, ?, ?, ?)')
+    .bind(name.slice(0, 80), category, Number(lat.toFixed(4)), Number(lon.toFixed(4)), userId)
+    .run();
 }
 
 // Зеркала OpenStreetMap Overpass по очереди: главный сервер не всегда принимает запросы из Cloudflare
@@ -254,18 +334,21 @@ const OVERPASS = [
 export async function nearbyStores(db: D1Database, lat: number, lon: number): Promise<{ stores: Store[]; error?: string }> {
   // Округляем до ~100 м: соседние запросы попадают в один кэш, а точные координаты не хранятся
   const key = `${lat.toFixed(3)},${lon.toFixed(3)}`;
-  const cached = await db
-    .prepare(`SELECT json FROM stores_cache WHERE key = ? AND fetched_at > datetime('now', ?)`)
-    .bind(key, `-${STORES_TTL_HOURS} hours`)
-    .first<{ json: string }>();
-  if (cached) return { stores: byDistance(JSON.parse(cached.json) as PlacedStore[], lat, lon) };
+  const [cached, own] = await Promise.all([
+    db
+      .prepare(`SELECT json FROM stores_cache WHERE key = ? AND fetched_at > datetime('now', ?)`)
+      .bind(key, `-${STORES_TTL_HOURS} hours`)
+      .first<{ json: string }>(),
+    customPlaces(db, lat, lon),
+  ]);
+  if (cached) return { stores: byDistance(JSON.parse(cached.json) as PlacedStore[], lat, lon, own) };
 
   const cLat = Number(lat.toFixed(3));
   const cLon = Number(lon.toFixed(3));
   const around = `around:300,${cLat},${cLon}`;
   const q = `[out:json][timeout:10];(
     nwr(${around})["shop"]["name"];
-    nwr(${around})["amenity"~"^(cafe|restaurant|fast_food|bar|pub|pharmacy|fuel|cinema)$"]["name"];
+    nwr(${around})["amenity"~"^(cafe|restaurant|fast_food|food_court|ice_cream|bar|pub|pharmacy|fuel|cinema)$"]["name"];
   );out center 60;`;
 
   // Все зеркала опрашиваются одновременно, берётся первый успешный ответ
@@ -290,7 +373,8 @@ export async function nearbyStores(db: D1Database, lat: number, lon: number): Pr
   ).catch(() => null);
 
   const stores = json ? parseOverpass(json, cLat, cLon) : await nominatimStores(cLat, cLon, errors);
-  if (!stores) return { stores: [], error: errors.join('; ') };
+  // Карта недоступна — показываем хотя бы магазины, добавленные пользователями
+  if (!stores) return { stores: byDistance([], lat, lon, own), error: errors.join('; ') };
   await db
     .prepare(
       `INSERT INTO stores_cache (key, json, fetched_at) VALUES (?, ?, datetime('now'))
@@ -298,5 +382,5 @@ export async function nearbyStores(db: D1Database, lat: number, lon: number): Pr
     )
     .bind(key, JSON.stringify(stores))
     .run();
-  return { stores: byDistance(stores, lat, lon) };
+  return { stores: byDistance(stores, lat, lon, own) };
 }

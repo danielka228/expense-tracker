@@ -253,16 +253,18 @@ const ICONS = {
   plane: '<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>',
   book: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>',
   card: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 10h20"/><path d="M6 15h4"/>',
+  cig: '<path d="M17 12H3a1 1 0 0 0-1 1v2a1 1 0 0 0 1 1h14"/><path d="M18 8c0-2.5-2-2.5-2-5"/><path d="M21 16a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1"/><path d="M22 8c0-2.5-2-2.5-2-5"/><path d="M7 12v4"/>',
 };
 type IconName = keyof typeof ICONS;
 
 // Цвет плитки и цвет сегмента на диаграмме
 const COLORS: Record<string, string> = {
   blue: '#5f8cf7', green: '#2fc487', orange: '#f68a41', pink: '#ef6a9c',
-  purple: '#9a72f7', teal: '#30c2b4', yellow: '#efb73d', red: '#ec5a70',
+  purple: '#9a72f7', teal: '#30c2b4', yellow: '#efb73d', red: '#ec5a70', slate: '#7d879c',
 };
 
 const ICO_RULES: [string[], string, IconName][] = [
+  [['табак', 'сигарет', 'вейп', 'стики'], 'slate', 'cig'],
   [['еда', 'продукт', 'кафе', 'ресторан', 'кофе', 'обед'], 'orange', 'food'],
   [['транспорт', 'такси', 'авто', 'бензин'], 'blue', 'car'],
   [['дом', 'жиль', 'аренд', 'коммунал'], 'teal', 'home'],
@@ -340,6 +342,7 @@ function donut(byCategory: { category: string; total: number }[], sum: number, s
 const MIC_SVG = '<svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>';
 const SCAN_SVG = '<svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8"/><path d="M10.5 8v8"/><path d="M14 8v8"/><path d="M17 8v8"/></svg>';
 const PLUS_SVG = '<svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>';
+const TORCH_SVG = '<svg viewBox="0 0 24 24"><path d="M18 6c0 2-2 2-2 4v10a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V10c0-2-2-2-2-4V2h12z"/><path d="M6 6h12"/><path d="M12 12v2"/></svg>';
 const PIN_SVG = '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.1-7-11.5A7 7 0 0 1 19 9.5C19 14.9 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>';
 const X_SVG = '<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
 
@@ -471,6 +474,8 @@ export function dashboardPage(d: {
     </div>
     <div class="store-chips" id="store-chips"></div>
     <input type="hidden" name="barcode" value="">
+    <input type="hidden" name="lat" value=""><input type="hidden" name="lon" value="">
+    <input type="hidden" name="store_src" value="">
     <button type="submit">Добавить</button>
   </form>
 </div>
@@ -506,6 +511,7 @@ ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory
     <div class="viewfinder" id="vf">
       <video id="scan-video" playsinline muted autoplay></video>
       <canvas id="scan-snap" class="snap" hidden></canvas>
+      <button type="button" class="vf-btn" id="scan-torch" aria-label="Вспышка">${raw(TORCH_SVG)}</button>
       <div class="frame"></div><div class="line"></div>
       <div class="vf-msg" id="vf-msg"></div>
     </div>
@@ -521,9 +527,10 @@ ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory
       <div class="store-chips scan-step" id="scan-stores" style="--d:.05s"></div>
       <div class="form-rows scan-step" style="--d:.1s">
         <label class="form-row"><span>Название</span><input type="text" id="scan-name" placeholder="Что купил" maxlength="255"></label>
-        <label class="form-row"><span>Магазин</span><input type="text" id="scan-store" placeholder="Магазин" maxlength="80"></label>
+        <label class="form-row"><span>Магазин</span><input type="text" id="scan-store" placeholder="Вписать свой" maxlength="80"></label>
         <label class="form-row"><span>Категория</span><select id="scan-cat">${catOptions('Еда')}</select></label>
       </div>
+      <div class="footnote scan-step" style="margin:-6px 6px 14px">Нет нужного магазина или товара? Впиши название — сайт запомнит его здесь, и в следующий раз он найдётся сам.</div>
       <div class="sheet-actions scan-step" style="--d:.15s">
         <button type="button" class="btn-gray" id="scan-again">Ещё раз</button>
         <button type="button" id="scan-add">Добавить трату</button>

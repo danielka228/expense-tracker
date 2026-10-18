@@ -133,6 +133,7 @@ export const COMMON_JS = `
           function (e) { rej(e.code === 1 ? 'denied' : 'unavailable'); },
           { enableHighAccuracy: true, timeout: 12000, maximumAge: 120000 });
       }).then(function (c) {
+        self.coords = { lat: c.latitude.toFixed(5), lon: c.longitude.toFixed(5) };
         return fetch('/api/stores?lat=' + c.latitude.toFixed(5) + '&lon=' + c.longitude.toFixed(5), { credentials: 'same-origin' })
           .then(function (r) { return r.json(); }).then(function (j) { return j.stores || []; });
       });
@@ -168,6 +169,7 @@ export const COMMON_JS = `
 // Разбор фразы: «кофе с другом 350», «вчера такси 1 200 рублей», «2 тысячи на продукты»
 export const PARSE_JS = `
 var VOICE_RULES = [
+  ['Табак', ['сигарет', 'табак', 'вейп', 'стики', 'стиков', 'айкос', 'iqos', 'электронк', 'одноразк', 'жидкость для', 'пачк']],
   ['Еда', ['еда', 'еду', 'кофе', 'обед', 'ужин', 'завтрак', 'продукт', 'кафе', 'ресторан', 'пицц', 'бургер', 'шаурм', 'перекус', 'доставк', 'суши', 'ролл', 'чай', 'хлеб', 'молок', 'магазин', 'пятерочк', 'перекрест', 'магнит', 'вкусвилл', 'макдон', 'столов', 'фрукт', 'овощ', 'мясо', 'сладк', 'сок', 'напит']],
   ['Транспорт', ['такси', 'метро', 'автобус', 'бензин', 'заправк', 'транспорт', 'проезд', 'парковк', 'поезд', 'электричк', 'каршеринг', 'самокат', 'трамва', 'троллейбус', 'билет на', 'маршрутк']],
   ['Жильё', ['квартир', 'аренд', 'коммунал', 'жкх', 'ремонт', 'жиль', 'ипотек', 'свет за', 'газ за']],
@@ -241,12 +243,19 @@ export const DASH_JS = `
 
   var loc = document.getElementById('loc-btn'), box = document.getElementById('store-chips');
   var storeInp = form.elements['store'];
+  // Вписанный вручную магазин сервер запомнит в этом месте; выбранный из подсказок — нет
+  storeInp.addEventListener('input', function () { form.elements['store_src'].value = storeInp.value.trim() ? 'typed' : ''; });
+  form.addEventListener('submit', function () {
+    var c = window.Geo.coords;
+    if (c) { form.elements['lat'].value = c.lat; form.elements['lon'].value = c.lon; }
+  });
   if (loc) loc.addEventListener('click', function () {
     box.innerHTML = '<span class="schip skeleton"></span><span class="schip skeleton"></span><span class="schip skeleton"></span>';
     window.Geo.stores().then(function (stores) {
       if (!stores.length) { box.innerHTML = ''; storeInp.placeholder = 'Рядом ничего не нашлось'; return; }
       window.renderStoreChips(box, stores, storeInp.value, function (s) {
         storeInp.value = s ? s.name : '';
+        form.elements['store_src'].value = s ? 'chip' : '';
         window.markFilled(storeInp);
         if (s && s.category) { form.elements['category'].value = s.category; window.markFilled(form.elements['category']); }
       });
@@ -489,7 +498,16 @@ export const SCAN_JS = `
   var form = document.getElementById('add-form');
   var sym = form.getAttribute('data-sym');
   var esc = window.esc;
-  var FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128'];
+  var FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'data_matrix'];
+  var torchBtn = document.getElementById('scan-torch'), torchOn = false;
+  // Код → штрих-код товара. В DataMatrix «Честного знака» (сигареты, пиво) после 01 идёт GTIN-14 с EAN-13 внутри
+  function toCode(raw) {
+    var s = String(raw).replace(/[\\x1d\\s]/g, '');
+    if (/^\\d{8,14}$/.test(s)) return s;
+    var m = s.match(/^\\(?01\\)?(\\d{14})/);
+    if (!m) return null;
+    return m[1].charAt(0) === '0' ? m[1].slice(1) : m[1];
+  }
   var BOX_SVG = '<svg viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>';
 
   var stream = null, detector = null, timer = 0, busy = false, code = null;
@@ -525,7 +543,26 @@ export const SCAN_JS = `
     }).then(function (d) { detector = d; return d; });
   }
 
+  function setTorch(on) { torchOn = on; torchBtn.classList.toggle('on', on); }
+  // Вспышка включается только кнопкой. Safari и Chrome поддерживают её не на всех телефонах
+  torchBtn.addEventListener('click', function () {
+    var track = stream && stream.getVideoTracks()[0];
+    if (!track || !track.applyConstraints) return;
+    var want = !torchOn;
+    track.applyConstraints({ advanced: [{ torch: want }] }).then(function () {
+      var st = track.getSettings ? track.getSettings() : {};
+      if (want && st.torch === false) throw new Error('no torch');
+      setTorch(want);
+      if (navigator.vibrate) navigator.vibrate(10);
+    }).catch(function () {
+      setTorch(false);
+      setMsg('Вспышка недоступна в этом браузере');
+      setTimeout(function () { setMsg(code || 'Наведи камеру на штрих-код'); }, 2000);
+    });
+  });
+
   function stopCamera() {
+    setTorch(false);
     clearTimeout(timer);
     if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
     stream = null; video.srcObject = null; busy = false;
@@ -552,8 +589,9 @@ export const SCAN_JS = `
       busy = true;
       detector.detect(video).then(function (codes) {
         busy = false;
-        var hit = codes.filter(function (c) { return /^\\d{8,14}$/.test(c.rawValue); })[0];
-        if (hit) onCode(hit.rawValue); else loop();
+        var hit = null;
+        for (var i = 0; i < codes.length && !hit; i++) hit = toCode(codes[i].rawValue);
+        if (hit) onCode(hit); else loop();
       }).catch(function () { busy = false; loop(); });
     }, 140);
   }
@@ -661,6 +699,9 @@ export const SCAN_JS = `
     form.elements['category'].value = catEl.value;
     form.elements['note'].value = nameEl.value.trim();
     form.elements['store'].value = storeEl.value.trim();
+    form.elements['store_src'].value = storeEl.value.trim() && !(selStore && selStore.name === storeEl.value.trim()) ? 'typed' : 'chip';
+    var c = window.Geo.coords;
+    if (c) { form.elements['lat'].value = c.lat; form.elements['lon'].value = c.lon; }
     form.elements['barcode'].value = code || '';
     form.elements['expense_date'].value = form.getAttribute('data-today');
     addBtn.disabled = true;
