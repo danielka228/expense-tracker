@@ -206,6 +206,7 @@ export const BASE_CSS = `
   .ico.teal   { background: linear-gradient(145deg, #74e6dc, #1fb3a5); }
   .ico.yellow { background: linear-gradient(145deg, #ffdc7a, #eaa92a); }
   .ico.blue   { background: linear-gradient(145deg, #8fb4ff, #4a78f0); }
+  .ico.slate  { background: linear-gradient(145deg, #a9b1c2, #5d6578); }
 
   /* ---------- записи ---------- */
   .expense-row { display: flex; align-items: center; gap: 10px; padding: 10px 0; position: relative; }
@@ -439,6 +440,16 @@ export const DASHBOARD_CSS = `
   .viewfinder.hit .frame { left: 8%; right: 8%; top: 12%; bottom: 12%; }
   .viewfinder.hit .frame::before { border-color: var(--green); }
   .viewfinder.hit .line, .viewfinder.done .line { opacity: 0; }
+  /* Рамка, линия и подпись не перехватывают касания — иначе кнопку вспышки не нажать */
+  .viewfinder .frame, .viewfinder .line, .viewfinder .vf-msg, .viewfinder .snap { pointer-events: none; }
+  .vf-btn {
+    position: absolute; z-index: 3; top: 12px; right: 12px; width: 42px; min-height: 42px; padding: 0; border-radius: 50%;
+    background: rgba(0, 0, 0, .45); color: #fff; -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+    transition: background .25s ease, color .25s ease, transform .35s var(--spring);
+  }
+  .vf-btn svg { width: 21px; height: 21px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .vf-btn.on { background: #ffd60a; color: #000; box-shadow: 0 0 24px rgba(255, 214, 10, .6); }
+  .viewfinder.done .vf-btn { opacity: 0; pointer-events: none; }
   .viewfinder .vf-msg {
     position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
     padding: 7px 14px; border-radius: 999px; font-size: 14px; font-weight: 600; white-space: nowrap;

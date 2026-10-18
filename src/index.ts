@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
 import { randomBytes } from 'node:crypto';
-import { lookupProduct, nearbyStores, priceHistory } from './lookup';
+import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
 import {
   authPage,
@@ -33,7 +33,7 @@ interface User {
 type App = { Bindings: Env; Variables: { user: User } };
 type C = Context<App>;
 
-const CATEGORIES = ['Еда', 'Транспорт', 'Жильё', 'Развлечения', 'Здоровье', 'Одежда', 'Прочее'];
+const CATEGORIES = ['Еда', 'Транспорт', 'Жильё', 'Развлечения', 'Здоровье', 'Одежда', 'Табак', 'Прочее'];
 
 const CURRENCIES: Record<string, Currency> = {
   RUB: { label: 'Российский рубль', symbol: '₽' },
@@ -315,6 +315,15 @@ app.post('/dashboard', async (c) => {
   await c.env.DB.prepare('INSERT INTO expenses (user_id, amount, category, note, expense_date, store, barcode) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .bind(user.id, amount, category, note, expenseDate, store, barcode)
     .run();
+
+  // База растёт сама: название товара для штрих-кода и магазин, вписанный вручную, запоминаются для всех
+  const lat = Number(formStr(form, 'lat'));
+  const lon = Number(formStr(form, 'lon'));
+  const hasPos = formStr(form, 'lat') !== '' && Number.isFinite(lat) && Number.isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180;
+  await Promise.all([
+    barcode && note ? rememberProduct(c.env.DB, barcode, note, category) : null,
+    store && hasPos && formStr(form, 'store_src') === 'typed' ? rememberPlace(c.env.DB, store, category, lat, lon, user.id) : null,
+  ]);
   flash(c, 'Трата добавлена', 'success');
   return c.redirect('/dashboard');
 });
@@ -353,6 +362,7 @@ const DEMO_EXPENSES: [user: number, daysAgo: number, amount: number, category: s
   [0, 3, 890, 'Еда', 'Продукты на ужин', 'ВкусВилл', null],
   [0, 3, 99, 'Еда', 'Coca-Cola 0,5 л', 'Магнит', COKE],
   [0, 4, 2300, 'Развлечения', 'Кино с друзьями', null, null],
+  [0, 2, 250, 'Табак', 'Сигареты', null, null],
   [0, 5, 640, 'Здоровье', 'Аптека', null, null],
   [0, 6, 1500, 'Еда', 'Ужин', null, null],
   [0, 8, 2500, 'Транспорт', 'Бензин', 'Лукойл', null],
