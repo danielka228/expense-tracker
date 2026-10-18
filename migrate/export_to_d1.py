@@ -11,6 +11,7 @@
 все траты с заметками, друзья и заявки, фото профилей, токены для «Быстрых команд».
 ID записей сохраняются, поэтому все связи остаются как были.
 """
+import os
 import re
 import sys
 from datetime import date, datetime, timezone
@@ -59,10 +60,14 @@ def sql_literal(value, col):
 
 
 def main():
-    if len(sys.argv) < 3:
+    # Адрес базы можно передать аргументом или через переменную DATABASE_URL (так делает GitHub Actions)
+    if len(sys.argv) == 3:
+        src_url, out_path = sys.argv[1], sys.argv[2]
+    elif len(sys.argv) == 2 and os.environ.get('DATABASE_URL'):
+        src_url, out_path = os.environ['DATABASE_URL'], sys.argv[1]
+    else:
         print(__doc__)
         sys.exit(1)
-    src_url, out_path = sys.argv[1], sys.argv[2]
     engine = create_engine(normalize_db_url(src_url))
 
     lines = ['-- Дамп для Cloudflare D1, создан ' + NOW + ' UTC', 'PRAGMA defer_foreign_keys = true;']
