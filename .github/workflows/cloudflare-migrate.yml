@@ -179,6 +179,9 @@ jobs:
                 --data-urlencode 'data=[out:json][timeout:10];nwr(around:300,55.765,37.605)["shop"]["name"];out center 5;' || true)
               direct="$direct ${m%%/*}=$r"
             done
+            nom=$(curl -s -m 15 -A 'SpendTracker/1.0 (github.com/danielka228/expense-tracker)' \
+              'https://nominatim.openstreetmap.org/search?q=supermarket&viewbox=37.5996,55.7676,37.6104,55.7616&bounded=1&format=jsonv2&limit=5&accept-language=ru' | jq -c '[.[].name]' || true)
+            direct="$direct | nominatim: $nom"
             echo "Overpass напрямую с GitHub: $direct"
             echo "Главная демо: $dash | распознаватель: $wasm"
             echo "Товар по штрих-коду Coca-Cola: $product"

@@ -198,6 +198,43 @@ export function parseOverpass(json: unknown, lat: number, lon: number): PlacedSt
   return [...seen.values()].sort((a, b) => a.distance - b.distance).slice(0, 20);
 }
 
+// Запасной источник — Nominatim (поиск OpenStreetMap): ищем типы мест в квадрате ~300 м вокруг точки
+const NOMINATIM_QUERIES = ['supermarket', 'convenience store', 'cafe', 'pharmacy', 'fast food'];
+
+export function parseNominatim(lists: unknown[], lat: number, lon: number): PlacedStore[] {
+  const elements = lists.flatMap((l) => (Array.isArray(l) ? l : [])).map((it) => {
+    const r = it as { lat?: string; lon?: string; name?: string; category?: string; type?: string; namedetails?: Record<string, string> };
+    const tags: Record<string, string> = { name: r.name || r.namedetails?.name || '' };
+    if (r.namedetails?.['name:ru']) tags['name:ru'] = r.namedetails['name:ru'];
+    if (r.namedetails?.brand) tags.brand = r.namedetails.brand;
+    if (r.category === 'amenity') tags.amenity = r.type ?? ''; else tags.shop = r.type ?? '';
+    return { lat: Number(r.lat), lon: Number(r.lon), tags };
+  });
+  return parseOverpass({ elements }, lat, lon);
+}
+
+async function nominatimStores(lat: number, lon: number, errors: string[]): Promise<PlacedStore[] | null> {
+  const d = 0.003;
+  const box = [lon - d * 1.8, lat + d, lon + d * 1.8, lat - d].map((x) => x.toFixed(5)).join(',');
+  const lists: unknown[] = [];
+  let ok = false;
+  // По очереди, а не параллельно: так просят правила публичного Nominatim
+  for (const q of NOMINATIM_QUERIES) {
+    try {
+      const res = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&viewbox=${box}&bounded=1&format=jsonv2&limit=15&namedetails=1&accept-language=ru`,
+        { headers: { 'User-Agent': UA, Accept: 'application/json' }, signal: AbortSignal.timeout(5000) },
+      );
+      if (!res.ok) { errors.push(`nominatim ${q}: HTTP ${res.status}`); continue; }
+      lists.push(await res.json());
+      ok = true;
+    } catch (e) {
+      errors.push(`nominatim ${q}: ${(e as Error).message}`);
+    }
+  }
+  return ok ? parseNominatim(lists, lat, lon) : null;
+}
+
 // Расстояния всегда считаем от настоящей точки пользователя, а не от округлённой
 function byDistance(stores: PlacedStore[], lat: number, lon: number): Store[] {
   return stores
@@ -231,26 +268,29 @@ export async function nearbyStores(db: D1Database, lat: number, lon: number): Pr
     nwr(${around})["amenity"~"^(cafe|restaurant|fast_food|bar|pub|pharmacy|fuel|cinema)$"]["name"];
   );out center 60;`;
 
-  let json: unknown = null;
+  // Все зеркала опрашиваются одновременно, берётся первый успешный ответ
   const errors: string[] = [];
-  for (const url of OVERPASS) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
-        body: 'data=' + encodeURIComponent(q),
-        signal: AbortSignal.timeout(9000),
-      });
-      if (res.ok) { json = await res.json(); break; }
-      errors.push(`${new URL(url).host}: HTTP ${res.status} ${(await res.text()).slice(0, 120).replace(/\s+/g, ' ')}`);
-    } catch (e) {
-      // Пробуем следующее зеркало
-      errors.push(`${new URL(url).host}: ${(e as Error).message}`);
-    }
-  }
-  if (!json) return { stores: [], error: errors.join('; ') };
+  const json: unknown = await Promise.any(
+    OVERPASS.map(async (url) => {
+      const host = new URL(url).host;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'User-Agent': UA, 'Content-Type': 'application/x-www-form-urlencoded', Accept: 'application/json' },
+          body: 'data=' + encodeURIComponent(q),
+          signal: AbortSignal.timeout(7000),
+        });
+        if (res.ok) return await res.json();
+        errors.push(`${host}: HTTP ${res.status} ${(await res.text()).slice(0, 80).replace(/\s+/g, ' ')}`);
+      } catch (e) {
+        errors.push(`${host}: ${(e as Error).message}`);
+      }
+      throw new Error(host);
+    }),
+  ).catch(() => null);
 
-  const stores = parseOverpass(json, cLat, cLon);
+  const stores = json ? parseOverpass(json, cLat, cLon) : await nominatimStores(cLat, cLon, errors);
+  if (!stores) return { stores: [], error: errors.join('; ') };
   await db
     .prepare(
       `INSERT INTO stores_cache (key, json, fetched_at) VALUES (?, ?, datetime('now'))
