@@ -4,3 +4,5 @@ node_modules/
 migrate/dump.sql
 __pycache__/
 *.db
+
+public/vendor/

@@ -1,5 +1,6 @@
 # Деплой на Cloudflare: сам после мержа в main или вручную: GitHub → Actions → «Переезд на Cloudflare» → Run workflow.
-# Нужны секреты репозитория: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, DATABASE_URL.
+# target=preview выкладывает отдельную демо-версию expense-tracker-preview со своей базой — основной сайт не трогается.
+# Нужны секреты репозитория: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (и DATABASE_URL — только для переноса данных).
 name: Переезд на Cloudflare
 
 on:
@@ -12,14 +13,21 @@ on:
       - 'wrangler.jsonc'
       - 'package.json'
       - 'package-lock.json'
+      - 'public/**'
+      - 'scripts/**'
   workflow_dispatch:
     inputs:
+      target:
+        description: 'Куда выкладывать: production — основной сайт, preview — демо-версия'
+        type: choice
+        options: [production, preview]
+        default: production
       import_data:
-        description: 'Перенести данные из старой базы (только если в D1 ещё пусто)'
+        description: 'Перенести данные из старой базы (только production и только если в D1 ещё пусто)'
         type: boolean
-        default: true
+        default: false
 
-concurrency: cloudflare-migrate
+concurrency: cloudflare-${{ inputs.target || 'production' }}
 
 jobs:
   migrate:
@@ -27,7 +35,7 @@ jobs:
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      DB_NAME: expense-tracker
+      TARGET: ${{ inputs.target || 'production' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -38,6 +46,15 @@ jobs:
 
       - run: npm ci
 
+      - name: Окружение
+        run: |
+          if [ "$TARGET" = "preview" ]; then
+            { echo "DB_NAME=expense-tracker-preview"; echo "WORKER=expense-tracker-preview"; echo "ENV_ARGS=--env preview"; echo "PLACEHOLDER=11111111-1111-1111-1111-111111111111"; } >> "$GITHUB_ENV"
+          else
+            { echo "DB_NAME=expense-tracker"; echo "WORKER=expense-tracker"; echo "ENV_ARGS=--env="; echo "PLACEHOLDER=00000000-0000-0000-0000-000000000000"; } >> "$GITHUB_ENV"
+          fi
+          echo "Выкладываю: $TARGET"
+
       - name: Проверка секретов
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
@@ -45,7 +62,7 @@ jobs:
           missing=""
           [ -n "$CLOUDFLARE_API_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
           [ -n "$CLOUDFLARE_ACCOUNT_ID" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
-          if [ "${{ inputs.import_data }}" = "true" ] && [ -z "$DATABASE_URL" ]; then missing="$missing DATABASE_URL"; fi
+          if [ "${{ inputs.import_data }}" = "true" ] && [ "$TARGET" = "production" ] && [ -z "$DATABASE_URL" ]; then missing="$missing DATABASE_URL"; fi
           if [ -n "$missing" ]; then
             echo "::error::Не заданы секреты:$missing (Settings → Secrets and variables → Actions)"
             exit 1
@@ -85,7 +102,7 @@ jobs:
             sub=$(curl -sS -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$api" | jq -r '.result.subdomain // empty')
           fi
           [ -n "$sub" ] || { echo "::error::Не удалось получить поддомен workers.dev. Открой в Cloudflare раздел Workers & Pages один раз и запусти снова."; exit 1; }
-          echo "url=https://expense-tracker.$sub.workers.dev" >> "$GITHUB_OUTPUT"
+          echo "url=https://$WORKER.$sub.workers.dev" >> "$GITHUB_OUTPUT"
 
       - name: База D1
         run: |
@@ -97,19 +114,19 @@ jobs:
           fi
           [ -n "$id" ] || { echo "::error::Не удалось создать базу D1"; exit 1; }
           echo "D1 database_id: $id"
-          sed -i "s/00000000-0000-0000-0000-000000000000/$id/" wrangler.jsonc
-          npx wrangler d1 migrations apply "$DB_NAME" --remote
+          sed -i "s/$PLACEHOLDER/$id/" wrangler.jsonc
+          npx wrangler d1 migrations apply "$DB_NAME" --remote $ENV_ARGS
 
       - name: Деплой сайта
         run: |
-          npx wrangler deploy
-          if ! npx wrangler secret list --format json | jq -e '.[] | select(.name == "SECRET_KEY")' > /dev/null; then
+          npx wrangler deploy $ENV_ARGS
+          if ! npx wrangler secret list $ENV_ARGS --format json | jq -e '.[] | select(.name == "SECRET_KEY")' > /dev/null; then
             echo "Создаю SECRET_KEY"
-            openssl rand -hex 32 | npx wrangler secret put SECRET_KEY
+            openssl rand -hex 32 | npx wrangler secret put SECRET_KEY $ENV_ARGS
           fi
 
       - name: Перенос данных
-        if: inputs.import_data
+        if: inputs.import_data && env.TARGET == 'production'
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
         run: |
@@ -126,7 +143,7 @@ jobs:
       - name: Проверка
         run: |
           url="${{ steps.subdomain.outputs.url }}"
-          counts=$(npx wrangler d1 execute "$DB_NAME" --remote --json --command \
+          counts=$(npx wrangler d1 execute "$DB_NAME" --remote $ENV_ARGS --json --command \
             "SELECT (SELECT COUNT(*) FROM users) AS users, (SELECT COUNT(*) FROM expenses) AS expenses, (SELECT COUNT(*) FROM friendships) AS friendships, (SELECT COUNT(*) FROM avatars) AS avatars, (SELECT COUNT(*) FROM api_tokens) AS tokens" \
             | jq -c '.[0].results[0]')
           echo "В D1: $counts"
@@ -144,3 +161,25 @@ jobs:
             echo "Данные в D1: \`$counts\`"
           } >> "$GITHUB_STEP_SUMMARY"
           [ "$code" = "200" ] || { echo "::error::$url/login ответил $code"; exit 1; }
+
+          # Демо-версия: заходим в демо-аккаунт и проверяем сканер с настоящими внешними сервисами
+          if [ "$TARGET" = "preview" ]; then
+            jar=$(mktemp)
+            curl -s -c "$jar" -o /dev/null -X POST "$url/demo"
+            dash=$(curl -s -b "$jar" -o /dev/null -w '%{http_code}' "$url/dashboard")
+            wasm=$(curl -s -o /dev/null -w '%{http_code} %{size_download}' "$url/vendor/zxing_reader.wasm")
+            product=$(curl -s -b "$jar" "$url/api/product/5449000000996" | jq -c '{found: .product.found, name: .product.name, brand: .product.brand, image: (.product.image != null), price_stores: [.prices.stores[] | "\(.store) \(.avg)"]}')
+            stores=$(curl -s -b "$jar" "$url/api/stores?lat=55.7646&lon=37.6050" | jq -c '[.stores[] | "\(.name) \(.distance) м"]')
+            echo "Главная демо: $dash | распознаватель: $wasm"
+            echo "Товар по штрих-коду Coca-Cola: $product"
+            echo "Магазины рядом с Тверской, 12: $stores"
+            {
+              echo
+              echo "### Проверка демо-версии"
+              echo "- Главная в демо-аккаунте: $dash"
+              echo "- Распознаватель штрих-кодов: $wasm"
+              echo "- Товар 5449000000996: \`$product\`"
+              echo "- Магазины рядом (Тверская): \`$stores\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+            [ "$dash" = "200" ] || { echo "::error::Демо-главная ответила $dash"; exit 1; }
+          fi

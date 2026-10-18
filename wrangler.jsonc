@@ -5,13 +5,32 @@
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  // Перед деплоем и локальным запуском копируем распознаватель штрих-кодов в public/vendor
+  "build": { "command": "node scripts/build-vendor.mjs" },
+  // Статика (иконки, распознаватель штрих-кодов) отдаётся напрямую, остальное — в Worker
+  "assets": { "directory": "./public" },
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "expense-tracker",
-      // Сюда вставить database_id из вывода `npx wrangler d1 create expense-tracker`
+      // Workflow «Переезд на Cloudflare» сам подставляет сюда database_id
       "database_id": "00000000-0000-0000-0000-000000000000",
       "migrations_dir": "migrations"
     }
-  ]
+  ],
+  "env": {
+    // Демо-версия: отдельный сайт expense-tracker-preview со своей базой и демо-аккаунтом
+    "preview": {
+      "name": "expense-tracker-preview",
+      "vars": { "DEMO": "1" },
+      "d1_databases": [
+        {
+          "binding": "DB",
+          "database_name": "expense-tracker-preview",
+          "database_id": "11111111-1111-1111-1111-111111111111",
+          "migrations_dir": "migrations"
+        }
+      ]
+    }
+  }
 }

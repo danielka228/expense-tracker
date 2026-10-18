@@ -1,7 +1,7 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
-import { COMMON_JS, PARSE_JS, VOICE_JS } from './client';
-import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, PROFILE_CSS } from './styles';
+import { COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, VOICE_JS } from './client';
+import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS } from './styles';
 
 type H = HtmlEscapedString | Promise<HtmlEscapedString>;
 export type Flash = [category: string, message: string];
@@ -18,7 +18,7 @@ export const fmt0 = (n: number) => {
   return (r || 0).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 };
 
-// Число, которое плавно «докручивается» от нуля при открытии страницы
+// Число, которое плавно «докручивается» от нуля, когда появляется на экране
 const countUp = (n: number) => html`<span data-count="${Math.round(Number(n) || 0)}" data-final="${fmt0(n)}">${fmt0(n)}</span>`;
 
 const TAB_ICONS = {
@@ -35,8 +35,8 @@ const TAB_LABELS: Record<Tab, string> = {
   settings: 'Настройки',
 };
 
-// Градиент для иконки активной вкладки (на него ссылается CSS через url(#tab-grad))
-const SVG_DEFS = '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="tab-grad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#a99cff"/><stop offset="1" stop-color="#45d4c4"/></linearGradient></defs></svg>';
+const WALLET_SVG = '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2z"/><circle cx="16.5" cy="14.5" r="1" fill="currentColor"/></svg>';
+const CHEV = raw('<svg class="chev" viewBox="0 0 8 13"><path d="M1.5 1.5 6.5 6.5 1.5 11.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>');
 
 interface LayoutOpts {
   title: string;
@@ -44,6 +44,7 @@ interface LayoutOpts {
   loggedIn: boolean;
   activeTab?: Tab;
   center?: boolean;
+  bare?: boolean; // без общей обёртки (страница-презентация)
   extraCss?: string;
   scripts?: string;
 }
@@ -56,23 +57,24 @@ export function layout(o: LayoutOpts, content: H) {
     </a>`,
   );
   return html`<!DOCTYPE html>
-<html lang="ru">
+<html lang="ru" class="no-js">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#07080d">
+<meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="СпендТрекер">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
 <title>${o.title}</title>
 <style>
 ${raw(BASE_CSS)}${raw(o.extraCss ?? '')}</style>
 </head>
 <body>
-  ${raw(SVG_DEFS)}
-  <div class="${o.center ? 'center-wrap' : 'wrap'}">
-    ${o.flashes.map(([cat, msg]) => html`<div class="flash ${cat}">${msg}</div>`)}
-    ${content}
-  </div>
+  <div class="toasts">${o.flashes.map(([cat, msg]) => html`<div class="flash ${cat}">${msg}</div>`)}</div>
+  ${o.bare ? content : html`<div class="${o.center ? 'center-wrap' : 'wrap'}">${content}</div>`}
   ${o.loggedIn ? html`<nav class="tabbar">${tabs}
   </nav>` : ''}
   <script>${raw(COMMON_JS)}${raw(o.scripts ?? '')}</script>
@@ -80,25 +82,160 @@ ${raw(BASE_CSS)}${raw(o.extraCss ?? '')}</style>
 </html>`;
 }
 
-export function authPage(kind: 'login' | 'register', flashes: Flash[]) {
+// Панель сверху + большой заголовок, который при прокрутке «уезжает» в панель (как в iOS)
+function header(title: string, right?: H | string, sub?: H | string) {
+  return html`<header class="nav"><div class="nav-title">${title}</div>${right ? html`<div class="nav-side right">${right}</div>` : ''}</header>
+<h1 class="large-title">${title}</h1>
+${sub ? html`<div class="large-sub">${sub}</div>` : html`<div style="height:14px"></div>`}`;
+}
+
+// ---------- страница-презентация ----------
+
+// Каждое слово — отдельный span: так текст «проявляется» по мере прокрутки
+function scrub(text: string, accentFrom?: number) {
+  return text.split(' ').map((w, i) => html`<span class="${accentFrom !== undefined && i >= accentFrom ? 'g' : ''}">${w} </span>`);
+}
+
+export function landingPage(d: { demo: boolean }) {
+  const today = new Date().toISOString().slice(0, 10);
+  const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(today) - (6 - i) * 86400000).toISOString().slice(0, 10));
+  const sampleWeek = days.map((date, i) => ({ date, total: [1500, 640, 2300, 890, 4500, 1200, 350][i] }));
+  const sampleCats = [
+    { category: 'Жильё', total: 18000 },
+    { category: 'Еда', total: 7400 },
+    { category: 'Одежда', total: 4500 },
+    { category: 'Транспорт', total: 3700 },
+    { category: 'Развлечения', total: 2800 },
+  ];
+  const cta = d.demo
+    ? html`<form method="POST" action="/demo" style="margin:0"><button type="submit" class="btn">Открыть демо</button></form>
+       <a class="btn btn-plain" href="/register">Создать аккаунт ›</a>`
+    : html`<a class="btn" href="/register">Начать бесплатно</a><a class="btn btn-plain" href="/login">Войти ›</a>`;
+  const barcode = [3, 1, 2, 1, 1, 3, 1, 2, 2, 1, 1, 2, 3, 1, 1, 2, 1, 3, 2, 1, 1, 2, 1, 1, 3, 1, 2, 1];
+
+  return layout(
+    { title: 'СпендТрекер — траты под контролем', flashes: [], loggedIn: false, bare: true, extraCss: DASHBOARD_CSS + FRIENDS_CSS + LANDING_CSS, scripts: LANDING_JS },
+    html`<header class="l-nav">
+  <a class="l-logo" href="/"><i>${raw(WALLET_SVG)}</i>СпендТрекер</a>
+  <a class="pill" href="/login">Войти</a>
+</header>
+<main class="l-wrap">
+  <section class="l-hero">
+    <div class="eyebrow reveal">Новый СпендТрекер</div>
+    <h1 class="l-h1 reveal" style="--d:.08s">Деньги.<br><span class="g">Под контролем.</span></h1>
+    <p class="l-lead reveal" style="--d:.16s">Записывай траты голосом, сканируй покупки и смотри, куда уходят деньги. Красиво и без лишних шагов.</p>
+    <div class="l-ctas reveal" style="--d:.24s">${cta}</div>
+    <div class="device reveal" style="--d:.32s">
+      <div class="card hero" style="margin-bottom:10px">
+        <div class="label">Потрачено в октябре</div>
+        <div class="big">${countUp(36400)}<span class="cur">₽</span></div>
+        <div class="chips">
+          <div class="chip"><div class="k">Сегодня</div><div class="v">439 ₽</div></div>
+          <div class="chip"><div class="k">Эта неделя</div><div class="v">11 380 ₽</div></div>
+        </div>
+      </div>
+      ${[
+        ['Coca-Cola 0,5 л', 'Еда · Пятёрочка', 89, 'Еда'],
+        ['Такси до работы', 'Транспорт', 1200, 'Транспорт'],
+        ['Кроссовки', 'Одежда', 4500, 'Одежда'],
+      ].map(
+        ([n, c, a, cat]) => html`<div class="expense-row"><div class="main">${ico(String(cat))}<div style="min-width:0"><div class="info">${n}</div><div class="cat">${c}</div></div></div><div class="amt">${fmt0(Number(a))} ₽</div></div>`,
+      )}
+    </div>
+  </section>
+
+  <section class="l-sec"><p class="scrub">${scrub('Каждая трата — в два касания. Скажи её, отсканируй или впиши. СпендТрекер сам поймёт сумму, категорию и даже магазин.', 17)}</p></section>
+
+  <section class="l-sec">
+    <h2 class="l-h2 reveal">Скажи — <span class="g">и готово.</span></h2>
+    <p class="l-p reveal">«Вчера такси 1 200» — и сумма, категория и дата заполнятся сами. Эквалайзер слышит твой голос.</p>
+    <div class="showcase two">
+      <div class="tile reveal">
+        <div class="mini-eq">${Array.from({ length: 23 }, (_, k) => html`<i style="--k:${k}; --a:${Math.round(30 + 60 * Math.sin((k / 22) * Math.PI))}"></i>`)}</div>
+        <div style="text-align:right"><span class="bubble">кофе с другом 350</span></div>
+        <h4>Голосом</h4><p>Понимает «тысячи», «полторы», «вчера» и сам подбирает категорию.</p>
+      </div>
+      <div class="tile reveal" style="--d:.1s">
+        <div class="expense-row" style="margin:6px 0 18px"><div class="main">${ico('Еда')}<div style="min-width:0"><div class="info">Кофе с другом</div><div class="cat">Еда</div></div></div><div class="amt">350 ₽</div></div>
+        <h4>Сразу в списке</h4><p>Без форм и лишних касаний. Проверил — нажал «Добавить».</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="l-sec">
+    <h2 class="l-h2 reveal">Наведи камеру.<br><span class="g">Остальное — наше.</span></h2>
+    <p class="l-p reveal">Отсканируй штрих-код — СпендТрекер найдёт товар, поймёт, в каком ты магазине, и подскажет цену.</p>
+    <div class="showcase two">
+      <div class="tile reveal">
+        <div class="mock-vf"><div class="bars">${barcode.map((w) => html`<i style="--w:${w * 2}px"></i>`)}</div><div class="frame"></div><div class="line"></div></div>
+        <h4>Штрих-код</h4><p>Миллионы товаров из открытой базы Open Food Facts.</p>
+      </div>
+      <div class="tile reveal" style="--d:.1s">
+        <div class="product" style="margin-top:6px"><div class="pic none">${raw('<svg viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>')}</div><div><div class="pn">Coca-Cola 0,5 л</div><div class="pb">Coca-Cola · 500 мл</div></div></div>
+        <div class="store-chips">
+          <span class="schip on"><span class="logo" style="background:#e3262f">П</span>Пятёрочка <small>40 м</small></span>
+          <span class="schip"><span class="logo" style="background:#e4003a">М</span>Магнит <small>120 м</small></span>
+        </div>
+        <div class="prices">В «Пятёрочке» обычно <b>87 ₽</b> · Магнит <b>95 ₽</b></div>
+        <h4>Магазин рядом</h4><p>По геопозиции — только в момент сканирования. Цены — из настоящих покупок.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="l-sec">
+    <h2 class="l-h2 reveal">Весь месяц.<br><span class="g">Одним взглядом.</span></h2>
+    <div class="showcase two">
+      <div class="reveal">${weekWidget(sampleWeek, today, '₽')}</div>
+      <div class="reveal" style="--d:.1s">${categoriesWidget(sampleCats, today, '₽', false)}</div>
+    </div>
+  </section>
+
+  <section class="l-sec">
+    <p class="scrub">${scrub('С друзьями — веселее. Добавь их и смотри, кто в этом месяце потратил больше всех.', 0)}</p>
+    <div class="showcase" style="max-width:520px">
+      <div class="card reveal" style="margin:0">
+        ${[['Аня', 9445, false], ['Ты', 7889, true], ['Макс', 3595, false]].map(
+          ([n, t, me], i) => html`<div class="board-row ${i === 0 ? 'rank-1' : ''} ${me ? 'me' : ''}"><div class="rank">${i + 1}</div><div class="av">${String(n)[0]}</div><div class="name">${n}</div><div class="amount">${fmt0(Number(t))} ₽</div></div>`,
+        )}
+      </div>
+    </div>
+  </section>
+
+  <section class="l-cta">
+    <h2 class="l-h2 reveal">Начни сегодня.</h2>
+    <p class="l-p reveal" style="margin:0 auto 28px">Бесплатно. Без рекламы. Прямо в браузере — и на главном экране iPhone.</p>
+    <div class="l-ctas reveal">${cta}</div>
+  </section>
+  <footer class="l-foot">СпендТрекер · ${today.slice(0, 4)}</footer>
+</main>`,
+  );
+}
+
+// ---------- вход и регистрация ----------
+
+export function authPage(kind: 'login' | 'register', flashes: Flash[], demo = false) {
   const isLogin = kind === 'login';
   return layout(
-    { title: isLogin ? 'Вход' : 'Регистрация', flashes, loggedIn: false, center: true },
-    html`<div class="brand">СпендТрекер</div>
-<div class="card">
-  <h2>${isLogin ? 'Вход' : 'Регистрация'}</h2>
-  <p style="color: var(--muted); font-size: 14px; margin: 0 0 16px;">${isLogin ? 'Рады видеть снова' : 'Пара секунд — и можно считать траты'}</p>
-  <form method="POST">
-    <label>Логин</label>
-    <input type="text" name="username" required autofocus autocapitalize="off" autocorrect="off">
-    <label>Пароль</label>
-    <input type="password" name="password" required>
-    <button type="submit" style="margin-top:4px;">${isLogin ? 'Войти' : 'Создать аккаунт'}</button>
-  </form>
-</div>
+    { title: isLogin ? 'Вход' : 'Регистрация', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS },
+    html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
+<a href="/" class="reveal" style="display:block; width:76px; height:76px; margin:0 auto 22px; border-radius:20px; background:var(--grad); color:#fff; box-shadow:0 18px 50px -14px rgba(111,141,255,.7)">
+  <span style="display:flex; align-items:center; justify-content:center; height:100%">${raw(WALLET_SVG.replace('<svg ', '<svg style="width:40px;height:40px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round" '))}</span>
+</a>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? 'С возвращением' : 'Новый аккаунт'}</h1>
+<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${isLogin ? 'Войди, чтобы продолжить' : 'Пара секунд — и можно считать траты'}</p>
+<form method="POST" class="reveal" style="--d:.15s">
+  <div class="form-rows">
+    <label class="form-row" style="margin:0"><span>Логин</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
+    <label class="form-row" style="margin:0"><span>Пароль</span><input type="password" name="password" required autocomplete="${isLogin ? 'current-password' : 'new-password'}" style="text-align:left"></label>
+  </div>
+  <button type="submit">${isLogin ? 'Войти' : 'Создать аккаунт'}</button>
+</form>
+${demo
+  ? html`<form method="POST" action="/demo" class="reveal" style="--d:.2s; margin-top:10px"><button type="submit" class="btn-tinted">Войти в демо-аккаунт</button></form>`
+  : ''}
 ${isLogin
-  ? html`<div class="footer-link">Нет аккаунта? <a href="/register">Зарегистрироваться</a></div>`
-  : html`<div class="footer-link">Уже есть аккаунт? <a href="/login">Войти</a></div>`}`,
+  ? html`<div class="footer-link reveal" style="--d:.25s">Нет аккаунта? <a href="/register">Зарегистрироваться</a></div>`
+  : html`<div class="footer-link reveal" style="--d:.25s">Уже есть аккаунт? <a href="/login">Войти</a></div>`}`,
   );
 }
 
@@ -158,6 +295,7 @@ export interface ExpenseRow {
   category: string;
   note: string | null;
   expense_date: string;
+  store?: string | null;
 }
 
 const MONTHS_IN = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
@@ -187,8 +325,9 @@ function donut(byCategory: { category: string; total: number }[], sum: number, s
   const segs = byCategory.map((r) => {
     const len = (r.total / sum) * C;
     const dash = Math.max(0.01, len - gapLen);
+    // Длина сегмента задаётся через --dash: кольцо «дорисовывается», когда карточка появляется на экране
     const seg = html`<circle class="seg" cx="64" cy="64" r="${R}" stroke="${COLORS[catStyle(r.category).color]}"
-      stroke-dasharray="${dash.toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}"/>`;
+      style="--dash: ${dash.toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}"/>`;
     offset += len;
     return seg;
   });
@@ -199,12 +338,67 @@ function donut(byCategory: { category: string; total: number }[], sum: number, s
 }
 
 const MIC_SVG = '<svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>';
+const SCAN_SVG = '<svg viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8"/><path d="M10.5 8v8"/><path d="M14 8v8"/><path d="M17 8v8"/></svg>';
+const PLUS_SVG = '<svg viewBox="0 0 24 24"><path d="M12 5v14"/><path d="M5 12h14"/></svg>';
+const PIN_SVG = '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.1-7-11.5A7 7 0 0 1 19 9.5C19 14.9 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>';
 const X_SVG = '<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
+// ---------- виджеты (используются и на главной, и на странице-презентации) ----------
+
+function weekWidget(week: { date: string; total: number }[], today: string, sym: string) {
+  const maxDay = Math.max(...week.map((r) => r.total), 0);
+  return html`<div class="card" style="margin:0 0 14px">
+  <div class="card-head"><h3>Последние 7 дней</h3><span class="hint">${fmt0(week.reduce((s, r) => s + r.total, 0))} ${sym}</span></div>
+  <div class="week">
+    ${week.map((r, k) => {
+      const h = maxDay ? Math.max(6, Math.round((r.total / maxDay) * 100)) : 6;
+      const dow = WEEKDAYS[new Date(r.date + 'T00:00:00Z').getUTCDay()];
+      return html`<div class="col ${r.date === today ? 'today' : ''}" style="--k:${k}">
+        <div class="bar-wrap" style="--h: ${h}%">
+          ${r.total ? html`<span class="val">${shortNum(r.total)}</span>` : ''}
+          <div class="bar" style="height: ${h}%"></div>
+        </div>
+        <div class="day">${dow}</div>
+      </div>`;
+    })}
+  </div>
+</div>`;
+}
+
+function categoriesWidget(byCategory: { category: string; total: number }[], today: string, sym: string, list = true) {
+  const sum = byCategory.reduce((s, r) => s + r.total, 0);
+  const maxCat = Math.max(...byCategory.map((r) => r.total), 0);
+  return html`<div class="card" style="margin:0 0 14px">
+  <div class="card-head"><h3>Категории</h3><span class="hint">${MONTHS_NOM[Number(today.slice(5, 7)) - 1]}</span></div>
+  <div class="donut-wrap"${list ? '' : raw(' style="margin:0"')}>
+    ${donut(byCategory, sum, sym)}
+    <div class="legend">
+      ${byCategory.slice(0, 5).map(
+        (r) => html`<div class="row"><span class="dot" style="background:${COLORS[catStyle(r.category).color]}"></span><span class="name">${r.category}</span><span class="pct">${Math.round((r.total / sum) * 100)}%</span></div>`,
+      )}
+    </div>
+  </div>
+  ${list
+    ? html`<div>${byCategory.map(
+        (r) => html`<div class="cat-item">
+      ${ico(r.category)}
+      <div style="flex:1; min-width:0;">
+        <div class="top"><span>${r.category}</span><span>${fmt0(r.total)} ${sym}</span></div>
+        <div class="cat-bar"><div class="track"><div class="fill" style="width: ${maxCat ? Math.round((r.total / maxCat) * 100) : 0}%;"></div></div></div>
+      </div>
+    </div>`,
+      )}</div>`
+    : ''}
+</div>`;
+}
+
+// ---------- главная ----------
 
 export function dashboardPage(d: {
   flashes: Flash[];
   sym: string;
   username: string;
+  demo: boolean;
   categories: string[];
   today: string;
   todayTotal: number;
@@ -214,29 +408,25 @@ export function dashboardPage(d: {
   byCategory: { category: string; total: number }[];
   recent: ExpenseRow[];
 }) {
-  const catSum = d.byCategory.reduce((s, r) => s + r.total, 0);
-  const maxCat = Math.max(...d.byCategory.map((r) => r.total), 0);
-  const maxDay = Math.max(...d.week.map((r) => r.total), 0);
   const month = MONTHS_IN[Number(d.today.slice(5, 7)) - 1];
+  const catOptions = (sel?: string) => d.categories.map((c) => html`<option value="${c}" ${c === sel ? 'selected' : ''}>${c}</option>`);
 
   let lastDay = '';
   const recentRows = d.recent.map((e) => {
     const label = e.expense_date !== lastDay ? html`<div class="day-label">${dayTitle(e.expense_date, d.today)}</div>` : '';
     lastDay = e.expense_date;
     return html`${label}<div class="expense-row">
-      <div style="display:flex; align-items:center; min-width:0;">
+      <div class="main">
         ${ico(e.category)}
         <div style="min-width:0;">
           <div class="info">${e.note ? e.note : e.category}</div>
-          <div class="cat">${e.category}</div>
+          <div class="cat">${e.store ? `${e.category} · ${e.store}` : e.category}</div>
         </div>
       </div>
-      <div style="display:flex; align-items:center; gap:10px;">
-        <div class="amt">${fmt0(e.amount)} ${d.sym}</div>
-        <form method="POST" action="/delete/${e.id}" style="margin:0;" onsubmit="return confirm('Удалить запись?');">
-          <button type="submit" class="btn-danger btn-icon" aria-label="Удалить">${raw(X_SVG)}</button>
-        </form>
-      </div>
+      <div class="amt">${fmt0(e.amount)} ${d.sym}</div>
+      <form method="POST" action="/delete/${e.id}" style="margin:0;" onsubmit="return confirm('Удалить запись?');">
+        <button type="submit" class="btn-danger btn-icon" aria-label="Удалить">${raw(X_SVG)}</button>
+      </form>
     </div>`;
   });
 
@@ -247,11 +437,15 @@ export function dashboardPage(d: {
       loggedIn: true,
       activeTab: 'dashboard',
       extraCss: DASHBOARD_CSS,
-      scripts: PARSE_JS + VOICE_JS,
+      scripts: PARSE_JS + DASH_JS + VOICE_JS + SCAN_JS,
     },
-    html`<div class="page-title">Привет, ${d.username} <span class="sub">${dayTitle(d.today, d.today)}, ${Number(d.today.slice(8, 10))} ${MONTHS_SHORT[Number(d.today.slice(5, 7)) - 1]}</span></div>
+    html`${header(
+      'Траты',
+      d.demo ? html`<span class="pill">Демо</span>` : undefined,
+      html`Привет, ${d.username} · ${dayTitle(d.today, d.today).toLowerCase()}, ${Number(d.today.slice(8, 10))} ${MONTHS_SHORT[Number(d.today.slice(5, 7)) - 1]}`,
+    )}
 
-<div class="card hero">
+<div class="card hero reveal">
   <div class="label">Потрачено в ${month}</div>
   <div class="big">${countUp(d.monthTotal)}<span class="cur">${d.sym}</span></div>
   <div class="chips">
@@ -260,101 +454,87 @@ export function dashboardPage(d: {
   </div>
 </div>
 
-<div class="card">
-  <div class="add-head">
-    <h3>Добавить трату</h3>
-    <button type="button" class="mic-btn" id="mic-btn">${raw(MIC_SVG)}Голосом</button>
-  </div>
-  <form method="POST" id="add-form" data-today="${d.today}">
-    <label>Сумма</label>
-    <input type="text" name="amount" inputmode="decimal" placeholder="Например 350" required>
-    <div class="row-2">
-      <div>
-        <label>Категория</label>
-        <select name="category">
-          ${d.categories.map((c) => html`<option value="${c}">${c}</option>`)}
-        </select>
-      </div>
-      <div>
-        <label>Дата</label>
-        <input type="date" name="expense_date" value="${d.today}">
-      </div>
+<div class="actions reveal" style="--d:.06s">
+  <button type="button" class="action voice" id="act-voice"><span class="ring">${raw(MIC_SVG)}</span>Голосом</button>
+  <button type="button" class="action" id="act-scan"><span class="ring">${raw(SCAN_SVG)}</span>Сканировать</button>
+  <button type="button" class="action" id="act-manual"><span class="ring">${raw(PLUS_SVG)}</span>Вручную</button>
+</div>
+
+<div class="card reveal" style="--d:.1s">
+  <form method="POST" id="add-form" data-today="${d.today}" data-sym="${d.sym}" autocomplete="off">
+    <div class="amount-wrap"><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0" required aria-label="Сумма"><span class="amount-cur">${d.sym}</span></div>
+    <div class="form-rows">
+      <label class="form-row"><span>Категория</span><select name="category">${catOptions()}</select></label>
+      <label class="form-row"><span>Дата</span><input type="date" name="expense_date" value="${d.today}"></label>
+      <div class="form-row"><span>Магазин</span><input type="text" name="store" placeholder="Необязательно" maxlength="80"><button type="button" class="loc" id="loc-btn" aria-label="Магазины рядом">${raw(PIN_SVG)}</button></div>
+      <label class="form-row"><span>Заметка</span><input type="text" name="note" placeholder="Кофе с другом" maxlength="255"></label>
     </div>
-    <label>Заметка (необязательно)</label>
-    <input type="text" name="note" placeholder="Кофе с другом">
+    <div class="store-chips" id="store-chips"></div>
+    <input type="hidden" name="barcode" value="">
     <button type="submit">Добавить</button>
   </form>
 </div>
 
-<div class="card">
-  <div class="card-head"><h3>Последние 7 дней</h3><span class="hint">${fmt0(d.week.reduce((s, r) => s + r.total, 0))} ${d.sym}</span></div>
-  <div class="week">
-    ${d.week.map((r) => {
-      const h = maxDay ? Math.max(6, Math.round((r.total / maxDay) * 100)) : 6;
-      const dow = WEEKDAYS[new Date(r.date + 'T00:00:00Z').getUTCDay()];
-      return html`<div class="col ${r.date === d.today ? 'today' : ''}">
-        <div class="bar-wrap" style="--h: ${h}%">
-          ${r.total ? html`<span class="val">${shortNum(r.total)}</span>` : ''}
-          <div class="bar" style="height: ${h}%"></div>
-        </div>
-        <div class="day">${dow}</div>
-      </div>`;
-    })}
-  </div>
-</div>
+<div class="reveal">${weekWidget(d.week, d.today, d.sym)}</div>
 
-${d.byCategory.length
-  ? html`<div class="card">
-  <div class="card-head"><h3>Категории</h3><span class="hint">${MONTHS_NOM[Number(d.today.slice(5, 7)) - 1]}</span></div>
-  <div class="donut-wrap">
-    ${donut(d.byCategory, catSum, d.sym)}
-    <div class="legend">
-      ${d.byCategory.slice(0, 5).map(
-        (r) => html`<div class="row"><span class="dot" style="background:${COLORS[catStyle(r.category).color]}"></span><span class="name">${r.category}</span><span class="pct">${Math.round((r.total / catSum) * 100)}%</span></div>`,
-      )}
-    </div>
-  </div>
-  <div class="cat-list">
-  ${d.byCategory.map(
-    (r) => html`<div class="cat-item">
-    ${ico(r.category)}
-    <div style="flex:1; min-width:0;">
-      <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:15px; font-weight:600;">
-        <span>${r.category}</span>
-        <span>${fmt0(r.total)} ${d.sym}</span>
-      </div>
-      <div class="cat-bar" style="margin:0;">
-        <div class="track"><div class="fill" style="width: ${maxCat ? Math.round((r.total / maxCat) * 100) : 0}%;"></div></div>
-      </div>
-    </div>
-  </div>`,
-  )}
-  </div>
-</div>`
-  : ''}
+${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory, d.today, d.sym)}</div>` : ''}
 
-<div class="card">
+<div class="card reveal">
   <h3 style="margin-bottom:2px;">Последние записи</h3>
   ${d.recent.length
     ? recentRows
-    : html`<p style="color: var(--muted); font-size: 14px; margin:12px 0 4px;">Пока нет записей — добавь первую трату выше или скажи её голосом.</p>`}
+    : html`<p style="color: var(--text-2); font-size: 15px; margin:12px 0 4px;">Пока нет записей — скажи трату голосом или отсканируй покупку.</p>`}
 </div>
 
-<div class="voice-back" id="voice">
-  <div class="voice-sheet">
+<div class="sheet-back" id="voice">
+  <div class="sheet">
     <div class="grip"></div>
     <div class="voice-status" id="voice-status">Слушаю…</div>
     <canvas class="eq" id="eq"></canvas>
     <div class="voice-text" id="voice-text"></div>
     <div class="voice-hint" id="voice-hint"></div>
-    <div class="voice-actions">
-      <button type="button" class="btn-secondary" id="voice-cancel">Отмена</button>
-      <button type="button" class="stop-btn" id="voice-stop"><i></i>Готово</button>
+    <div class="sheet-actions">
+      <button type="button" class="btn-gray" id="voice-cancel">Отмена</button>
+      <button type="button" class="stop-btn" id="voice-stop"><i></i><span>Готово</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="sheet-back" id="scan">
+  <div class="sheet scan-sheet">
+    <div class="grip"></div>
+    <div class="viewfinder" id="vf">
+      <video id="scan-video" playsinline muted autoplay></video>
+      <canvas id="scan-snap" class="snap" hidden></canvas>
+      <div class="frame"></div><div class="line"></div>
+      <div class="vf-msg" id="vf-msg"></div>
+    </div>
+    <button type="button" class="btn-plain" id="scan-manual-toggle">Ввести код вручную</button>
+    <div class="manual-code" id="scan-manual" hidden>
+      <input type="text" id="scan-code" inputmode="numeric" placeholder="4600000000000" aria-label="Штрих-код">
+      <button type="button" id="scan-code-go">Найти</button>
+    </div>
+    <div id="scan-result" hidden>
+      <div class="product" id="scan-product"></div>
+      <div class="prices" id="scan-prices" hidden></div>
+      <div class="amount-wrap scan-step"><input class="amount-input" type="text" id="scan-amount" inputmode="decimal" placeholder="0" aria-label="Сумма"><span class="amount-cur">${d.sym}</span></div>
+      <div class="store-chips scan-step" id="scan-stores" style="--d:.05s"></div>
+      <div class="form-rows scan-step" style="--d:.1s">
+        <label class="form-row"><span>Название</span><input type="text" id="scan-name" placeholder="Что купил" maxlength="255"></label>
+        <label class="form-row"><span>Магазин</span><input type="text" id="scan-store" placeholder="Магазин" maxlength="80"></label>
+        <label class="form-row"><span>Категория</span><select id="scan-cat">${catOptions('Еда')}</select></label>
+      </div>
+      <div class="sheet-actions scan-step" style="--d:.15s">
+        <button type="button" class="btn-gray" id="scan-again">Ещё раз</button>
+        <button type="button" id="scan-add">Добавить трату</button>
+      </div>
     </div>
   </div>
 </div>`,
   );
 }
+
+// ---------- друзья ----------
 
 function av(uid: number, name: string) {
   return html`<div class="av">${(name ? [...name][0] : '?').toUpperCase()}<img src="/avatar/${uid}" alt="" onerror="this.remove()"></div>`;
@@ -372,18 +552,17 @@ export function friendsPage(d: {
     ['week', 'Неделя'],
     ['month', 'Месяц'],
   ];
+  const idx = Math.max(0, periods.findIndex(([p]) => p === d.period));
   return layout(
-    { title: 'Друзья', flashes: d.flashes, loggedIn: true, activeTab: 'friends' },
-    html`<style>
-${raw(FRIENDS_CSS)}</style>
+    { title: 'Друзья', flashes: d.flashes, loggedIn: true, activeTab: 'friends', extraCss: FRIENDS_CSS },
+    html`${header('Друзья', undefined, 'Кто сколько потратил')}
 
-<div class="page-title">Рейтинг друзей</div>
-
-<div class="period-switch">
-  ${periods.map(([p, label]) => html`<a href="/friends?period=${p}" class="${d.period === p ? 'active' : ''}">${label}</a>`)}
+<div class="seg reveal" style="--n:3; --i:${idx}">
+  <span class="seg-thumb"></span>
+  ${periods.map(([p, label]) => html`<a href="/friends?period=${p}">${label}</a>`)}
 </div>
 
-<div class="card">
+<div class="card reveal" style="--d:.05s">
   ${d.board.length
     ? d.board.map(
         (row, i) => html`<div class="board-row ${i === 0 ? 'rank-1' : ''} ${row.is_me ? 'me' : ''}">
@@ -393,44 +572,41 @@ ${raw(FRIENDS_CSS)}</style>
       <div class="amount">${fmt0(row.total)} ${d.sym}</div>
     </div>`,
       )
-    : html`<p style="color: var(--muted); font-size: 14px;">Пока никого нет в списке.</p>`}
+    : html`<p style="color: var(--text-2); font-size: 15px; margin:0">Пока никого нет в списке.</p>`}
 </div>
 
 ${d.incoming.length
-  ? html`<div class="card">
-  <h3 style="margin-bottom:6px;">Заявки в друзья</h3>
+  ? html`<div class="section-h">Заявки в друзья</div><div class="card reveal">
   ${d.incoming.map(
     (r) => html`<div class="friend-req-row">
     <div style="display:flex; align-items:center; gap:12px; min-width:0;">
       ${av(r.user_id, r.username)}
-      <div style="font-weight:600;">${r.username}</div>
+      <div style="font-weight:500;">${r.username}</div>
     </div>
     <div class="req-actions">
-      <form method="POST" action="/friends/accept/${r.id}" style="margin:0;">
-        <button type="submit" class="btn-accept">Принять</button>
-      </form>
-      <form method="POST" action="/friends/decline/${r.id}" style="margin:0;">
-        <button type="submit" class="btn-danger">Отклонить</button>
-      </form>
+      <form method="POST" action="/friends/accept/${r.id}" style="margin:0;"><button type="submit" class="btn-accept">Принять</button></form>
+      <form method="POST" action="/friends/decline/${r.id}" style="margin:0;"><button type="submit" class="btn-gray">Отклонить</button></form>
     </div>
   </div>`,
   )}
 </div>`
   : ''}
 
-<div class="card">
-  <h3 style="margin-bottom:14px;">Добавить друга</h3>
-  <form method="POST" action="/friends/add" autocomplete="off">
-    <label>Кого добавить</label>
-    <input type="search" name="friend_login" placeholder="Имя друга" required
+<div class="section-h">Добавить друга</div>
+<div class="card reveal">
+  <form method="POST" action="/friends/add" autocomplete="off" class="add-friend">
+    <input type="search" name="friend_login" placeholder="Логин друга" required
            inputmode="text" enterkeyhint="send"
            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-           data-lpignore="true" data-1p-ignore>
-    <button type="submit">Отправить заявку</button>
+           data-lpignore="true" data-1p-ignore aria-label="Логин друга">
+    <button type="submit">Позвать</button>
   </form>
-</div>`,
+</div>
+<div class="footnote">Друг получит заявку и появится в рейтинге, когда примет её.</div>`,
   );
 }
+
+// ---------- профиль ----------
 
 export function profilePage(d: {
   flashes: Flash[];
@@ -449,11 +625,9 @@ export function profilePage(d: {
     ? `${d.createdAt.slice(8, 10)}.${d.createdAt.slice(5, 7)}.${d.createdAt.slice(0, 4)}`
     : '—';
   return layout(
-    { title: 'Профиль', flashes: d.flashes, loggedIn: true, activeTab: 'profile' },
-    html`<style>
-${raw(PROFILE_CSS)}</style>
-
-<div class="card" style="text-align:center; margin-top:20px;">
+    { title: 'Профиль', flashes: d.flashes, loggedIn: true, activeTab: 'profile', extraCss: PROFILE_CSS },
+    html`<header class="nav"><div class="nav-title">${d.username || 'Профиль'}</div></header>
+<div class="profile-head reveal">
   <form id="avatar-form" method="POST" action="/profile/avatar" enctype="multipart/form-data">
     <div class="avatar-wrap">
       ${d.avatarV !== null
@@ -462,106 +636,81 @@ ${raw(PROFILE_CSS)}</style>
       <label class="avatar-edit" for="avatar-input" title="Сменить фото">
         <svg viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h1.5l1.2-2h6.6l1.2 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
       </label>
-      <input id="avatar-input" type="file" name="avatar" accept="image/*" style="display:none;"
-             onchange="uploadAvatar(this)">
+      <input id="avatar-input" type="file" name="avatar" accept="image/*" style="display:none;" onchange="uploadAvatar(this)">
     </div>
   </form>
-
+  <h1 class="large-title" style="font-size:28px; line-height:34px; margin:0">${d.username || 'Пользователь'}</h1>
+  <div class="since">На борту с ${created}</div>
   ${d.avatarV !== null
-    ? html`<form method="POST" action="/profile/avatar/delete">
-    <button type="submit" class="avatar-remove">Удалить фото</button>
-  </form>`
+    ? html`<form method="POST" action="/profile/avatar/delete"><button type="submit" class="avatar-remove">Удалить фото</button></form>`
     : ''}
+</div>
 
-  <h2>${d.username || 'Пользователь'}</h2>
-  <div style="color: var(--muted); font-size: 13px;">
-    На борту с ${created}
-  </div>
-
+<div class="card reveal" style="--d:.05s; padding:10px 6px">
   <div class="profile-stats">
-    <div class="stat"><div class="value">${fmt0(d.totalAllTime)} ${d.sym}</div><div class="label">Всего потрачено</div></div>
-    <div class="stat"><div class="value">${d.expenseCount}</div><div class="label">Записей</div></div>
-    <div class="stat"><div class="value">${d.friendCount}</div><div class="label">Друзей</div></div>
+    <div><div class="value">${countUp(d.totalAllTime)} ${d.sym}</div><div class="label">Потрачено</div></div>
+    <div><div class="value">${countUp(d.expenseCount)}</div><div class="label">Записей</div></div>
+    <div><div class="value">${countUp(d.friendCount)}</div><div class="label">Друзей</div></div>
   </div>
 </div>
 
-<div class="card">
-  <h3 style="margin-bottom:6px;">⚡ Быстрая трата с iPhone</h3>
-  <p class="token-hint">
+<div class="section-h">Быстрая трата с iPhone</div>
+<div class="card reveal">
+  <p class="token-hint" style="margin-top:0">
     Добавляй траты в два касания через приложение «Команды». Токен никому не показывай:
     с ним можно добавлять траты от твоего имени.
   </p>
-
   ${d.apiToken
     ? html`<div class="token-box" id="token-text">${d.apiToken}</div>
     <div class="row-btns">
-      <button type="button" id="copy-btn" onclick="copyToken()">1. Скопировать токен</button>
-      <a class="btn btn-green" href="${d.shortcutUrl}" style="display:block;">2. Добавить команду</a>
+      <button type="button" id="copy-btn" onclick="copyToken()">Скопировать</button>
+      <a class="btn btn-green" href="${d.shortcutUrl}">Добавить команду</a>
     </div>
-    <button type="button" class="btn-secondary" onclick="openHelp()" style="margin-bottom:10px;">Открыть инструкцию</button>
+    <button type="button" class="btn-plain" onclick="Sheet.open('help')">Как это работает</button>
     <form method="POST" action="/profile/token" style="margin:0;"
           onsubmit="return confirm('Старый токен перестанет работать, и команду придётся обновить. Продолжить?');">
-      <button type="submit" class="avatar-remove" style="display:block; margin:0 auto;">Создать новый токен</button>
+      <button type="submit" class="btn-plain" style="color:var(--text-2)">Создать новый токен</button>
     </form>`
-    : html`<form method="POST" action="/profile/token" style="margin:0 0 10px;">
-      <button type="submit">Создать токен</button>
-    </form>
-    <button type="button" class="btn-secondary" onclick="openHelp()">Открыть инструкцию</button>`}
+    : html`<form method="POST" action="/profile/token" style="margin:0 0 4px;"><button type="submit">Создать токен</button></form>
+    <button type="button" class="btn-plain" onclick="Sheet.open('help')">Как это работает</button>`}
 </div>
 
-<div class="card">
-  <a href="/logout" class="btn btn-secondary" style="display:block; text-align:center;">Выйти из аккаунта</a>
+<div class="list reveal">
+  <a class="row" href="/settings"><span class="grow">Настройки</span>${CHEV}</a>
+  <a class="row danger" href="/logout"><span class="grow">Выйти из аккаунта</span></a>
 </div>
 
-<div class="sheet-back" id="help" onclick="if (event.target === this) closeHelp()">
+<div class="sheet-back" id="help">
   <div class="sheet">
-    <div class="sheet-grip"></div>
+    <div class="grip"></div>
     <h3>Как добавить команду</h3>
     <div class="sub">Это нужно сделать один раз, займёт минуту.</div>
-
     <div class="step"><div class="num">1</div><div>
       <div class="t">Создай токен</div>
-      <div class="d">Закрой это окно и нажми кнопку <b>«Создать токен»</b> в карточке «Быстрая трата». Если токен уже есть, переходи к шагу 2.</div>
+      <div class="d">Нажми <b>«Создать токен»</b> в карточке «Быстрая трата». Если токен уже есть, переходи к шагу 2.</div>
     </div></div>
-
     <div class="step"><div class="num">2</div><div>
       <div class="t">Скопируй токен</div>
-      <div class="d">Нажми <b>«1. Скопировать токен»</b>. Кнопка на секунду покажет «Скопировано».</div>
+      <div class="d">Нажми <b>«Скопировать»</b>. Кнопка на секунду покажет «Скопировано».</div>
     </div></div>
-
     <div class="step"><div class="num">3</div><div>
       <div class="t">Открой команду</div>
-      <div class="d">Нажми <b>«2. Добавить команду»</b>. Откроется приложение «Команды» с командой «Трата».</div>
+      <div class="d">Нажми <b>«Добавить команду»</b>. Откроется приложение «Команды» с командой «Трата».</div>
     </div></div>
-
     <div class="step"><div class="num">4</div><div>
       <div class="t">Вставь токен</div>
       <div class="d">Телефон спросит токен. Нажми на поле, выбери <b>«Вставить»</b> и нажми <b>«Добавить команду»</b>.</div>
     </div></div>
-
     <div class="step"><div class="num">5</div><div>
       <div class="t">Готово, пользуйся</div>
       <div class="d">Запусти команду «Трата»: введи сумму, выбери категорию и напиши заметку. Трата сразу появится в приложении.</div>
     </div></div>
-
-    <div class="tip">
-      <b>Совет:</b> чтобы запускать команду с главного экрана, открой её в «Командах», нажми «Поделиться» и выбери <b>«На экран Домой»</b>.
-    </div>
-
-    <button type="button" onclick="closeHelp()" style="margin-top:16px;">Понятно</button>
+    <div class="tip"><b>Совет:</b> чтобы запускать команду с главного экрана, открой её в «Командах», нажми «Поделиться» и выбери <b>«На экран Домой»</b>.</div>
+    <button type="button" onclick="Sheet.close('help')" style="margin-top:16px;">Понятно</button>
   </div>
 </div>
 
 <script>
-  function openHelp() {
-    document.getElementById('help').classList.add('open');
-    document.body.style.overflow = 'hidden';
-  }
-  function closeHelp() {
-    document.getElementById('help').classList.remove('open');
-    document.body.style.overflow = '';
-  }
-
   function copyToken() {
     var el = document.getElementById('token-text');
     if (!el) return;
@@ -569,7 +718,7 @@ ${raw(PROFILE_CSS)}</style>
     var btn = document.getElementById('copy-btn');
     function done() {
       btn.textContent = 'Скопировано ✓';
-      setTimeout(function () { btn.textContent = '1. Скопировать токен'; }, 1800);
+      setTimeout(function () { btn.textContent = 'Скопировать'; }, 1800);
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done);
@@ -617,48 +766,58 @@ ${raw(PROFILE_CSS)}</style>
   );
 }
 
+// ---------- настройки (сгруппированные строки, как в iOS и Telegram) ----------
+
+const SQ = {
+  key: '<svg viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="m10.7 12.3 9.3-9.3"/><path d="m16 7 3 3"/><path d="m18 5 2 2"/></svg>',
+  coins: '<svg viewBox="0 0 24 24"><circle cx="9" cy="9" r="6"/><path d="M18.1 10.4A6 6 0 1 1 10.4 18.1"/><path d="M9 6.5v5"/><path d="M7 7.5h3a1 1 0 0 1 0 2H8a1 1 0 0 0 0 2h3"/></svg>',
+  bolt: '<svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>',
+  out: '<svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>',
+  trash: '<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+};
+const sq = (icon: keyof typeof SQ, bg: string) => raw(`<span class="sq" style="background:${bg}">${SQ[icon]}</span>`);
+
 export function settingsPage(d: {
   flashes: Flash[];
   username: string;
   currencies: Record<string, Currency>;
   currentCurrency: string;
 }) {
+  const cur = d.currencies[d.currentCurrency] ?? Object.values(d.currencies)[0];
   return layout(
-    { title: 'Настройки', flashes: d.flashes, loggedIn: true, activeTab: 'settings' },
-    html`<div class="page-title">Настройки</div>
+    { title: 'Настройки', flashes: d.flashes, loggedIn: true, activeTab: 'settings', extraCss: SETTINGS_CSS },
+    html`${header('Настройки', undefined, html`Логин: ${d.username}`)}
 
-<div class="card">
-  <h3>Сменить пароль</h3>
-  <form method="POST" autocomplete="off">
-    <input type="hidden" name="action" value="change_password">
-    <label>Текущий пароль</label>
-    <input type="password" name="current_password" required autocomplete="current-password">
-    <label>Новый пароль</label>
-    <input type="password" name="new_password" required autocomplete="new-password">
-    <button type="submit">Сохранить</button>
-  </form>
-</div>
-
-<div class="card">
-  <h3>Валюта</h3>
-  <form method="POST">
+<div class="list reveal" style="--inset:58px">
+  <form method="POST" style="margin:0">
     <input type="hidden" name="action" value="change_currency">
-    <label>Валюта для отображения сумм</label>
-    <select name="currency" onchange="this.form.submit()">
-      ${Object.entries(d.currencies).map(
-        ([code, info]) =>
-          html`<option value="${code}" ${code === d.currentCurrency ? 'selected' : ''}>${info.label} (${info.symbol})</option>`,
-      )}
-    </select>
+    <label class="row" style="margin:0; font-size:17px; color:var(--text)">
+      ${sq('coins', '#30d158')}<span class="grow">Валюта</span><span class="value">${cur.label} (${cur.symbol})</span>${CHEV}
+      <select name="currency" class="overlay" onchange="this.form.submit()" aria-label="Валюта">
+        ${Object.entries(d.currencies).map(
+          ([code, info]) => html`<option value="${code}" ${code === d.currentCurrency ? 'selected' : ''}>${info.label} (${info.symbol})</option>`,
+        )}
+      </select>
+    </label>
   </form>
+  <details class="row-group">
+    <summary class="row" style="cursor:pointer">${sq('key', '#8e81ff')}<span class="grow">Пароль</span>${CHEV}</summary>
+    <form method="POST" autocomplete="off" class="expand">
+      <input type="hidden" name="action" value="change_password">
+      <input type="password" name="current_password" required autocomplete="current-password" placeholder="Текущий пароль" aria-label="Текущий пароль">
+      <input type="password" name="new_password" required autocomplete="new-password" placeholder="Новый пароль" aria-label="Новый пароль">
+      <button type="submit">Сохранить</button>
+    </form>
+  </details>
+  <a class="row" href="/profile">${sq('bolt', '#ff9f0a')}<span class="grow">Быстрая трата с iPhone</span>${CHEV}</a>
 </div>
 
-<div class="card">
-  <h3>Аккаунт</h3>
-  <p style="color: var(--muted); font-size: 13px;">Логин: ${d.username}</p>
-  <form method="POST" action="/settings/delete_account" onsubmit="return confirm('Точно удалить аккаунт? Это необратимо.');">
-    <button type="submit" class="btn-danger" style="width:100%; text-align:center;">Удалить аккаунт</button>
+<div class="list reveal" style="--inset:58px; --d:.05s">
+  <a class="row" href="/logout">${sq('out', '#636366')}<span class="grow">Выйти</span></a>
+  <form method="POST" action="/settings/delete_account" style="margin:0" onsubmit="return confirm('Точно удалить аккаунт? Это необратимо.');">
+    <button type="submit" class="row danger">${sq('trash', '#ff453a')}<span class="grow">Удалить аккаунт</span></button>
   </form>
-</div>`,
+</div>
+<div class="footnote">Удаление сотрёт все траты, друзей и фото без возможности восстановления.</div>`,
   );
 }

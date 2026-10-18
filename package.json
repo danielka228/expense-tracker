@@ -18,6 +18,7 @@
   },
   "homepage": "https://github.com/danielka228/expense-tracker#readme",
   "dependencies": {
+    "barcode-detector": "^3.2.2",
     "hono": "^4.13.13"
   },
   "devDependencies": {
