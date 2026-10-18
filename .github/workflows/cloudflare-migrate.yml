@@ -42,6 +42,27 @@ jobs:
             exit 1
           fi
 
+      - name: Проверка токена Cloudflare
+        run: |
+          # Чистим токен от того, что легко скопировать вместе с ним: пробелы, переносы строк,
+          # кавычки, слово «Bearer» или целиком тестовую команду curl со страницы Cloudflare
+          t=$(printf '%s' "$CLOUDFLARE_API_TOKEN" | tr -d '\r\n')
+          case "$t" in *Bearer\ *) t=${t##*Bearer }; t=${t%%[\"\' ]*} ;; esac
+          t=$(printf '%s' "$t" | tr -d " \t\"'")
+          a=$(printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | tr -d " \t\r\n\"'")
+          a=${a#*dash.cloudflare.com/}; a=${a%%/*}
+          echo "::add-mask::$t"
+          echo "CLOUDFLARE_API_TOKEN=$t" >> "$GITHUB_ENV"
+          echo "CLOUDFLARE_ACCOUNT_ID=$a" >> "$GITHUB_ENV"
+          echo "Длина токена: ${#t}, длина Account ID: ${#a}"
+          [ ${#a} -eq 32 ] || { echo "::error::CLOUDFLARE_ACCOUNT_ID должен быть 32 символа, сейчас ${#a}"; exit 1; }
+          res=$(curl -sS -H "Authorization: Bearer $t" "https://api.cloudflare.com/client/v4/accounts/$a/tokens/verify")
+          if [ "$(echo "$res" | jq -r '.success')" != "true" ]; then
+            res=$(curl -sS -H "Authorization: Bearer $t" "https://api.cloudflare.com/client/v4/user/tokens/verify")
+          fi
+          echo "$res" | jq '{success, status: .result.status, errors}'
+          [ "$(echo "$res" | jq -r '.success')" = "true" ] || { echo "::error::Cloudflare не принял токен. Создай новый токен и заново сохрани его в секрет CLOUDFLARE_API_TOKEN (только сам токен, без пробелов и без слова Bearer)."; exit 1; }
+
       - name: Адрес workers.dev
         id: subdomain
         run: |
