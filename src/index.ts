@@ -1,0 +1,592 @@
+import { Hono, type Context } from 'hono';
+import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
+import { randomBytes } from 'node:crypto';
+import { checkPassword, hashPassword, needsRehash } from './passwords';
+import {
+  authPage,
+  dashboardPage,
+  friendsPage,
+  profilePage,
+  settingsPage,
+  type Currency,
+  type ExpenseRow,
+  type Flash,
+} from './views';
+
+type Env = {
+  DB: D1Database;
+  SECRET_KEY: string;
+  SHORTCUT_URL?: string;
+};
+
+interface User {
+  id: number;
+  username: string;
+  password_hash: string;
+  currency: string;
+  created_at: string | null;
+}
+
+type App = { Bindings: Env; Variables: { user: User } };
+type C = Context<App>;
+
+const CATEGORIES = ['Еда', 'Транспорт', 'Жильё', 'Развлечения', 'Здоровье', 'Одежда', 'Прочее'];
+
+const CURRENCIES: Record<string, Currency> = {
+  RUB: { label: 'Российский рубль', symbol: '₽' },
+  KZT: { label: 'Казахстанский тенге', symbol: '₸' },
+  USD: { label: 'Доллар США', symbol: '$' },
+  AED: { label: 'Дирхам ОАЭ', symbol: 'AED' },
+  EUR: { label: 'Евро', symbol: '€' },
+  KGS: { label: 'Киргизский сом', symbol: 'сом' },
+  UZS: { label: 'Узбекский сум', symbol: 'сум' },
+};
+
+const DEFAULT_SHORTCUT_URL = 'https://www.icloud.com/shortcuts/4f0e5cce76fe4bf5a66309194c7c1da0';
+const SESSION_COOKIE = 'session';
+const FLASH_COOKIE = 'flash';
+const SESSION_MAX_AGE = 90 * 24 * 3600;
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
+
+const app = new Hono<App>();
+
+// ---------- сессия и flash-сообщения ----------
+
+async function getSessionUserId(c: C): Promise<number | null> {
+  const raw = await getSignedCookie(c, c.env.SECRET_KEY, SESSION_COOKIE);
+  const id = raw ? Number(raw) : NaN;
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+async function login(c: C, userId: number) {
+  await setSignedCookie(c, SESSION_COOKIE, String(userId), c.env.SECRET_KEY, {
+    path: '/',
+    httpOnly: true,
+    secure: true,
+    sameSite: 'Lax',
+    maxAge: SESSION_MAX_AGE,
+  });
+}
+
+function logout(c: C) {
+  deleteCookie(c, SESSION_COOKIE, { path: '/', secure: true });
+}
+
+function flash(c: C, message: string, category: 'success' | 'error') {
+  const existing = readFlashes(c);
+  existing.push([category, message]);
+  setCookie(c, FLASH_COOKIE, encodeURIComponent(JSON.stringify(existing)), {
+    path: '/',
+    httpOnly: true,
+    secure: true,
+    sameSite: 'Lax',
+  });
+}
+
+function readFlashes(c: C): Flash[] {
+  const raw = getCookie(c, FLASH_COOKIE);
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(decodeURIComponent(raw));
+    return Array.isArray(v) ? v.filter((x) => Array.isArray(x) && x.length === 2).map((x) => [String(x[0]), String(x[1])]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function popFlashes(c: C): Flash[] {
+  const f = readFlashes(c);
+  if (f.length) deleteCookie(c, FLASH_COOKIE, { path: '/', secure: true });
+  return f;
+}
+
+function symbol(user: User) {
+  return (CURRENCIES[user.currency] ?? CURRENCIES.RUB).symbol;
+}
+
+// ---------- даты (UTC, как было на Render) ----------
+
+function isoDate(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+
+function todayUtc() {
+  const now = new Date();
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
+function periodStart(period: string): string {
+  const today = todayUtc();
+  if (period === 'day') return isoDate(today);
+  if (period === 'week') {
+    const weekday = (today.getUTCDay() + 6) % 7; // понедельник = 0
+    return isoDate(new Date(today.getTime() - weekday * 86400000));
+  }
+  return isoDate(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1)));
+}
+
+// ---------- хелперы БД ----------
+
+async function spentSince(db: D1Database, userId: number, since: string): Promise<number> {
+  const r = await db
+    .prepare('SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND expense_date >= ?')
+    .bind(userId, since)
+    .first<{ total: number }>();
+  return r?.total ?? 0;
+}
+
+async function getFriendIds(db: D1Database, userId: number): Promise<number[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT CASE WHEN from_user_id = ?1 THEN to_user_id ELSE from_user_id END AS fid
+       FROM friendships WHERE status = 'accepted' AND (from_user_id = ?1 OR to_user_id = ?1)`,
+    )
+    .bind(userId)
+    .all<{ fid: number }>();
+  return [...new Set(results.map((r) => r.fid))];
+}
+
+/** Достаёт число из строки: убирает пробелы (в т.ч. неразрывные), знаки валюты и т.п. */
+function parseAmount(raw: unknown): number {
+  let s = String(raw).replace(/,/g, '.').replace(/[^0-9.]/g, '');
+  const dots = (s.match(/\./g) ?? []).length;
+  if (dots > 1) {
+    const i = s.lastIndexOf('.');
+    s = s.slice(0, i).replace(/\./g, '') + '.' + s.slice(i + 1);
+  }
+  if (s === '' || s === '.') throw new Error('bad amount');
+  const n = Number(s);
+  if (!Number.isFinite(n)) throw new Error('bad amount');
+  return n;
+}
+
+function formStr(form: Record<string, unknown>, name: string): string {
+  const v = form[name];
+  return typeof v === 'string' ? v : '';
+}
+
+// ---------- проверка входа ----------
+
+const loginRequired = async (c: C, next: () => Promise<void>) => {
+  const uid = await getSessionUserId(c);
+  if (!uid) return c.redirect('/login');
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(uid).first<User>();
+  if (!user) {
+    logout(c);
+    flash(c, 'Сессия устарела, войдите заново', 'error');
+    return c.redirect('/login');
+  }
+  c.set('user', user);
+  await next();
+};
+
+for (const p of ['/dashboard', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*']) {
+  app.use(p, loginRequired);
+}
+
+// ---------- маршруты ----------
+
+app.get('/', async (c) => c.redirect((await getSessionUserId(c)) ? '/dashboard' : '/login'));
+
+app.get('/register', (c) => c.html(authPage('register', popFlashes(c))));
+app.post('/register', async (c) => {
+  const form = await c.req.parseBody();
+  const username = formStr(form, 'username').trim();
+  const password = formStr(form, 'password');
+  const fail = (msg: string) => c.html(authPage('register', [...popFlashes(c), ['error', msg]]));
+
+  if (!username || !password) return fail('Заполните все поля');
+  if (password.length < 4) return fail('Пароль должен быть не короче 4 символов');
+  if (await c.env.DB.prepare('SELECT 1 FROM users WHERE username = ?').bind(username).first()) {
+    return fail('Такой пользователь уже существует');
+  }
+
+  const row = await c.env.DB.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?) RETURNING id')
+    .bind(username, hashPassword(password))
+    .first<{ id: number }>();
+  await login(c, row!.id);
+  flash(c, 'Регистрация прошла успешно!', 'success');
+  return c.redirect('/dashboard');
+});
+
+app.get('/login', (c) => c.html(authPage('login', popFlashes(c))));
+app.post('/login', async (c) => {
+  const form = await c.req.parseBody();
+  const username = formStr(form, 'username').trim();
+  const password = formStr(form, 'password');
+
+  const user = await c.env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first<User>();
+  if (user && checkPassword(user.password_hash, password)) {
+    if (needsRehash(user.password_hash)) {
+      await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hashPassword(password), user.id).run();
+    }
+    await login(c, user.id);
+    return c.redirect('/dashboard');
+  }
+  return c.html(authPage('login', [...popFlashes(c), ['error', 'Неверный логин или пароль']]));
+});
+
+app.get('/logout', (c) => {
+  logout(c);
+  return c.redirect('/login');
+});
+
+app.get('/dashboard', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const today = periodStart('day');
+  const weekStart = periodStart('week');
+  const monthStart = periodStart('month');
+
+  const [totals, byCat, recent] = await db.batch([
+    db
+      .prepare(
+        `SELECT
+           COALESCE(SUM(CASE WHEN expense_date = ?2 THEN amount END), 0) AS today,
+           COALESCE(SUM(CASE WHEN expense_date >= ?3 THEN amount END), 0) AS week,
+           COALESCE(SUM(CASE WHEN expense_date >= ?4 THEN amount END), 0) AS month
+         FROM expenses WHERE user_id = ?1`,
+      )
+      .bind(user.id, today, weekStart, monthStart),
+    db
+      .prepare(
+        `SELECT category, SUM(amount) AS total FROM expenses
+         WHERE user_id = ? AND expense_date >= ? GROUP BY category ORDER BY total DESC`,
+      )
+      .bind(user.id, monthStart),
+    db
+      .prepare(
+        `SELECT id, amount, category, note, expense_date FROM expenses
+         WHERE user_id = ? ORDER BY expense_date DESC, created_at DESC, id DESC LIMIT 15`,
+      )
+      .bind(user.id),
+  ]);
+  const t = totals.results[0] as { today: number; week: number; month: number };
+
+  return c.html(
+    dashboardPage({
+      flashes: popFlashes(c),
+      sym: symbol(user),
+      categories: CATEGORIES,
+      today,
+      todayTotal: t.today,
+      weekTotal: t.week,
+      monthTotal: t.month,
+      byCategory: byCat.results as { category: string; total: number }[],
+      recent: recent.results as unknown as ExpenseRow[],
+    }),
+  );
+});
+
+app.post('/dashboard', async (c) => {
+  const user = c.get('user');
+  const form = await c.req.parseBody();
+  const rawAmount = formStr(form, 'amount').replace(/,/g, '.').trim();
+  const amount = rawAmount === '' ? NaN : Number(rawAmount);
+  if (!Number.isFinite(amount)) {
+    flash(c, 'Введите корректную сумму', 'error');
+    return c.redirect('/dashboard');
+  }
+
+  const category = formStr(form, 'category') || 'Прочее';
+  const note = formStr(form, 'note').trim();
+  const dateStr = formStr(form, 'expense_date');
+  const expenseDate = /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : periodStart('day');
+
+  await c.env.DB.prepare('INSERT INTO expenses (user_id, amount, category, note, expense_date) VALUES (?, ?, ?, ?, ?)')
+    .bind(user.id, amount, category, note, expenseDate)
+    .run();
+  flash(c, 'Трата добавлена', 'success');
+  return c.redirect('/dashboard');
+});
+
+app.post('/delete/:id{[0-9]+}', async (c) => {
+  const res = await c.env.DB.prepare('DELETE FROM expenses WHERE id = ? AND user_id = ?')
+    .bind(Number(c.req.param('id')), c.get('user').id)
+    .run();
+  if (res.meta.changes) flash(c, 'Запись удалена', 'success');
+  return c.redirect('/dashboard');
+});
+
+app.get('/friends', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  let period = c.req.query('period') ?? 'month';
+  if (!['day', 'week', 'month'].includes(period)) period = 'month';
+  const since = periodStart(period);
+
+  const ids = [...(await getFriendIds(db, user.id)), user.id];
+  const [boardRes, incomingRes] = await db.batch([
+    db
+      .prepare(
+        `SELECT u.id, u.username, COALESCE(SUM(e.amount), 0) AS total
+         FROM users u LEFT JOIN expenses e ON e.user_id = u.id AND e.expense_date >= ?
+         WHERE u.id IN (SELECT value FROM json_each(?))
+         GROUP BY u.id ORDER BY total DESC`,
+      )
+      .bind(since, JSON.stringify(ids)),
+    db
+      .prepare(
+        `SELECT f.id, u.id AS user_id, u.username FROM friendships f
+         JOIN users u ON u.id = f.from_user_id
+         WHERE f.to_user_id = ? AND f.status = 'pending' ORDER BY f.id`,
+      )
+      .bind(user.id),
+  ]);
+
+  const board = (boardRes.results as { id: number; username: string; total: number }[]).map((r) => ({
+    ...r,
+    is_me: r.id === user.id,
+  }));
+
+  return c.html(
+    friendsPage({
+      flashes: popFlashes(c),
+      sym: symbol(user),
+      period,
+      board,
+      incoming: incomingRes.results as { id: number; user_id: number; username: string }[],
+    }),
+  );
+});
+
+app.post('/friends/add', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const form = await c.req.parseBody();
+  const targetUsername = formStr(form, 'friend_login').trim();
+
+  if (targetUsername === user.username) {
+    flash(c, 'Нельзя добавить самого себя', 'error');
+    return c.redirect('/friends');
+  }
+  const target = await db.prepare('SELECT id, username FROM users WHERE username = ?').bind(targetUsername).first<{ id: number; username: string }>();
+  if (!target) {
+    flash(c, 'Пользователь с таким логином не найден', 'error');
+    return c.redirect('/friends');
+  }
+  const existing = await db
+    .prepare(
+      `SELECT 1 FROM friendships
+       WHERE (from_user_id = ?1 AND to_user_id = ?2) OR (from_user_id = ?2 AND to_user_id = ?1)`,
+    )
+    .bind(user.id, target.id)
+    .first();
+  if (existing) {
+    flash(c, 'Заявка уже отправлена или вы уже друзья', 'error');
+    return c.redirect('/friends');
+  }
+
+  await db.prepare("INSERT INTO friendships (from_user_id, to_user_id, status) VALUES (?, ?, 'pending')").bind(user.id, target.id).run();
+  flash(c, `Заявка отправлена пользователю ${target.username}`, 'success');
+  return c.redirect('/friends');
+});
+
+app.post('/friends/accept/:id{[0-9]+}', async (c) => {
+  const res = await c.env.DB.prepare("UPDATE friendships SET status = 'accepted' WHERE id = ? AND to_user_id = ? AND status = 'pending'")
+    .bind(Number(c.req.param('id')), c.get('user').id)
+    .run();
+  if (res.meta.changes) flash(c, 'Заявка принята', 'success');
+  return c.redirect('/friends');
+});
+
+app.post('/friends/decline/:id{[0-9]+}', async (c) => {
+  const res = await c.env.DB.prepare("DELETE FROM friendships WHERE id = ? AND to_user_id = ? AND status = 'pending'")
+    .bind(Number(c.req.param('id')), c.get('user').id)
+    .run();
+  if (res.meta.changes) flash(c, 'Заявка отклонена', 'success');
+  return c.redirect('/friends');
+});
+
+app.get('/profile', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const [total, count, av, tok, friendIds] = await Promise.all([
+    spentSince(db, user.id, '2000-01-01'),
+    db.prepare('SELECT COUNT(*) AS n FROM expenses WHERE user_id = ?').bind(user.id).first<{ n: number }>(),
+    db.prepare('SELECT updated_at FROM avatars WHERE user_id = ?').bind(user.id).first<{ updated_at: string }>(),
+    db.prepare('SELECT token FROM api_tokens WHERE user_id = ?').bind(user.id).first<{ token: string }>(),
+    getFriendIds(db, user.id),
+  ]);
+
+  return c.html(
+    profilePage({
+      flashes: popFlashes(c),
+      sym: symbol(user),
+      shortcutUrl: c.env.SHORTCUT_URL || DEFAULT_SHORTCUT_URL,
+      username: user.username,
+      userId: user.id,
+      createdAt: user.created_at,
+      totalAllTime: total,
+      expenseCount: count?.n ?? 0,
+      friendCount: friendIds.length,
+      avatarV: av ? String(Date.parse(av.updated_at.replace(' ', 'T') + 'Z') / 1000 || 0) : null,
+      apiToken: tok?.token ?? null,
+    }),
+  );
+});
+
+app.get('/avatar/:id{[0-9]+}', async (c) => {
+  const a = await c.env.DB.prepare('SELECT data FROM avatars WHERE user_id = ?')
+    .bind(Number(c.req.param('id')))
+    .first<{ data: number[] | ArrayBuffer }>();
+  if (!a) return c.notFound();
+  return c.body(new Uint8Array(a.data as ArrayBuffer), 200, {
+    'Content-Type': 'image/jpeg',
+    'Cache-Control': 'private, max-age=86400',
+  });
+});
+
+app.post('/profile/avatar', async (c) => {
+  const form = await c.req.parseBody();
+  const f = form['avatar'];
+  if (!(f instanceof File) || f.size === 0) {
+    flash(c, 'Выберите фото', 'error');
+    return c.redirect('/profile');
+  }
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  // Браузер уже сжал фото до 256x256 JPEG; здесь только проверяем, что это действительно JPEG
+  const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (!isJpeg || bytes.length > MAX_AVATAR_BYTES) {
+    flash(c, 'Не удалось обработать фото, попробуйте другое', 'error');
+    return c.redirect('/profile');
+  }
+  await c.env.DB.prepare(
+    `INSERT INTO avatars (user_id, data, updated_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
+  )
+    .bind(c.get('user').id, bytes)
+    .run();
+  flash(c, 'Фото обновлено', 'success');
+  return c.redirect('/profile');
+});
+
+app.post('/profile/avatar/delete', async (c) => {
+  await c.env.DB.prepare('DELETE FROM avatars WHERE user_id = ?').bind(c.get('user').id).run();
+  flash(c, 'Фото удалено', 'success');
+  return c.redirect('/profile');
+});
+
+app.post('/profile/token', async (c) => {
+  // Создаёт новый токен для быстрых команд (старый перестаёт работать)
+  const token = randomBytes(24).toString('base64url');
+  await c.env.DB.prepare(
+    `INSERT INTO api_tokens (user_id, token, created_at) VALUES (?, ?, datetime('now'))
+     ON CONFLICT(user_id) DO UPDATE SET token = excluded.token, created_at = excluded.created_at`,
+  )
+    .bind(c.get('user').id, token)
+    .run();
+  flash(c, 'Токен создан', 'success');
+  return c.redirect('/profile');
+});
+
+app.post('/api/add', async (c) => {
+  // Добавление траты из «Быстрых команд». Авторизация по личному токену.
+  const contentType = c.req.header('Content-Type') ?? '';
+  let data: Record<string, unknown> = {};
+  let form: Record<string, unknown> = {};
+  try {
+    if (contentType.includes('application/json')) {
+      const j = await c.req.json();
+      if (j && typeof j === 'object' && !Array.isArray(j)) data = j;
+    } else if (contentType.includes('form')) {
+      form = await c.req.parseBody();
+    } else {
+      // «Команды» иногда шлют JSON без правильного Content-Type
+      const j = JSON.parse(await c.req.text());
+      if (j && typeof j === 'object' && !Array.isArray(j)) data = j;
+    }
+  } catch {
+    /* пустое или кривое тело — дальше упадёт на проверке токена */
+  }
+  const field = (name: string): unknown => {
+    const fv = form[name];
+    if (typeof fv === 'string' && fv) return fv;
+    return data[name] || '';
+  };
+
+  const token = (c.req.header('X-Token') || String(field('token'))).trim();
+  const rec = token
+    ? await c.env.DB.prepare('SELECT user_id FROM api_tokens WHERE token = ?').bind(token).first<{ user_id: number }>()
+    : null;
+  if (!rec) return c.json({ ok: false, error: 'Неверный токен' }, 401);
+
+  const rawAmount = field('amount');
+  let amount: number;
+  try {
+    amount = parseAmount(rawAmount);
+  } catch {
+    // Диагностика: показываем, что реально пришло
+    return c.json(
+      {
+        ok: false,
+        error: 'Некорректная сумма',
+        received: String(rawAmount),
+        keys: [...Object.keys(data), ...Object.keys(form)],
+        content_type: contentType || null,
+      },
+      400,
+    );
+  }
+  if (amount <= 0) return c.json({ ok: false, error: 'Сумма должна быть больше нуля', received: String(rawAmount) }, 400);
+
+  let category = String(field('category')).trim();
+  if (!CATEGORIES.includes(category)) category = 'Прочее';
+  const note = [...String(field('note')).trim()].slice(0, 255).join('');
+
+  await c.env.DB.prepare('INSERT INTO expenses (user_id, amount, category, note, expense_date) VALUES (?, ?, ?, ?, ?)')
+    .bind(rec.user_id, amount, category, note, periodStart('day'))
+    .run();
+  return c.json({ ok: true, amount, category });
+});
+
+app.get('/settings', (c) => {
+  const user = c.get('user');
+  return c.html(
+    settingsPage({ flashes: popFlashes(c), username: user.username, currencies: CURRENCIES, currentCurrency: user.currency }),
+  );
+});
+
+app.post('/settings', async (c) => {
+  const user = c.get('user');
+  const form = await c.req.parseBody();
+  const action = formStr(form, 'action');
+
+  if (action === 'change_password') {
+    if (!checkPassword(user.password_hash, formStr(form, 'current_password'))) {
+      flash(c, 'Текущий пароль неверен', 'error');
+      return c.redirect('/settings');
+    }
+    const newPassword = formStr(form, 'new_password');
+    if (newPassword.length < 4) {
+      flash(c, 'Новый пароль должен быть не короче 4 символов', 'error');
+      return c.redirect('/settings');
+    }
+    await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hashPassword(newPassword), user.id).run();
+    flash(c, 'Пароль изменён', 'success');
+  } else if (action === 'change_currency') {
+    const cur = formStr(form, 'currency');
+    if (cur in CURRENCIES) {
+      await c.env.DB.prepare('UPDATE users SET currency = ? WHERE id = ?').bind(cur, user.id).run();
+      flash(c, 'Валюта обновлена', 'success');
+    }
+  }
+  return c.redirect('/settings');
+});
+
+app.post('/settings/delete_account', async (c) => {
+  const id = c.get('user').id;
+  const db = c.env.DB;
+  await db.batch([
+    db.prepare('DELETE FROM friendships WHERE from_user_id = ?1 OR to_user_id = ?1').bind(id),
+    db.prepare('DELETE FROM expenses WHERE user_id = ?').bind(id),
+    db.prepare('DELETE FROM avatars WHERE user_id = ?').bind(id),
+    db.prepare('DELETE FROM api_tokens WHERE user_id = ?').bind(id),
+    db.prepare('DELETE FROM users WHERE id = ?').bind(id),
+  ]);
+  logout(c);
+  flash(c, 'Аккаунт удалён', 'success');
+  return c.redirect('/login');
+});
+
+export default app;

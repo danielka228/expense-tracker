@@ -1,0 +1,30 @@
+{
+  "name": "expense-tracker",
+  "version": "1.0.0",
+  "description": "СпендТрекер — трекер расходов на Cloudflare Workers + D1",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc",
+    "db:migrate": "wrangler d1 migrations apply expense-tracker --remote",
+    "db:migrate:local": "wrangler d1 migrations apply expense-tracker --local"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/danielka228/expense-tracker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/danielka228/expense-tracker/issues"
+  },
+  "homepage": "https://github.com/danielka228/expense-tracker#readme",
+  "dependencies": {
+    "hono": "^4.13.13"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261018.1",
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.151.1"
+  },
+  "private": true
+}
