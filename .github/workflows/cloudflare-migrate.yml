@@ -1,6 +1,7 @@
 # Деплой на Cloudflare: сам после мержа в main или вручную: GitHub → Actions → «Переезд на Cloudflare» → Run workflow.
 # target=preview выкладывает отдельную демо-версию expense-tracker-preview со своей базой — основной сайт не трогается.
 # Нужны секреты репозитория: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (и DATABASE_URL — только для переноса данных).
+# Необязательный TELEGRAM_BOT_TOKEN (токен от @BotFather) включает Telegram-бота на основном сайте.
 name: Переезд на Cloudflare
 
 on:
@@ -124,6 +125,39 @@ jobs:
             echo "Создаю SECRET_KEY"
             openssl rand -hex 32 | npx wrangler secret put SECRET_KEY $ENV_ARGS
           fi
+
+      - name: Telegram-бот
+        if: env.TARGET == 'production'
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          t=$(printf '%s' "$TG_TOKEN" | tr -d " \t\r\n\"'")
+          if [ -z "$t" ]; then
+            echo "Секрет TELEGRAM_BOT_TOKEN не задан — бот не подключается."
+            exit 0
+          fi
+          echo "::add-mask::$t"
+          api="https://api.telegram.org/bot$t"
+          me=$(curl -sS "$api/getMe")
+          [ "$(echo "$me" | jq -r '.ok')" = "true" ] || { echo "::error::Telegram не принял токен. В секрете TELEGRAM_BOT_TOKEN должен быть только токен от @BotFather, вида 123456789:AAE…"; exit 1; }
+          bot=$(echo "$me" | jq -r '.result.username')
+          printf '%s' "$t" | npx wrangler secret put TELEGRAM_BOT_TOKEN $ENV_ARGS
+          # Тот же секрет Worker считает у себя (webhookSecret в src/telegram.ts) и сверяет с заголовком запроса
+          secret=$(printf '%s' "$t" | sha256sum | cut -c1-48)
+          hook="${{ steps.subdomain.outputs.url }}/tg/webhook"
+          curl -sS "$api/setWebhook" -H 'Content-Type: application/json' \
+            --data "$(jq -nc --arg u "$hook" --arg s "$secret" '{url: $u, secret_token: $s, allowed_updates: ["message", "callback_query"]}')" | jq -c '{ok, description}'
+          curl -sS "$api/setMyCommands" -H 'Content-Type: application/json' --data '{"commands": [
+            {"command": "stats", "description": "Сколько потрачено"},
+            {"command": "last", "description": "Последние траты"},
+            {"command": "undo", "description": "Удалить последнюю запись"},
+            {"command": "help", "description": "Как пользоваться"},
+            {"command": "unlink", "description": "Отключить бота от аккаунта"}]}' | jq -c '{ok}'
+          curl -sS "$api/setMyDescription" -H 'Content-Type: application/json' \
+            --data '{"description": "Записываю траты в СпендТрекер. Напиши «кофе 250» — и трата уже на сайте."}' | jq -c '{ok}'
+          info=$(curl -sS "$api/getWebhookInfo" | jq -c '.result | {url, pending_update_count, last_error_message}')
+          echo "Вебхук: $info"
+          { echo; echo "Telegram-бот: https://t.me/$bot"; echo; echo "Вебхук: \`$info\`"; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Перенос данных
         if: inputs.import_data && env.TARGET == 'production'

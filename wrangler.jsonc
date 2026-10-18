@@ -5,6 +5,8 @@
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
+  // Без этого сборщик вставляет в функции вызовы __name(...), а parseExpense уходит в браузер исходным текстом
+  "keep_names": false,
   // Перед деплоем и локальным запуском копируем распознаватель штрих-кодов в public/vendor
   "build": { "command": "node scripts/build-vendor.mjs" },
   // Статика (иконки, распознаватель штрих-кодов) отдаётся напрямую, остальное — в Worker

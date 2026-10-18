@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } 
 import { randomBytes } from 'node:crypto';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
+import { botApi, botUsername, handleUpdate, webhookSecret, type TgUpdate } from './telegram';
 import {
   authPage,
   landingPage,
@@ -21,6 +22,8 @@ type Env = {
   SECRET_KEY: string;
   SHORTCUT_URL?: string;
   DEMO?: string; // "1" — демо-версия с кнопкой «Войти в демо»
+  TELEGRAM_BOT_TOKEN?: string; // токен от @BotFather; workflow кладёт его из секрета GitHub
+  TELEGRAM_API?: string; // только для локальной проверки: адрес заглушки вместо api.telegram.org
 };
 
 interface User {
@@ -570,12 +573,15 @@ app.post('/friends/decline/:id{[0-9]+}', async (c) => {
 app.get('/profile', async (c) => {
   const user = c.get('user');
   const db = c.env.DB;
-  const [total, count, av, tok, friendIds] = await Promise.all([
+  const tgToken = c.env.TELEGRAM_BOT_TOKEN;
+  const [total, count, av, tok, friendIds, tgLink, tgBot] = await Promise.all([
     spentSince(db, user.id, '2000-01-01'),
     db.prepare('SELECT COUNT(*) AS n FROM expenses WHERE user_id = ?').bind(user.id).first<{ n: number }>(),
     db.prepare('SELECT updated_at FROM avatars WHERE user_id = ?').bind(user.id).first<{ updated_at: string }>(),
     db.prepare('SELECT token FROM api_tokens WHERE user_id = ?').bind(user.id).first<{ token: string }>(),
     getFriendIds(db, user.id),
+    db.prepare('SELECT tg_username FROM telegram_links WHERE user_id = ?').bind(user.id).first<{ tg_username: string | null }>(),
+    tgToken ? botUsername(botApi(tgToken, c.env.TELEGRAM_API)) : null,
   ]);
 
   return c.html(
@@ -591,8 +597,64 @@ app.get('/profile', async (c) => {
       friendCount: friendIds.length,
       avatarV: av ? String(Date.parse(av.updated_at.replace(' ', 'T') + 'Z') / 1000 || 0) : null,
       apiToken: tok?.token ?? null,
+      telegram: tgBot ? { bot: tgBot, linked: !!tgLink, tgUsername: tgLink?.tg_username ?? null } : null,
     }),
   );
+});
+
+app.post('/profile/telegram', async (c) => {
+  // Одноразовая ссылка t.me/<бот>?start=<код>: по коду бот узнаёт, чей это чат
+  const token = c.env.TELEGRAM_BOT_TOKEN;
+  const bot = token ? await botUsername(botApi(token, c.env.TELEGRAM_API)) : null;
+  if (!bot) {
+    flash(c, 'Telegram-бот сейчас недоступен', 'error');
+    return c.redirect('/profile');
+  }
+  const code = randomBytes(18).toString('base64url');
+  const db = c.env.DB;
+  await db.batch([
+    db.prepare("DELETE FROM telegram_codes WHERE user_id = ? OR created_at < datetime('now', '-1 day')").bind(c.get('user').id),
+    db.prepare('INSERT INTO telegram_codes (code, user_id) VALUES (?, ?)').bind(code, c.get('user').id),
+  ]);
+  return c.redirect(`https://t.me/${bot}?start=${code}`);
+});
+
+app.post('/profile/telegram/unlink', async (c) => {
+  const res = await c.env.DB.prepare('DELETE FROM telegram_links WHERE user_id = ?').bind(c.get('user').id).run();
+  if (res.meta.changes) flash(c, 'Telegram отключён', 'success');
+  return c.redirect('/profile');
+});
+
+app.post('/tg/webhook', async (c) => {
+  // Сюда Telegram присылает сообщения боту. Чужие запросы отсекаем по секрету из setWebhook.
+  const token = c.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return c.notFound();
+  if (c.req.header('X-Telegram-Bot-Api-Secret-Token') !== (await webhookSecret(token))) return c.text('forbidden', 403);
+  let update: TgUpdate;
+  try {
+    update = await c.req.json<TgUpdate>();
+  } catch {
+    return c.text('ok');
+  }
+  const db = c.env.DB;
+  try {
+    await handleUpdate(
+      {
+        db,
+        api: botApi(token, c.env.TELEGRAM_API),
+        siteUrl: new URL(c.req.url).origin,
+        categories: CATEGORIES,
+        today: periodStart('day'),
+        symbol: (cur) => (CURRENCIES[cur] ?? CURRENCIES.RUB).symbol,
+        overview: (uid) => spendingOverview(db, uid, 10),
+      },
+      update,
+    );
+  } catch (e) {
+    // Отвечаем 200 в любом случае, иначе Telegram будет повторять это сообщение снова и снова
+    console.error('telegram update failed', e);
+  }
+  return c.text('ok');
 });
 
 app.get('/avatar/:id{[0-9]+}', async (c) => {
@@ -761,6 +823,8 @@ app.post('/settings/delete_account', async (c) => {
     db.prepare('DELETE FROM expenses WHERE user_id = ?').bind(id),
     db.prepare('DELETE FROM avatars WHERE user_id = ?').bind(id),
     db.prepare('DELETE FROM api_tokens WHERE user_id = ?').bind(id),
+    db.prepare('DELETE FROM telegram_links WHERE user_id = ?').bind(id),
+    db.prepare('DELETE FROM telegram_codes WHERE user_id = ?').bind(id),
     db.prepare('DELETE FROM users WHERE id = ?').bind(id),
   ]);
   logout(c);
