@@ -237,8 +237,9 @@ app.get('/dashboard', async (c) => {
   const today = periodStart('day');
   const weekStart = periodStart('week');
   const monthStart = periodStart('month');
+  const days = Array.from({ length: 7 }, (_, i) => isoDate(new Date(Date.parse(today) - (6 - i) * 86400000)));
 
-  const [totals, byCat, recent] = await db.batch([
+  const [totals, byCat, recent, perDay] = await db.batch([
     db
       .prepare(
         `SELECT
@@ -260,18 +261,27 @@ app.get('/dashboard', async (c) => {
          WHERE user_id = ? ORDER BY expense_date DESC, created_at DESC, id DESC LIMIT 15`,
       )
       .bind(user.id),
+    db
+      .prepare(
+        `SELECT expense_date AS date, SUM(amount) AS total FROM expenses
+         WHERE user_id = ? AND expense_date >= ? AND expense_date <= ? GROUP BY expense_date`,
+      )
+      .bind(user.id, days[0], today),
   ]);
   const t = totals.results[0] as { today: number; week: number; month: number };
+  const dayTotals = new Map((perDay.results as { date: string; total: number }[]).map((r) => [r.date, r.total]));
 
   return c.html(
     dashboardPage({
       flashes: popFlashes(c),
       sym: symbol(user),
+      username: user.username,
       categories: CATEGORIES,
       today,
       todayTotal: t.today,
       weekTotal: t.week,
       monthTotal: t.month,
+      week: days.map((date) => ({ date, total: dayTotals.get(date) ?? 0 })),
       byCategory: byCat.results as { category: string; total: number }[],
       recent: recent.results as unknown as ExpenseRow[],
     }),

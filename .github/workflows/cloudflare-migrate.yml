@@ -1,8 +1,17 @@
-# Переезд на Cloudflare одной кнопкой: GitHub → Actions → «Переезд на Cloudflare» → Run workflow.
+# Деплой на Cloudflare: сам после мержа в main или вручную: GitHub → Actions → «Переезд на Cloudflare» → Run workflow.
 # Нужны секреты репозитория: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, DATABASE_URL.
 name: Переезд на Cloudflare
 
 on:
+  # Сайт обновляется сам после каждого мержа в main, если менялся код сайта
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'migrations/**'
+      - 'wrangler.jsonc'
+      - 'package.json'
+      - 'package-lock.json'
   workflow_dispatch:
     inputs:
       import_data:

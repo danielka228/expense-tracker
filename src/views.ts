@@ -1,6 +1,7 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
-import { BASE_CSS, FRIENDS_CSS, PROFILE_CSS } from './styles';
+import { COMMON_JS, PARSE_JS, VOICE_JS } from './client';
+import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, PROFILE_CSS } from './styles';
 
 type H = HtmlEscapedString | Promise<HtmlEscapedString>;
 export type Flash = [category: string, message: string];
@@ -10,12 +11,15 @@ export interface Currency {
   symbol: string;
 }
 
-// Аналог '%.0f'|format(x) из Jinja (Python округляет .5 к чётному: 350.5 -> 350)
+// Аналог '%.0f'|format(x) из Jinja (Python округляет .5 к чётному: 350.5 -> 350) + пробелы между разрядами
 export const fmt0 = (n: number) => {
   const x = Number(n) || 0;
   const r = Math.abs(x % 1) === 0.5 ? 2 * Math.round(x / 2) : Math.round(x);
-  return (r || 0).toFixed(0);
+  return (r || 0).toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 };
+
+// Число, которое плавно «докручивается» от нуля при открытии страницы
+const countUp = (n: number) => html`<span data-count="${Math.round(Number(n) || 0)}" data-final="${fmt0(n)}">${fmt0(n)}</span>`;
 
 const TAB_ICONS = {
   dashboard: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2z"/><circle cx="16.5" cy="14.5" r="1" fill="currentColor"/></svg>',
@@ -31,12 +35,17 @@ const TAB_LABELS: Record<Tab, string> = {
   settings: 'Настройки',
 };
 
+// Градиент для иконки активной вкладки (на него ссылается CSS через url(#tab-grad))
+const SVG_DEFS = '<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><linearGradient id="tab-grad" x1="0" y1="0" x2="24" y2="24" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#a99cff"/><stop offset="1" stop-color="#45d4c4"/></linearGradient></defs></svg>';
+
 interface LayoutOpts {
   title: string;
   flashes: Flash[];
   loggedIn: boolean;
   activeTab?: Tab;
   center?: boolean;
+  extraCss?: string;
+  scripts?: string;
 }
 
 export function layout(o: LayoutOpts, content: H) {
@@ -51,18 +60,22 @@ export function layout(o: LayoutOpts, content: H) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#07080d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>${o.title}</title>
 <style>
-${raw(BASE_CSS)}</style>
+${raw(BASE_CSS)}${raw(o.extraCss ?? '')}</style>
 </head>
 <body>
+  ${raw(SVG_DEFS)}
   <div class="${o.center ? 'center-wrap' : 'wrap'}">
     ${o.flashes.map(([cat, msg]) => html`<div class="flash ${cat}">${msg}</div>`)}
     ${content}
   </div>
-  ${o.loggedIn ? html`<div class="tabbar">${tabs}
-  </div>` : ''}
+  ${o.loggedIn ? html`<nav class="tabbar">${tabs}
+  </nav>` : ''}
+  <script>${raw(COMMON_JS)}${raw(o.scripts ?? '')}</script>
 </body>
 </html>`;
 }
@@ -71,15 +84,16 @@ export function authPage(kind: 'login' | 'register', flashes: Flash[]) {
   const isLogin = kind === 'login';
   return layout(
     { title: isLogin ? 'Вход' : 'Регистрация', flashes, loggedIn: false, center: true },
-    html`<div class="brand">💸 СпендТрекер</div>
+    html`<div class="brand">СпендТрекер</div>
 <div class="card">
   <h2>${isLogin ? 'Вход' : 'Регистрация'}</h2>
+  <p style="color: var(--muted); font-size: 14px; margin: 0 0 16px;">${isLogin ? 'Рады видеть снова' : 'Пара секунд — и можно считать траты'}</p>
   <form method="POST">
     <label>Логин</label>
-    <input type="text" name="username" required autofocus>
+    <input type="text" name="username" required autofocus autocapitalize="off" autocorrect="off">
     <label>Пароль</label>
     <input type="password" name="password" required>
-    <button type="submit">${isLogin ? 'Войти' : 'Создать аккаунт'}</button>
+    <button type="submit" style="margin-top:4px;">${isLogin ? 'Войти' : 'Создать аккаунт'}</button>
   </form>
 </div>
 ${isLogin
@@ -88,26 +102,54 @@ ${isLogin
   );
 }
 
-const ICO_RULES: [string[], string, string][] = [
-  [['еда', 'продукт', 'кафе', 'ресторан'], 'orange', '🍔'],
-  [['транспорт', 'такси', 'авто', 'бензин'], 'blue', '🚕'],
-  [['дом', 'жиль', 'аренд', 'коммунал'], 'teal', '🏠'],
-  [['развлеч', 'кино', 'игр'], 'purple', '🎮'],
-  [['здоров', 'аптек', 'врач'], 'red', '💊'],
-  [['одежд', 'шопинг', 'покуп'], 'pink', '🛍️'],
-  [['подар'], 'pink', '🎁'],
-  [['подпис', 'связ', 'интернет'], 'teal', '📲'],
-  [['путеш', 'отпуск', 'поездк'], 'yellow', '✈️'],
-  [['обуч', 'курс', 'книг'], 'green', '📚'],
+// ---------- иконки категорий ----------
+
+const ICONS = {
+  food: '<path d="M3 2v7c0 1.1.9 2 2 2h4a2 2 0 0 0 2-2V2"/><path d="M7 2v20"/><path d="M21 15V2a5 5 0 0 0-5 5v6c0 1.1.9 2 2 2h3zm0 0v7"/>',
+  car: '<path d="M19 17h2c.6 0 1-.4 1-1v-3c0-.9-.7-1.7-1.5-1.9C18.7 10.6 16 10 16 10s-1.3-1.4-2.2-2.3c-.5-.4-1.1-.7-1.8-.7H5c-.6 0-1.1.4-1.4.9l-1.4 2.9A3.7 3.7 0 0 0 2 12v4c0 .6.4 1 1 1h2"/><circle cx="7" cy="17" r="2"/><path d="M9 17h6"/><circle cx="17" cy="17" r="2"/>',
+  home: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/>',
+  game: '<path d="M6 12h4"/><path d="M8 10v4"/><path d="M15 13h.01"/><path d="M18 11h.01"/><rect x="2" y="6" width="20" height="12" rx="4"/>',
+  health: '<path d="M19 14c1.5-1.5 3-3.2 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.8 0-3 .5-4.5 2-1.5-1.5-2.7-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4 3 5.5l7 7z"/><path d="M3.2 12h6.3l.5-1 2 4.5 2-7 1.5 3.5h5.3"/>',
+  shirt: '<path d="M20.4 3.5 16 2a4 4 0 0 1-8 0L3.6 3.5a2 2 0 0 0-1.3 2.2l.6 3.5a1 1 0 0 0 1 .8H6v10c0 1.1.9 2 2 2h8a2 2 0 0 0 2-2V10h2.2a1 1 0 0 0 1-.8l.6-3.5a2 2 0 0 0-1.4-2.2z"/>',
+  gift: '<rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13"/><path d="M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7"/><path d="M7.5 8a2.5 2.5 0 0 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 0 1 0 5"/>',
+  phone: '<rect x="5" y="2" width="14" height="20" rx="3"/><path d="M12 18h.01"/>',
+  plane: '<path d="M17.8 19.2 16 11l3.5-3.5C21 6 21.5 4 21 3c-1-.5-3 0-4.5 1.5L13 8 4.8 6.2c-.5-.1-.9.1-1.1.5l-.3.5c-.2.5-.1 1 .3 1.3L9 12l-2 3H4l-1 1 3 2 2 3 1-1v-3l3-2 3.5 5.3c.3.4.8.5 1.3.3l.5-.2c.4-.3.6-.7.5-1.2z"/>',
+  book: '<path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1 0-5H20"/>',
+  card: '<rect x="2" y="5" width="20" height="14" rx="3"/><path d="M2 10h20"/><path d="M6 15h4"/>',
+};
+type IconName = keyof typeof ICONS;
+
+// Цвет плитки и цвет сегмента на диаграмме
+const COLORS: Record<string, string> = {
+  blue: '#5f8cf7', green: '#2fc487', orange: '#f68a41', pink: '#ef6a9c',
+  purple: '#9a72f7', teal: '#30c2b4', yellow: '#efb73d', red: '#ec5a70',
+};
+
+const ICO_RULES: [string[], string, IconName][] = [
+  [['еда', 'продукт', 'кафе', 'ресторан', 'кофе', 'обед'], 'orange', 'food'],
+  [['транспорт', 'такси', 'авто', 'бензин'], 'blue', 'car'],
+  [['дом', 'жиль', 'аренд', 'коммунал'], 'teal', 'home'],
+  [['развлеч', 'кино', 'игр'], 'purple', 'game'],
+  [['здоров', 'аптек', 'врач'], 'red', 'health'],
+  [['одежд', 'шопинг', 'покуп'], 'pink', 'shirt'],
+  [['подар'], 'pink', 'gift'],
+  [['подпис', 'связ', 'интернет'], 'teal', 'phone'],
+  [['путеш', 'отпуск', 'поездк'], 'yellow', 'plane'],
+  [['обуч', 'курс', 'книг'], 'green', 'book'],
 ];
 const ICO_COLORS = ['blue', 'green', 'orange', 'pink', 'purple', 'teal', 'yellow', 'red'];
 
-function ico(cat: string) {
+function catStyle(cat: string): { color: string; icon: IconName } {
   const c = cat.toLowerCase();
-  for (const [words, color, emoji] of ICO_RULES) {
-    if (words.some((w) => c.includes(w))) return html`<span class="ico ${color}">${emoji}</span>`;
+  for (const [words, color, icon] of ICO_RULES) {
+    if (words.some((w) => c.includes(w))) return { color, icon };
   }
-  return html`<span class="ico ${ICO_COLORS[[...cat].length % 8]}">💳</span>`;
+  return { color: ICO_COLORS[[...cat].length % 8], icon: 'card' };
+}
+
+function ico(cat: string) {
+  const { color, icon } = catStyle(cat);
+  return html`<span class="ico ${color}"><svg viewBox="0 0 24 24">${raw(ICONS[icon])}</svg></span>`;
 }
 
 export interface ExpenseRow {
@@ -118,51 +160,163 @@ export interface ExpenseRow {
   expense_date: string;
 }
 
+const MONTHS_IN = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
+const MONTHS_NOM = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+const WEEKDAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
+
+function dayTitle(iso: string, today: string) {
+  const d = new Date(iso + 'T00:00:00Z');
+  const diff = Math.round((Date.parse(today + 'T00:00:00Z') - d.getTime()) / 86400000);
+  if (diff === 0) return 'Сегодня';
+  if (diff === 1) return 'Вчера';
+  return `${d.getUTCDate()} ${MONTHS_SHORT[d.getUTCMonth()]}`;
+}
+
+function shortNum(n: number) {
+  if (n >= 10000) return `${Math.round(n / 1000)}к`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace('.0', '').replace('.', ',')}к`;
+  return fmt0(n);
+}
+
+function donut(byCategory: { category: string; total: number }[], sum: number, sym: string) {
+  const R = 54;
+  const C = 2 * Math.PI * R;
+  const gapLen = byCategory.length > 1 ? 3 : 0;
+  let offset = 0;
+  const segs = byCategory.map((r) => {
+    const len = (r.total / sum) * C;
+    const dash = Math.max(0.01, len - gapLen);
+    const seg = html`<circle class="seg" cx="64" cy="64" r="${R}" stroke="${COLORS[catStyle(r.category).color]}"
+      stroke-dasharray="${dash.toFixed(2)} ${C.toFixed(2)}" stroke-dashoffset="${(-offset).toFixed(2)}"/>`;
+    offset += len;
+    return seg;
+  });
+  return html`<div class="donut">
+    <svg viewBox="0 0 128 128"><circle cx="64" cy="64" r="${R}" stroke="rgba(255,255,255,.05)"/>${segs}</svg>
+    <div class="center"><div class="v">${shortNum(sum)}</div><div class="k">${sym} за месяц</div></div>
+  </div>`;
+}
+
+const MIC_SVG = '<svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 10v1a7 7 0 0 1-14 0v-1"/><path d="M12 18v4"/></svg>';
+const X_SVG = '<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
 export function dashboardPage(d: {
   flashes: Flash[];
   sym: string;
+  username: string;
   categories: string[];
   today: string;
   todayTotal: number;
   weekTotal: number;
   monthTotal: number;
+  week: { date: string; total: number }[];
   byCategory: { category: string; total: number }[];
   recent: ExpenseRow[];
 }) {
-  const maxVal = Math.max(...d.byCategory.map((r) => r.total), 0);
-  const ddmm = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
-  return layout(
-    { title: 'Мои траты', flashes: d.flashes, loggedIn: true, activeTab: 'dashboard' },
-    html`<div class="brand" style="margin-bottom:18px; font-size:24px;">💸 СпендТрекер</div>
+  const catSum = d.byCategory.reduce((s, r) => s + r.total, 0);
+  const maxCat = Math.max(...d.byCategory.map((r) => r.total), 0);
+  const maxDay = Math.max(...d.week.map((r) => r.total), 0);
+  const month = MONTHS_IN[Number(d.today.slice(5, 7)) - 1];
 
-<div class="stats-grid">
-  <div class="stat"><div class="value">${fmt0(d.todayTotal)}</div><div class="label">Сегодня</div></div>
-  <div class="stat"><div class="value">${fmt0(d.weekTotal)}</div><div class="label">Неделя</div></div>
-  <div class="stat"><div class="value">${fmt0(d.monthTotal)}</div><div class="label">Месяц</div></div>
+  let lastDay = '';
+  const recentRows = d.recent.map((e) => {
+    const label = e.expense_date !== lastDay ? html`<div class="day-label">${dayTitle(e.expense_date, d.today)}</div>` : '';
+    lastDay = e.expense_date;
+    return html`${label}<div class="expense-row">
+      <div style="display:flex; align-items:center; min-width:0;">
+        ${ico(e.category)}
+        <div style="min-width:0;">
+          <div class="info">${e.note ? e.note : e.category}</div>
+          <div class="cat">${e.category}</div>
+        </div>
+      </div>
+      <div style="display:flex; align-items:center; gap:10px;">
+        <div class="amt">${fmt0(e.amount)} ${d.sym}</div>
+        <form method="POST" action="/delete/${e.id}" style="margin:0;" onsubmit="return confirm('Удалить запись?');">
+          <button type="submit" class="btn-danger btn-icon" aria-label="Удалить">${raw(X_SVG)}</button>
+        </form>
+      </div>
+    </div>`;
+  });
+
+  return layout(
+    {
+      title: 'Мои траты',
+      flashes: d.flashes,
+      loggedIn: true,
+      activeTab: 'dashboard',
+      extraCss: DASHBOARD_CSS,
+      scripts: PARSE_JS + VOICE_JS,
+    },
+    html`<div class="page-title">Привет, ${d.username} <span class="sub">${dayTitle(d.today, d.today)}, ${Number(d.today.slice(8, 10))} ${MONTHS_SHORT[Number(d.today.slice(5, 7)) - 1]}</span></div>
+
+<div class="card hero">
+  <div class="label">Потрачено в ${month}</div>
+  <div class="big">${countUp(d.monthTotal)}<span class="cur">${d.sym}</span></div>
+  <div class="chips">
+    <div class="chip"><div class="k">Сегодня</div><div class="v">${countUp(d.todayTotal)} ${d.sym}</div></div>
+    <div class="chip"><div class="k">Эта неделя</div><div class="v">${countUp(d.weekTotal)} ${d.sym}</div></div>
+  </div>
 </div>
 
 <div class="card">
-  <h3 style="margin-bottom:14px;">Добавить трату</h3>
-  <form method="POST">
+  <div class="add-head">
+    <h3>Добавить трату</h3>
+    <button type="button" class="mic-btn" id="mic-btn">${raw(MIC_SVG)}Голосом</button>
+  </div>
+  <form method="POST" id="add-form" data-today="${d.today}">
     <label>Сумма</label>
-    <input type="text" name="amount" inputmode="decimal" placeholder="Например 350" required autofocus>
-    <label>Категория</label>
-    <select name="category">
-      ${d.categories.map((c) => html`<option value="${c}">${c}</option>`)}
-    </select>
-    <label>Дата</label>
-    <input type="date" name="expense_date" value="${d.today}">
+    <input type="text" name="amount" inputmode="decimal" placeholder="Например 350" required>
+    <div class="row-2">
+      <div>
+        <label>Категория</label>
+        <select name="category">
+          ${d.categories.map((c) => html`<option value="${c}">${c}</option>`)}
+        </select>
+      </div>
+      <div>
+        <label>Дата</label>
+        <input type="date" name="expense_date" value="${d.today}">
+      </div>
+    </div>
     <label>Заметка (необязательно)</label>
     <input type="text" name="note" placeholder="Кофе с другом">
     <button type="submit">Добавить</button>
   </form>
 </div>
 
+<div class="card">
+  <div class="card-head"><h3>Последние 7 дней</h3><span class="hint">${fmt0(d.week.reduce((s, r) => s + r.total, 0))} ${d.sym}</span></div>
+  <div class="week">
+    ${d.week.map((r) => {
+      const h = maxDay ? Math.max(6, Math.round((r.total / maxDay) * 100)) : 6;
+      const dow = WEEKDAYS[new Date(r.date + 'T00:00:00Z').getUTCDay()];
+      return html`<div class="col ${r.date === d.today ? 'today' : ''}">
+        <div class="bar-wrap" style="--h: ${h}%">
+          ${r.total ? html`<span class="val">${shortNum(r.total)}</span>` : ''}
+          <div class="bar" style="height: ${h}%"></div>
+        </div>
+        <div class="day">${dow}</div>
+      </div>`;
+    })}
+  </div>
+</div>
+
 ${d.byCategory.length
   ? html`<div class="card">
-  <h3 style="margin-bottom:14px;">По категориям (месяц)</h3>
+  <div class="card-head"><h3>Категории</h3><span class="hint">${MONTHS_NOM[Number(d.today.slice(5, 7)) - 1]}</span></div>
+  <div class="donut-wrap">
+    ${donut(d.byCategory, catSum, d.sym)}
+    <div class="legend">
+      ${d.byCategory.slice(0, 5).map(
+        (r) => html`<div class="row"><span class="dot" style="background:${COLORS[catStyle(r.category).color]}"></span><span class="name">${r.category}</span><span class="pct">${Math.round((r.total / catSum) * 100)}%</span></div>`,
+      )}
+    </div>
+  </div>
+  <div class="cat-list">
   ${d.byCategory.map(
-    (r) => html`<div style="display:flex; align-items:center; margin-bottom:14px;">
+    (r) => html`<div class="cat-item">
     ${ico(r.category)}
     <div style="flex:1; min-width:0;">
       <div style="display:flex; justify-content:space-between; margin-bottom:6px; font-size:15px; font-weight:600;">
@@ -170,35 +324,34 @@ ${d.byCategory.length
         <span>${fmt0(r.total)} ${d.sym}</span>
       </div>
       <div class="cat-bar" style="margin:0;">
-        <div class="track"><div class="fill" style="width: ${maxVal ? Math.round((r.total / maxVal) * 100) : 0}%;"></div></div>
+        <div class="track"><div class="fill" style="width: ${maxCat ? Math.round((r.total / maxCat) * 100) : 0}%;"></div></div>
       </div>
     </div>
   </div>`,
   )}
+  </div>
 </div>`
   : ''}
 
 <div class="card">
-  <h3 style="margin-bottom:6px;">Последние записи</h3>
+  <h3 style="margin-bottom:2px;">Последние записи</h3>
   ${d.recent.length
-    ? d.recent.map(
-        (e) => html`<div class="expense-row">
-      <div style="display:flex; align-items:center; min-width:0;">
-        ${ico(e.category)}
-        <div class="info">
-          ${e.note ? e.note : e.category}
-          <div class="cat">${ddmm(e.expense_date)} · ${e.category}</div>
-        </div>
-      </div>
-      <div style="display:flex; align-items:center; gap:10px;">
-        <div class="amt">${fmt0(e.amount)} ${d.sym}</div>
-        <form method="POST" action="/delete/${e.id}" style="margin:0;">
-          <button type="submit" class="btn-danger">✕</button>
-        </form>
-      </div>
-    </div>`,
-      )
-    : html`<p style="color: var(--muted); font-size: 14px; margin:12px 0 4px;">Пока нет записей — добавь первую трату выше.</p>`}
+    ? recentRows
+    : html`<p style="color: var(--muted); font-size: 14px; margin:12px 0 4px;">Пока нет записей — добавь первую трату выше или скажи её голосом.</p>`}
+</div>
+
+<div class="voice-back" id="voice">
+  <div class="voice-sheet">
+    <div class="grip"></div>
+    <div class="voice-status" id="voice-status">Слушаю…</div>
+    <canvas class="eq" id="eq"></canvas>
+    <div class="voice-text" id="voice-text"></div>
+    <div class="voice-hint" id="voice-hint"></div>
+    <div class="voice-actions">
+      <button type="button" class="btn-secondary" id="voice-cancel">Отмена</button>
+      <button type="button" class="stop-btn" id="voice-stop"><i></i>Готово</button>
+    </div>
+  </div>
 </div>`,
   );
 }
@@ -224,7 +377,7 @@ export function friendsPage(d: {
     html`<style>
 ${raw(FRIENDS_CSS)}</style>
 
-<div class="brand" style="margin-bottom:18px; font-size:24px;">🏆 Рейтинг друзей</div>
+<div class="page-title">Рейтинг друзей</div>
 
 <div class="period-switch">
   ${periods.map(([p, label]) => html`<a href="/friends?period=${p}" class="${d.period === p ? 'active' : ''}">${label}</a>`)}
@@ -472,7 +625,7 @@ export function settingsPage(d: {
 }) {
   return layout(
     { title: 'Настройки', flashes: d.flashes, loggedIn: true, activeTab: 'settings' },
-    html`<div class="brand" style="margin-bottom:16px; font-size:22px;">⚙️ Настройки</div>
+    html`<div class="page-title">Настройки</div>
 
 <div class="card">
   <h3>Сменить пароль</h3>
