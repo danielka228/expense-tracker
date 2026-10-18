@@ -8,6 +8,7 @@ import {
   landingPage,
   dashboardPage,
   friendsPage,
+  friendProfilePage,
   profilePage,
   settingsPage,
   type Currency,
@@ -237,9 +238,9 @@ app.get('/logout', (c) => {
   return c.redirect('/login');
 });
 
-app.get('/dashboard', async (c) => {
-  const user = c.get('user');
-  const db = c.env.DB;
+// Сводка трат пользователя: итоги за день/неделю/месяц, 7 дней, категории месяца и последние записи.
+// Одна и та же для своей главной и для профиля друга.
+async function spendingOverview(db: D1Database, userId: number, recentLimit: number) {
   const today = periodStart('day');
   const weekStart = periodStart('week');
   const monthStart = periodStart('month');
@@ -254,28 +255,42 @@ app.get('/dashboard', async (c) => {
            COALESCE(SUM(CASE WHEN expense_date >= ?4 THEN amount END), 0) AS month
          FROM expenses WHERE user_id = ?1`,
       )
-      .bind(user.id, today, weekStart, monthStart),
+      .bind(userId, today, weekStart, monthStart),
     db
       .prepare(
         `SELECT category, SUM(amount) AS total FROM expenses
          WHERE user_id = ? AND expense_date >= ? GROUP BY category ORDER BY total DESC`,
       )
-      .bind(user.id, monthStart),
+      .bind(userId, monthStart),
     db
       .prepare(
         `SELECT id, amount, category, note, expense_date, store FROM expenses
-         WHERE user_id = ? ORDER BY expense_date DESC, created_at DESC, id DESC LIMIT 15`,
+         WHERE user_id = ? ORDER BY expense_date DESC, created_at DESC, id DESC LIMIT ?`,
       )
-      .bind(user.id),
+      .bind(userId, recentLimit),
     db
       .prepare(
         `SELECT expense_date AS date, SUM(amount) AS total FROM expenses
          WHERE user_id = ? AND expense_date >= ? AND expense_date <= ? GROUP BY expense_date`,
       )
-      .bind(user.id, days[0], today),
+      .bind(userId, days[0], today),
   ]);
   const t = totals.results[0] as { today: number; week: number; month: number };
   const dayTotals = new Map((perDay.results as { date: string; total: number }[]).map((r) => [r.date, r.total]));
+  return {
+    today,
+    todayTotal: t.today,
+    weekTotal: t.week,
+    monthTotal: t.month,
+    week: days.map((date) => ({ date, total: dayTotals.get(date) ?? 0 })),
+    byCategory: byCat.results as { category: string; total: number }[],
+    recent: recent.results as unknown as ExpenseRow[],
+  };
+}
+
+app.get('/dashboard', async (c) => {
+  const user = c.get('user');
+  const o = await spendingOverview(c.env.DB, user.id, 15);
 
   return c.html(
     dashboardPage({
@@ -284,13 +299,7 @@ app.get('/dashboard', async (c) => {
       username: user.username,
       demo: c.env.DEMO === '1',
       categories: CATEGORIES,
-      today,
-      todayTotal: t.today,
-      weekTotal: t.week,
-      monthTotal: t.month,
-      week: days.map((date) => ({ date, total: dayTotals.get(date) ?? 0 })),
-      byCategory: byCat.results as { category: string; total: number }[],
-      recent: recent.results as unknown as ExpenseRow[],
+      ...o,
     }),
   );
 });
@@ -466,11 +475,55 @@ app.get('/friends', async (c) => {
   );
 });
 
+const FRIENDSHIP_SQL = `SELECT id, created_at FROM friendships
+  WHERE status = 'accepted' AND ((from_user_id = ?1 AND to_user_id = ?2) OR (from_user_id = ?2 AND to_user_id = ?1))
+  ORDER BY id LIMIT 1`;
+
+app.get('/friends/:id{[0-9]+}', async (c) => {
+  // Профиль друга: открывается только тем, с кем дружба подтверждена
+  const user = c.get('user');
+  const db = c.env.DB;
+  const fid = Number(c.req.param('id'));
+  if (fid === user.id) return c.redirect('/profile');
+  const fs = await db.prepare(FRIENDSHIP_SQL).bind(user.id, fid).first<{ id: number; created_at: string }>();
+  const friend = fs ? await db.prepare('SELECT * FROM users WHERE id = ?').bind(fid).first<User>() : null;
+  if (!fs || !friend) {
+    flash(c, 'Профиль виден только друзьям', 'error');
+    return c.redirect('/friends');
+  }
+  const [o, av] = await Promise.all([
+    spendingOverview(db, fid, 10),
+    db.prepare('SELECT updated_at FROM avatars WHERE user_id = ?').bind(fid).first<{ updated_at: string }>(),
+  ]);
+  return c.html(
+    friendProfilePage({
+      flashes: popFlashes(c),
+      sym: symbol(friend),
+      id: fid,
+      username: friend.username,
+      friendsSince: fs.created_at,
+      avatarV: av ? String(Date.parse(av.updated_at.replace(' ', 'T') + 'Z') / 1000 || 0) : null,
+      ...o,
+    }),
+  );
+});
+
+app.post('/friends/remove/:id{[0-9]+}', async (c) => {
+  const res = await c.env.DB.prepare(
+    `DELETE FROM friendships WHERE status = 'accepted'
+     AND ((from_user_id = ?1 AND to_user_id = ?2) OR (from_user_id = ?2 AND to_user_id = ?1))`,
+  )
+    .bind(c.get('user').id, Number(c.req.param('id')))
+    .run();
+  if (res.meta.changes) flash(c, 'Удалён из друзей', 'success');
+  return c.redirect('/friends');
+});
+
 app.post('/friends/add', async (c) => {
   const user = c.get('user');
   const db = c.env.DB;
   const form = await c.req.parseBody();
-  const targetUsername = formStr(form, 'friend_login').trim();
+  const targetUsername = formStr(form, 'friend_login').trim().replace(/^@/, '');
 
   if (targetUsername === user.username) {
     flash(c, 'Нельзя добавить самого себя', 'error');
@@ -478,7 +531,7 @@ app.post('/friends/add', async (c) => {
   }
   const target = await db.prepare('SELECT id, username FROM users WHERE username = ?').bind(targetUsername).first<{ id: number; username: string }>();
   if (!target) {
-    flash(c, 'Пользователь с таким логином не найден', 'error');
+    flash(c, 'Пользователь с таким ником не найден', 'error');
     return c.redirect('/friends');
   }
   const existing = await db

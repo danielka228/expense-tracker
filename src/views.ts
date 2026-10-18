@@ -395,6 +395,29 @@ function categoriesWidget(byCategory: { category: string; total: number }[], tod
 </div>`;
 }
 
+function expenseRows(recent: ExpenseRow[], today: string, sym: string, deletable: boolean) {
+  let lastDay = '';
+  return recent.map((e) => {
+    const label = e.expense_date !== lastDay ? html`<div class="day-label">${dayTitle(e.expense_date, today)}</div>` : '';
+    lastDay = e.expense_date;
+    return html`${label}<div class="expense-row">
+      <div class="main">
+        ${ico(e.category)}
+        <div style="min-width:0;">
+          <div class="info">${e.note ? e.note : e.category}</div>
+          <div class="cat">${e.store ? `${e.category} · ${e.store}` : e.category}</div>
+        </div>
+      </div>
+      <div class="amt">${fmt0(e.amount)} ${sym}</div>
+      ${deletable
+        ? html`<form method="POST" action="/delete/${e.id}" style="margin:0;" onsubmit="return confirm('Удалить запись?');">
+        <button type="submit" class="btn-danger btn-icon" aria-label="Удалить">${raw(X_SVG)}</button>
+      </form>`
+        : ''}
+    </div>`;
+  });
+}
+
 // ---------- главная ----------
 
 export function dashboardPage(d: {
@@ -414,24 +437,7 @@ export function dashboardPage(d: {
   const month = MONTHS_IN[Number(d.today.slice(5, 7)) - 1];
   const catOptions = (sel?: string) => d.categories.map((c) => html`<option value="${c}" ${c === sel ? 'selected' : ''}>${c}</option>`);
 
-  let lastDay = '';
-  const recentRows = d.recent.map((e) => {
-    const label = e.expense_date !== lastDay ? html`<div class="day-label">${dayTitle(e.expense_date, d.today)}</div>` : '';
-    lastDay = e.expense_date;
-    return html`${label}<div class="expense-row">
-      <div class="main">
-        ${ico(e.category)}
-        <div style="min-width:0;">
-          <div class="info">${e.note ? e.note : e.category}</div>
-          <div class="cat">${e.store ? `${e.category} · ${e.store}` : e.category}</div>
-        </div>
-      </div>
-      <div class="amt">${fmt0(e.amount)} ${d.sym}</div>
-      <form method="POST" action="/delete/${e.id}" style="margin:0;" onsubmit="return confirm('Удалить запись?');">
-        <button type="submit" class="btn-danger btn-icon" aria-label="Удалить">${raw(X_SVG)}</button>
-      </form>
-    </div>`;
-  });
+  const recentRows = expenseRows(d.recent, d.today, d.sym, true);
 
   return layout(
     {
@@ -572,12 +578,13 @@ export function friendsPage(d: {
 <div class="card reveal" style="--d:.05s">
   ${d.board.length
     ? d.board.map(
-        (row, i) => html`<div class="board-row ${i === 0 ? 'rank-1' : ''} ${row.is_me ? 'me' : ''}">
+        (row, i) => html`<a class="board-row ${i === 0 ? 'rank-1' : ''} ${row.is_me ? 'me' : ''}" href="${row.is_me ? '/profile' : `/friends/${row.id}`}">
       <div class="rank">${i + 1}</div>
       ${av(row.id, row.username)}
       <div class="name">${row.is_me ? 'Ты' : row.username}</div>
       <div class="amount">${fmt0(row.total)} ${d.sym}</div>
-    </div>`,
+      ${CHEV}
+    </a>`,
       )
     : html`<p style="color: var(--text-2); font-size: 15px; margin:0">Пока никого нет в списке.</p>`}
 </div>
@@ -602,14 +609,74 @@ ${d.incoming.length
 <div class="section-h">Добавить друга</div>
 <div class="card reveal">
   <form method="POST" action="/friends/add" autocomplete="off" class="add-friend">
-    <input type="search" name="friend_login" placeholder="Логин друга" required
+    <input type="search" name="friend_login" placeholder="Ник друга" required
            inputmode="text" enterkeyhint="send"
            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-           data-lpignore="true" data-1p-ignore aria-label="Логин друга">
+           data-lpignore="true" data-1p-ignore aria-label="Ник друга">
     <button type="submit">Позвать</button>
   </form>
 </div>
 <div class="footnote">Друг получит заявку и появится в рейтинге, когда примет её.</div>`,
+  );
+}
+
+// ---------- профиль друга ----------
+
+const BACK_SVG = '<svg viewBox="0 0 12 20"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+export function friendProfilePage(d: {
+  flashes: Flash[];
+  sym: string;
+  id: number;
+  username: string;
+  friendsSince: string;
+  avatarV: string | null;
+  today: string;
+  todayTotal: number;
+  weekTotal: number;
+  monthTotal: number;
+  week: { date: string; total: number }[];
+  byCategory: { category: string; total: number }[];
+  recent: ExpenseRow[];
+}) {
+  const since = d.friendsSince.slice(0, 10);
+  const sinceText = `${Number(since.slice(8, 10))} ${MONTHS_SHORT[Number(since.slice(5, 7)) - 1]} ${since.slice(0, 4)}`;
+  return layout(
+    { title: d.username, flashes: d.flashes, loggedIn: true, activeTab: 'friends', extraCss: DASHBOARD_CSS + PROFILE_CSS },
+    html`<header class="nav"><a class="nav-side left nav-back" href="/friends">${raw(BACK_SVG)}Друзья</a><div class="nav-title">${d.username}</div></header>
+<div class="profile-head reveal">
+  <div class="avatar-wrap">
+    ${d.avatarV !== null
+      ? html`<img class="avatar-img" src="/avatar/${d.id}?v=${d.avatarV}" alt="">`
+      : html`<div class="profile-avatar">${(d.username ? [...d.username][0] : '?').toUpperCase()}</div>`}
+  </div>
+  <h1 class="large-title" style="font-size:28px; line-height:34px; margin:0">${d.username}</h1>
+  <div class="since">В друзьях с ${sinceText}</div>
+</div>
+
+<div class="card reveal" style="--d:.05s; padding:10px 6px">
+  <div class="profile-stats">
+    <div><div class="value">${countUp(d.todayTotal)} ${d.sym}</div><div class="label">Сегодня</div></div>
+    <div><div class="value">${countUp(d.weekTotal)} ${d.sym}</div><div class="label">Неделя</div></div>
+    <div><div class="value">${countUp(d.monthTotal)} ${d.sym}</div><div class="label">Месяц</div></div>
+  </div>
+</div>
+
+<div class="reveal">${weekWidget(d.week, d.today, d.sym)}</div>
+
+${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory, d.today, d.sym, false)}</div>` : ''}
+
+<div class="card reveal">
+  <h3 style="margin-bottom:2px;">Последние траты</h3>
+  ${d.recent.length
+    ? expenseRows(d.recent, d.today, d.sym, false)
+    : html`<p style="color: var(--text-2); font-size: 15px; margin:12px 0 4px;">Пока ничего не записано.</p>`}
+</div>
+
+<form method="POST" action="/friends/remove/${d.id}" class="list reveal" style="margin-top:22px"
+      onsubmit="return confirm('Удалить из друзей?');">
+  <button type="submit" class="row danger"><span class="grow">Удалить из друзей</span></button>
+</form>`,
   );
 }
 
