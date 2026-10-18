@@ -621,11 +621,21 @@ app.post('/api/add', async (c) => {
     return data[name] || '';
   };
 
-  const token = (c.req.header('X-Token') || String(field('token'))).trim();
+  // Токен — 32 символа base64url. При вставке в «Команды» к нему легко прилипают кавычки,
+  // пробелы, переносы строк и невидимые символы, поэтому берём только допустимые символы.
+  const rawToken = String(c.req.header('X-Token') || field('token') || '');
+  const token = rawToken.replace(/[^A-Za-z0-9_-]/g, '');
   const rec = token
     ? await c.env.DB.prepare('SELECT user_id FROM api_tokens WHERE token = ?').bind(token).first<{ user_id: number }>()
     : null;
-  if (!rec) return c.json({ ok: false, error: 'Неверный токен' }, 401);
+  if (!rec) {
+    const hint = !token
+      ? 'Токен не дошёл: проверь, что в заголовке X-Token выбрана переменная с токеном'
+      : token.length !== 32
+        ? `Пришло ${token.length} символов вместо 32: в действии «Текст» должен быть только токен`
+        : 'Такого токена нет на этом сайте: скопируй токен в Профиле на expense-tracker.hhoh7327.workers.dev';
+    return c.json({ ok: false, error: 'Неверный токен', hint }, 401);
+  }
 
   const rawAmount = field('amount');
   let amount: number;
