@@ -1,9 +1,11 @@
 import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
 import { randomBytes } from 'node:crypto';
+import { lookupProduct, nearbyStores, priceHistory } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
 import {
   authPage,
+  landingPage,
   dashboardPage,
   friendsPage,
   profilePage,
@@ -17,6 +19,7 @@ type Env = {
   DB: D1Database;
   SECRET_KEY: string;
   SHORTCUT_URL?: string;
+  DEMO?: string; // "1" — демо-версия с кнопкой «Войти в демо»
 };
 
 interface User {
@@ -180,20 +183,23 @@ const loginRequired = async (c: C, next: () => Promise<void>) => {
   await next();
 };
 
-for (const p of ['/dashboard', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*']) {
+for (const p of ['/dashboard', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/api/product/*', '/api/stores']) {
   app.use(p, loginRequired);
 }
 
 // ---------- маршруты ----------
 
-app.get('/', async (c) => c.redirect((await getSessionUserId(c)) ? '/dashboard' : '/login'));
+app.get('/', async (c) => {
+  if (await getSessionUserId(c)) return c.redirect('/dashboard');
+  return c.html(landingPage({ demo: c.env.DEMO === '1' }));
+});
 
-app.get('/register', (c) => c.html(authPage('register', popFlashes(c))));
+app.get('/register', (c) => c.html(authPage('register', popFlashes(c), c.env.DEMO === '1')));
 app.post('/register', async (c) => {
   const form = await c.req.parseBody();
   const username = formStr(form, 'username').trim();
   const password = formStr(form, 'password');
-  const fail = (msg: string) => c.html(authPage('register', [...popFlashes(c), ['error', msg]]));
+  const fail = (msg: string) => c.html(authPage('register', [...popFlashes(c), ['error', msg]], c.env.DEMO === '1'));
 
   if (!username || !password) return fail('Заполните все поля');
   if (password.length < 4) return fail('Пароль должен быть не короче 4 символов');
@@ -209,7 +215,7 @@ app.post('/register', async (c) => {
   return c.redirect('/dashboard');
 });
 
-app.get('/login', (c) => c.html(authPage('login', popFlashes(c))));
+app.get('/login', (c) => c.html(authPage('login', popFlashes(c), c.env.DEMO === '1')));
 app.post('/login', async (c) => {
   const form = await c.req.parseBody();
   const username = formStr(form, 'username').trim();
@@ -223,7 +229,7 @@ app.post('/login', async (c) => {
     await login(c, user.id);
     return c.redirect('/dashboard');
   }
-  return c.html(authPage('login', [...popFlashes(c), ['error', 'Неверный логин или пароль']]));
+  return c.html(authPage('login', [...popFlashes(c), ['error', 'Неверный логин или пароль']], c.env.DEMO === '1'));
 });
 
 app.get('/logout', (c) => {
@@ -257,7 +263,7 @@ app.get('/dashboard', async (c) => {
       .bind(user.id, monthStart),
     db
       .prepare(
-        `SELECT id, amount, category, note, expense_date FROM expenses
+        `SELECT id, amount, category, note, expense_date, store FROM expenses
          WHERE user_id = ? ORDER BY expense_date DESC, created_at DESC, id DESC LIMIT 15`,
       )
       .bind(user.id),
@@ -276,6 +282,7 @@ app.get('/dashboard', async (c) => {
       flashes: popFlashes(c),
       sym: symbol(user),
       username: user.username,
+      demo: c.env.DEMO === '1',
       categories: CATEGORIES,
       today,
       todayTotal: t.today,
@@ -299,14 +306,103 @@ app.post('/dashboard', async (c) => {
   }
 
   const category = formStr(form, 'category') || 'Прочее';
+  const store = formStr(form, 'store').trim().slice(0, 80) || null;
+  const barcode = /^\d{8,14}$/.test(formStr(form, 'barcode')) ? formStr(form, 'barcode') : null;
   const note = formStr(form, 'note').trim();
   const dateStr = formStr(form, 'expense_date');
   const expenseDate = /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : periodStart('day');
 
-  await c.env.DB.prepare('INSERT INTO expenses (user_id, amount, category, note, expense_date) VALUES (?, ?, ?, ?, ?)')
-    .bind(user.id, amount, category, note, expenseDate)
+  await c.env.DB.prepare('INSERT INTO expenses (user_id, amount, category, note, expense_date, store, barcode) VALUES (?, ?, ?, ?, ?, ?, ?)')
+    .bind(user.id, amount, category, note, expenseDate, store, barcode)
     .run();
   flash(c, 'Трата добавлена', 'success');
+  return c.redirect('/dashboard');
+});
+
+// ---------- сканер: товар по штрих-коду и магазины рядом ----------
+
+app.get('/api/product/:code{[0-9]{8,14}}', async (c) => {
+  const code = c.req.param('code');
+  const [product, prices] = await Promise.all([
+    lookupProduct(c.env.DB, code),
+    priceHistory(c.env.DB, code, c.get('user').id),
+  ]);
+  return c.json({ product, prices });
+});
+
+app.get('/api/stores', async (c) => {
+  const lat = Number(c.req.query('lat'));
+  const lon = Number(c.req.query('lon'));
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+    return c.json({ stores: [], error: 'bad coords' }, 400);
+  }
+  return c.json(await nearbyStores(c.env.DB, lat, lon));
+});
+
+// ---------- демо-версия ----------
+
+// Траты демо-аккаунта и двух друзей; даты считаются от сегодняшнего дня, поэтому данные всегда «свежие»
+const COKE = '5449000000996';
+const DEMO_USERS = ['Демо', 'Аня', 'Макс'];
+const DEMO_EXPENSES: [user: number, daysAgo: number, amount: number, category: string, note: string, store: string | null, barcode: string | null][] = [
+  [0, 0, 89, 'Еда', 'Coca-Cola 0,5 л', 'Пятёрочка', COKE],
+  [0, 0, 350, 'Еда', 'Капучино', 'Cofix', null],
+  [0, 1, 1200, 'Транспорт', 'Такси до работы', null, null],
+  [0, 1, 642, 'Еда', 'Продукты', 'Перекрёсток', null],
+  [0, 2, 4500, 'Одежда', 'Кроссовки', null, null],
+  [0, 3, 890, 'Еда', 'Продукты на ужин', 'ВкусВилл', null],
+  [0, 3, 99, 'Еда', 'Coca-Cola 0,5 л', 'Магнит', COKE],
+  [0, 4, 2300, 'Развлечения', 'Кино с друзьями', null, null],
+  [0, 5, 640, 'Здоровье', 'Аптека', null, null],
+  [0, 6, 1500, 'Еда', 'Ужин', null, null],
+  [0, 8, 2500, 'Транспорт', 'Бензин', 'Лукойл', null],
+  [0, 10, 499, 'Развлечения', 'Подписка на музыку', null, null],
+  [0, 12, 87, 'Еда', 'Coca-Cola 0,5 л', 'Пятёрочка', COKE],
+  [0, 14, 2100, 'Еда', 'Продукты на неделю', 'Лента', null],
+  [0, 17, 1290, 'Здоровье', 'Витамины', null, null],
+  [0, 21, 3200, 'Одежда', 'Футболка', null, null],
+  [0, 25, 18000, 'Жильё', 'Аренда', null, null],
+  [1, 0, 85, 'Еда', 'Coca-Cola 0,5 л', 'Пятёрочка', COKE],
+  [1, 1, 3400, 'Одежда', 'Платье', null, null],
+  [1, 2, 760, 'Еда', 'Суши', null, null],
+  [1, 4, 5200, 'Развлечения', 'Концерт', null, null],
+  [2, 0, 95, 'Еда', 'Coca-Cola 0,5 л', 'Магнит', COKE],
+  [2, 1, 2400, 'Транспорт', 'Каршеринг', null, null],
+  [2, 3, 1100, 'Еда', 'Пицца', null, null],
+];
+
+app.post('/demo', async (c) => {
+  if (c.env.DEMO !== '1') return c.notFound();
+  const db = c.env.DB;
+  const ids: number[] = [];
+  for (const name of DEMO_USERS) {
+    let row = await db.prepare('SELECT id FROM users WHERE username = ?').bind(name).first<{ id: number }>();
+    if (!row) {
+      // Пароль случайный: в демо входят только кнопкой
+      row = await db
+        .prepare("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, datetime('now', '-40 days')) RETURNING id")
+        .bind(name, hashPassword(randomBytes(18).toString('base64url')))
+        .first<{ id: number }>();
+    }
+    ids.push(row!.id);
+  }
+  const [me, anya, max] = ids;
+  await db.batch([
+    db.prepare('DELETE FROM expenses WHERE user_id IN (?, ?, ?)').bind(me, anya, max),
+    db.prepare('DELETE FROM friendships WHERE from_user_id IN (?1, ?2, ?3) OR to_user_id IN (?1, ?2, ?3)').bind(me, anya, max),
+    db.prepare("INSERT INTO friendships (from_user_id, to_user_id, status) VALUES (?, ?, 'accepted')").bind(anya, me),
+    db.prepare("INSERT INTO friendships (from_user_id, to_user_id, status) VALUES (?, ?, 'accepted')").bind(me, max),
+    // Сдвиг на i минут сохраняет порядок записей внутри одного дня
+    ...DEMO_EXPENSES.map(([u, ago, amount, category, note, store, barcode], i) =>
+      db
+        .prepare(
+          `INSERT INTO expenses (user_id, amount, category, note, expense_date, store, barcode, created_at)
+           VALUES (?, ?, ?, ?, date('now', ?), ?, ?, datetime('now', ?, ?))`,
+        )
+        .bind(ids[u], amount, category, note, `-${ago} days`, store, barcode, `-${ago} days`, `-${i} minutes`),
+    ),
+  ]);
+  await login(c, me);
   return c.redirect('/dashboard');
 });
 
