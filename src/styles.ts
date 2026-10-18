@@ -77,6 +77,9 @@ export const BASE_CSS = `
   .nav-side { position: absolute; top: env(safe-area-inset-top); bottom: 0; display: flex; align-items: center; }
   .nav-side.right { right: 16px; }
   .nav-side.left { left: 16px; }
+  .nav-back { gap: 6px; color: var(--accent); font-size: 17px; text-decoration: none; margin-left: -4px; transition: opacity .2s ease; }
+  .nav-back svg { width: 11px; height: 19px; }
+  .nav-back:active { opacity: .5; }
   .pill {
     display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border-radius: 999px;
     font-size: 13px; font-weight: 600; background: var(--accent-soft); color: var(--accent);
@@ -489,6 +492,10 @@ export const FRIENDS_CSS = `
   .board-row .name { flex: 1; font-size: 17px; font-weight: 500; }
   .board-row.me .name { color: var(--accent); }
   .board-row .amount { font-weight: 600; font-variant-numeric: tabular-nums; }
+  a.board-row { color: inherit; text-decoration: none; margin: 0 -18px; padding: 10px 18px; -webkit-tap-highlight-color: transparent; transition: background .2s ease; }
+  a.board-row:active { background: var(--fill); }
+  a.board-row + a.board-row::before { left: 104px; right: 18px; }
+  .board-row .chev { width: 8px; height: 13px; flex: none; opacity: .35; margin-left: -2px; }
   .friend-req-row { position: relative; display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; }
   .friend-req-row + .friend-req-row::before { content: ""; position: absolute; top: 0; left: 54px; right: 0; height: 0.5px; background: var(--sep); }
   .req-actions { display: flex; gap: 8px; }
