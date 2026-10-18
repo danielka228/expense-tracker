@@ -59,6 +59,38 @@ def sql_literal(value, col):
     return "'" + s.replace("'", "''") + "'"
 
 
+def find_tables_schema(conn):
+    """Находит схему, где лежат таблицы приложения. Если их нет — печатает, что есть в базе
+    (только названия и число строк, без данных) и завершает работу."""
+    schemas = [r[0] for r in conn.execute(text(
+        "SELECT table_schema FROM information_schema.tables "
+        "WHERE table_name = 'user' AND table_type = 'BASE TABLE' "
+        "AND table_schema NOT IN ('pg_catalog', 'information_schema') ORDER BY table_schema = 'public' DESC"
+    ))]
+    if schemas:
+        conn.execute(text(f'SET search_path TO "{schemas[0]}"'))
+        print(f'Таблицы приложения найдены в схеме {schemas[0]}')
+        return
+
+    db = conn.execute(text('SELECT current_database()')).scalar()
+    print(f'В базе «{db}» нет таблицы "user". Что в ней есть:')
+    tables = conn.execute(text(
+        "SELECT table_schema, table_name FROM information_schema.tables "
+        "WHERE table_type = 'BASE TABLE' AND table_schema NOT IN ('pg_catalog', 'information_schema') "
+        "ORDER BY 1, 2"
+    )).all()
+    for schema, name in tables:
+        n = conn.execute(text(f'SELECT COUNT(*) FROM "{schema}"."{name}"')).scalar()
+        print(f'  {schema}.{name}: {n} строк')
+    if not tables:
+        print('  (таблиц нет — база пустая)')
+    others = [r[0] for r in conn.execute(text(
+        'SELECT datname FROM pg_database WHERE NOT datistemplate AND datname <> current_database() ORDER BY 1'
+    ))]
+    print('Другие базы на этом сервере: ' + (', '.join(others) if others else 'нет'))
+    sys.exit(1)
+
+
 def main():
     # Адрес базы можно передать аргументом или через переменную DATABASE_URL (так делает GitHub Actions)
     if len(sys.argv) == 3:
@@ -73,6 +105,8 @@ def main():
     lines = ['-- Дамп для Cloudflare D1, создан ' + NOW + ' UTC', 'PRAGMA defer_foreign_keys = true;']
     counts = {}
     with engine.connect() as conn:
+        if engine.dialect.name == 'postgresql':
+            find_tables_schema(conn)
         user_ids = {r[0] for r in conn.execute(text('SELECT id FROM "user"'))}
         for src, dst, cols in TABLES:
             rows = conn.execute(text(f'SELECT {", ".join(cols)} FROM {src} ORDER BY {cols[0]}')).all()
