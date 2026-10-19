@@ -5,7 +5,7 @@
 // регистрирует этот адрес через setWebhook с секретом webhookSecret(токен).
 
 import { CATEGORY_RULES, parseExpense, type ParsedExpense } from './parse';
-import { STICKERS, stickerFile } from './stickers';
+import { STICKERS, animStickerFile, stickerFile } from './stickers';
 import { eveningText, quip, weeklyText } from './trek';
 import { fmt0, MONTHS_NOM, MONTHS_SHORT, type ExpenseRow } from './views';
 
@@ -67,6 +67,7 @@ export interface BotDeps {
   since: Record<Period, string>; // с какой даты считается день, неделя и месяц
   overview(userId: number): Promise<{ todayTotal: number; weekTotal: number; monthTotal: number }>;
   leaderboard(userId: number, since: string): Promise<{ username: string; total: number; is_me: boolean }[]>;
+  asset(path: string): Promise<Blob | null>; // файл из public/ (видеостикеры загружаются в Telegram файлом)
 }
 
 interface Linked {
@@ -566,43 +567,95 @@ async function addFromText(d: BotDeps, user: Linked, chatId: number, text: strin
   }
 }
 
-// ---------- стикерпак Трэка ----------
+// ---------- стикерпаки Трэка ----------
+
+type StickerSet = { stickers: { file_id: string }[] };
+
+interface Pack {
+  name: string;
+  title: string;
+  // Как передать стикер i в Telegram: обычные — ссылкой на картинку, видео — только загрузкой файла
+  input(i: number): Promise<{ sticker: string; format: string; emoji_list: string[] } | null>;
+}
+
+async function tgForm<T>(api: string, method: string, form: FormData) {
+  const res = await fetch(`${api}/${method}`, { method: 'POST', body: form });
+  return (await res.json()) as { ok: boolean; result?: T; description?: string };
+}
+
+function packs(d: BotDeps, bot: string, tgUserId: number): Pack[] {
+  return [
+    {
+      name: `trek_by_${bot}`,
+      title: 'Трэк · СпендТрекер',
+      input: async (i) => ({ sticker: `${d.siteUrl}${stickerFile(i)}`, format: 'static', emoji_list: STICKERS[i].emoji }),
+    },
+    {
+      name: `trek_anim_by_${bot}`,
+      title: 'Трэк · анимированные',
+      input: async (i) => {
+        const file = await d.asset(animStickerFile(i));
+        if (!file) return null;
+        const form = new FormData();
+        form.set('user_id', String(tgUserId));
+        form.set('sticker_format', 'video');
+        form.set('sticker', file, `trek${i + 1}.webm`);
+        const up = await tgForm<{ file_id: string }>(d.api, 'uploadStickerFile', form);
+        return up.ok && up.result ? { sticker: up.result.file_id, format: 'video', emoji_list: STICKERS[i].emoji } : null;
+      },
+    },
+  ];
+}
 
 /**
- * Выпускает набор стикеров Трэка (картинки — с сайта, список — src/stickers.ts) или дописывает в него
- * новые, если список вырос. Владелец набора — тот, кто первым попросил. Затем присылает ссылку.
+ * Выпускает набор (или дописывает в него новые стикеры из списка). Владелец набора — тот, кто первым
+ * попросил. Возвращает набор или null, если Telegram отказал.
  */
+async function ensurePack(d: BotDeps, p: Pack, tgUserId: number): Promise<StickerSet | null> {
+  const set = await tg<StickerSet>(d.api, 'getStickerSet', { name: p.name });
+  const have = set.ok ? (set.result?.stickers.length ?? 0) : 0;
+  if (set.ok && have >= STICKERS.length) return set.result ?? null;
+  const inputs = [];
+  for (let i = have; i < STICKERS.length; i++) {
+    const input = await p.input(i);
+    if (!input) break;
+    inputs.push(input);
+  }
+  if (!set.ok) {
+    if (!inputs.length) return null;
+    const created = await tg(d.api, 'createNewStickerSet', { user_id: tgUserId, name: p.name, title: p.title, stickers: inputs });
+    if (!created.ok) {
+      console.error('createNewStickerSet failed', p.name, created.description);
+      return null;
+    }
+  } else {
+    // В список добавили новые стикеры — дописываем их (получится только у владельца набора)
+    for (const sticker of inputs) {
+      if (!(await tg(d.api, 'addStickerToSet', { user_id: tgUserId, name: p.name, sticker })).ok) break;
+    }
+  }
+  return (await tg<StickerSet>(d.api, 'getStickerSet', { name: p.name })).result ?? null;
+}
+
 async function stickerPack(d: BotDeps, chatId: number, tgUserId: number) {
   const bot = await botUsername(d.api);
   if (!bot || !d.siteUrl) return send(d, chatId, 'Не получилось достать стикеры, попробуй чуть позже.');
-  const name = `trek_by_${bot}`;
-  const input = (i: number) => ({ sticker: `${d.siteUrl}${stickerFile(i)}`, format: 'static', emoji_list: STICKERS[i].emoji });
-  let set = await tg<{ stickers: { file_id: string }[] }>(d.api, 'getStickerSet', { name });
-  if (!set.ok) {
-    await tg(d.api, 'sendChatAction', { chat_id: chatId, action: 'choose_sticker' });
-    const created = await tg(d.api, 'createNewStickerSet', {
-      user_id: tgUserId,
-      name,
-      title: 'Трэк · СпендТрекер',
-      stickers: STICKERS.map((_, i) => input(i)),
-    });
-    if (!created.ok) {
-      console.error('createNewStickerSet failed', created.description);
-      return send(d, chatId, 'Не получилось выпустить стикеры. Попробуй ещё раз чуть позже.');
-    }
-    set = await tg<{ stickers: { file_id: string }[] }>(d.api, 'getStickerSet', { name });
-  } else if ((set.result?.stickers.length ?? 0) < STICKERS.length) {
-    // В список добавили новые стикеры — дописываем их (получится только у владельца набора)
-    for (let i = set.result?.stickers.length ?? 0; i < STICKERS.length; i++) {
-      const r = await tg(d.api, 'addStickerToSet', { user_id: tgUserId, name, sticker: input(i) });
-      if (!r.ok) break;
-    }
-  }
-  const first = set.result?.stickers[0]?.file_id;
+  await tg(d.api, 'sendChatAction', { chat_id: chatId, action: 'choose_sticker' });
+  const [still, anim] = packs(d, bot, tgUserId);
+  const stillSet = await ensurePack(d, still, tgUserId);
+  const animSet = await ensurePack(d, anim, tgUserId);
+  if (!stillSet && !animSet) return send(d, chatId, 'Не получилось выпустить стикеры. Попробуй ещё раз чуть позже.');
+  const first = animSet?.stickers[0]?.file_id ?? stillSet?.stickers[0]?.file_id;
   if (first) await tg(d.api, 'sendSticker', { chat_id: chatId, sticker: first });
-  return send(d, chatId, `🎨 <b>Стикеры Трэка</b> — ${STICKERS.length} штук: «Записал!», «Опять кофе?», «Кэшбэк!», «Денег нет» и другие.\n\nДобавь их и отправляй друзьям 👇`, {
-    inline_keyboard: [[{ text: '➕ Добавить стикеры', url: `https://t.me/addstickers/${name}` }]],
-  });
+  const buttons: Button[] = [];
+  if (stillSet) buttons.push({ text: '➕ Обычные', url: `https://t.me/addstickers/${still.name}` });
+  if (animSet) buttons.push({ text: '✨ Анимированные', url: `https://t.me/addstickers/${anim.name}` });
+  return send(
+    d,
+    chatId,
+    `🎨 <b>Стикеры Трэка</b> — ${STICKERS.length} штук: «Записал!», «Опять кофе?», «Кэшбэк!», «Денег нет» и другие.${animSet ? '\n\nЕсть и анимированные: Трэк машет, прыгает и моргает ✨' : ''}\n\nДобавь их и отправляй друзьям 👇`,
+    { inline_keyboard: [buttons] },
+  );
 }
 
 /** Реплика Трэка: собирает, что было сегодня и в этом месяце, и отдаёт в quip() */

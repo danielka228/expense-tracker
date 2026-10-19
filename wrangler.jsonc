@@ -10,7 +10,7 @@
   // Перед деплоем и локальным запуском копируем распознаватель штрих-кодов в public/vendor
   "build": { "command": "node scripts/build-vendor.mjs" },
   // Статика (иконки, распознаватель штрих-кодов) отдаётся напрямую, остальное — в Worker
-  "assets": { "directory": "./public" },
+  "assets": { "directory": "./public", "binding": "ASSETS" },
   // Workers AI: распознаёт голосовые сообщения Telegram-боту (модель Whisper)
   "ai": { "binding": "AI" },
   // Итоги от Трэка в Telegram: каждый вечер в 21:00 и по понедельникам в 10:00 по Москве (время в UTC)

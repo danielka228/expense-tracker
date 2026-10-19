@@ -37,6 +37,7 @@ type Env = {
   DEMO?: string; // "1" — демо-версия с кнопкой «Войти в демо»
   TELEGRAM_BOT_TOKEN?: string; // токен от @BotFather; workflow кладёт его из секрета GitHub
   TELEGRAM_API?: string; // только для локальной проверки: адрес заглушки вместо api.telegram.org
+  ASSETS: Fetcher; // статика из public/
   AI?: Ai; // Workers AI: распознавание голосовых в Telegram-боте
 };
 
@@ -686,6 +687,10 @@ function botDeps(env: Env, token: string, siteUrl: string): BotDeps {
     since: { day: periodStart('day'), week: periodStart('week'), month: periodStart('month') },
     overview: (uid) => spendingOverview(db, uid, 0),
     leaderboard: (uid, since) => leaderboard(db, uid, since),
+    asset: async (path) => {
+      const r = await env.ASSETS.fetch(new Request(`https://assets.local${path}`));
+      return r.ok ? r.blob() : null;
+    },
   };
 }
 

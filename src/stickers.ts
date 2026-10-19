@@ -32,3 +32,4 @@ export const STICKERS: StickerDef[] = [
 ];
 
 export const stickerFile = (i: number) => `/stickers/${String(i + 1).padStart(2, '0')}.png`;
+export const animStickerFile = (i: number) => `/stickers/anim/${String(i + 1).padStart(2, '0')}.webm`;
