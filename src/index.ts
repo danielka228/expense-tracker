@@ -652,7 +652,7 @@ app.post('/profile/telegram', async (c) => {
 app.post('/profile/telegram/unlink', async (c) => {
   const res = await c.env.DB.prepare('DELETE FROM telegram_links WHERE user_id = ?').bind(c.get('user').id).run();
   if (res.meta.changes) flash(c, 'Telegram отключён', 'success');
-  return c.redirect('/profile');
+  return c.redirect((await c.req.parseBody())['back'] === 'settings' ? '/settings' : '/profile');
 });
 
 // ---------- «Войти через Telegram» (OpenID Connect, src/tglogin.ts) ----------
@@ -715,21 +715,24 @@ async function saveTelegramPhoto(db: D1Database, userId: number, url: string | n
 
 app.get('/auth/telegram', async (c) => {
   const cfg = tgLoginConfig(c);
+  // ?link=1 — привязка Telegram к уже открытому аккаунту (из Настроек или Профиля), а не вход
   const linking = c.req.query('link') === '1' && !!(await getSessionUserId(c));
+  const back = c.req.query('back') === 'settings' ? '/settings' : '/profile';
   if (!cfg) {
     flash(c, 'Вход через Telegram пока не настроен', 'error');
-    return c.redirect(linking ? '/profile' : '/login');
+    return c.redirect(linking ? back : '/login');
   }
   const s = newLoginState();
-  await setSignedCookie(c, TG_STATE_COOKIE, JSON.stringify({ ...s, link: linking }), c.env.SECRET_KEY, shortCookie(600));
+  await setSignedCookie(c, TG_STATE_COOKIE, JSON.stringify({ ...s, link: linking, back }), c.env.SECRET_KEY, shortCookie(600));
   return c.redirect(await authorizeUrl(cfg, s));
 });
 
 app.get('/auth/telegram/callback', async (c) => {
   const cfg = tgLoginConfig(c);
-  const saved = await readSignedJson<TgLoginState & { link: boolean }>(c, TG_STATE_COOKIE);
+  const saved = await readSignedJson<TgLoginState & { link: boolean; back?: string }>(c, TG_STATE_COOKIE);
   deleteCookie(c, TG_STATE_COOKIE, { path: '/', secure: true });
-  const back = saved?.link ? '/profile' : '/login';
+  const linkBack = saved?.back === '/settings' ? '/settings' : '/profile';
+  const back = saved?.link ? linkBack : '/login';
   const code = c.req.query('code');
   if (!cfg || !saved || !code || c.req.query('state') !== saved.state) {
     flash(c, c.req.query('error') ? 'Вход через Telegram отменён' : 'Не получилось войти через Telegram, попробуй ещё раз', 'error');
@@ -751,9 +754,9 @@ app.get('/auth/telegram/callback', async (c) => {
     if (link && link.user_id !== uid) flash(c, 'Этот Telegram уже подключён к другому аккаунту', 'error');
     else {
       await linkTelegram(db, uid, tg);
-      flash(c, 'Telegram подключён', 'success');
+      flash(c, 'Telegram привязан — теперь можно входить на сайт через Telegram', 'success');
     }
-    return c.redirect('/profile');
+    return c.redirect(linkBack);
   }
   if (link) {
     await login(c, link.user_id);
@@ -991,13 +994,19 @@ app.post('/api/add', async (c) => {
   return c.json({ ok: true, amount, category });
 });
 
-app.get('/settings', (c) => {
+app.get('/settings', async (c) => {
   const user = c.get('user');
+  const tgToken = c.env.TELEGRAM_BOT_TOKEN;
+  const [tgLink, tgBot] = await Promise.all([
+    c.env.DB.prepare('SELECT tg_username FROM telegram_links WHERE user_id = ?').bind(user.id).first<{ tg_username: string | null }>(),
+    tgToken ? botUsername(botApi(tgToken, c.env.TELEGRAM_API)) : null,
+  ]);
   return c.html(
     settingsPage({
       flashes: popFlashes(c),
       username: user.username,
       hasPassword: !!user.password_hash,
+      telegram: { linked: !!tgLink, tgUsername: tgLink?.tg_username ?? null, bot: tgBot, login: !!tgLoginConfig(c) },
       currencies: CURRENCIES,
       currentCurrency: user.currency,
     }),
