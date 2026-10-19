@@ -466,11 +466,11 @@ function expenseRows(recent: ExpenseRow[], today: string, sym: string, deletable
   });
 }
 
-// ---------- Копи на главной ----------
+// ---------- Трэк на главной ----------
 
 const escText = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-/** Что Копи говорит сегодня: сравнивает траты за день с обычными для этого месяца */
+/** Что Трэк говорит сегодня: сравнивает траты за день с обычными для этого месяца */
 function kopiCard(d: { sym: string; today: string; todayTotal: number; monthTotal: number; recent: ExpenseRow[]; byCategory: { category: string; total: number }[] }) {
   const sym = escText(d.sym);
   const day = Number(d.today.slice(8, 10));
@@ -480,7 +480,7 @@ function kopiCard(d: { sym: string; today: string; todayTotal: number; monthTota
   let text: string;
   if (!d.recent.length) {
     mood = 'wave';
-    text = 'Привет! Я <b>Копи</b> 👋 Помогу следить за деньгами. Запиши первую трату — скажи её голосом или отсканируй покупку.';
+    text = 'Привет! Я <b>Трэк</b> 👋 Помогу следить за деньгами. Запиши первую трату — скажи её голосом или отсканируй покупку.';
   } else if (!d.todayTotal) {
     mood = 'happy';
     text = 'Сегодня ни одной траты. Так держать! 🌱';
@@ -505,7 +505,7 @@ function kopiCard(d: { sym: string; today: string; todayTotal: number; monthTota
   ];
   return html`<div class="kopi-card reveal" style="--d:.03s" data-tips="${JSON.stringify(tips)}" data-i="0">
   ${raw(mascot(mood, 64))}
-  <div class="kopi-bubble"><span class="who">Копи</span><span class="kopi-text">${raw(text)}</span></div>
+  <div class="kopi-bubble"><span class="who">Трэк</span><span class="kopi-text">${raw(text)}</span></div>
 </div>`;
 }
 
