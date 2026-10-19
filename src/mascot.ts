@@ -2,7 +2,7 @@
 // Рисуется SVG прямо в странице; настроение задаётся ртом, глазами и бровями.
 // Покачивается и моргает на CSS, следит глазами за пальцем/курсором и подпрыгивает от нажатия — MASCOT_JS.
 
-export type Mood = 'happy' | 'wave' | 'wow' | 'worried' | 'sleep' | 'wink';
+export type Mood = 'happy' | 'wave' | 'wow' | 'worried' | 'sleep' | 'wink' | 'love' | 'sad' | 'cool';
 
 const INK = '#1c1c2e';
 
@@ -12,6 +12,21 @@ function eyes(mood: Mood) {
   const closed = (x: number) => `<path d="M${x - 8} 59 Q${x} 66 ${x + 8} 59" fill="none" stroke="${INK}" stroke-width="3.2" stroke-linecap="round"/>`;
   if (mood === 'sleep') return closed(45) + closed(75);
   if (mood === 'wink') return `<g class="kopi-eyes">${open(45)}</g>${closed(75)}`;
+  if (mood === 'love') {
+    const heart = (x: number) =>
+      `<path d="M${x} 66 C${x - 13} 57 ${x - 9} 46 ${x} 52 C${x + 9} 46 ${x + 13} 57 ${x} 66 Z" fill="#ff4d7d" stroke="#fff" stroke-width="1.5"/>`;
+    return heart(45) + heart(75);
+  }
+  if (mood === 'cool') {
+    return `<path d="M30 52 H90 V56 Q90 68 77 68 Q65 68 63 57 H57 Q55 68 43 68 Q30 68 30 56 Z" fill="${INK}"/>
+      <path d="M36 55 L44 55" stroke="#fff" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/>
+      <path d="M68 55 L76 55" stroke="#fff" stroke-opacity=".5" stroke-width="2.5" stroke-linecap="round"/>`;
+  }
+  if (mood === 'sad') {
+    return `<g class="kopi-eyes">${open(45)}${open(75)}</g>
+      <path d="M36 47 L50 43 M84 47 L70 43" stroke="${INK}" stroke-width="3" stroke-linecap="round"/>
+      <path d="M38 68 Q34 76 38 79 Q42 76 38 68 Z" fill="#7cc8ff"/>`;
+  }
   return `<g class="kopi-eyes">${open(45)}${open(75)}</g>`;
 }
 
@@ -22,6 +37,10 @@ function mouth(mood: Mood) {
     case 'worried':
       return `<path d="M50 85 Q55 79 60 84 Q65 89 70 83" fill="none" stroke="${INK}" stroke-width="3.2" stroke-linecap="round"/>
         <path d="M37 45 L51 49 M83 45 L69 49" stroke="${INK}" stroke-width="3" stroke-linecap="round"/>`;
+    case 'sad':
+      return `<path d="M51 86 Q60 78 69 86" fill="none" stroke="${INK}" stroke-width="3.2" stroke-linecap="round"/>`;
+    case 'cool':
+      return `<path d="M52 80 Q62 86 70 78" fill="none" stroke="${INK}" stroke-width="3.2" stroke-linecap="round"/>`;
     case 'sleep':
       return `<ellipse cx="60" cy="82" rx="3.5" ry="3" fill="${INK}"/>
         <text class="kopi-z" x="92" y="30" font-size="14" font-weight="800" fill="#c9c3ff">z</text>

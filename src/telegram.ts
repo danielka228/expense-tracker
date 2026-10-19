@@ -5,6 +5,7 @@
 // регистрирует этот адрес через setWebhook с секретом webhookSecret(токен).
 
 import { CATEGORY_RULES, parseExpense, type ParsedExpense } from './parse';
+import { STICKERS, stickerFile } from './stickers';
 import { eveningText, quip, weeklyText } from './trek';
 import { fmt0, MONTHS_NOM, MONTHS_SHORT, type ExpenseRow } from './views';
 
@@ -111,19 +112,20 @@ const HELP = `❓ <b>Как пользоваться</b>
 /menu — меню
 /stats — статистика
 /last — мои траты
-/undo — удалить последнюю запись`;
+/undo — удалить последнюю запись
+/stickers — стикеры Трэка`;
 
 /** Адрес Bot API. TELEGRAM_API можно подменить для локальной проверки без настоящего Telegram. */
 export const botApi = (token: string, base?: string) => `${base || 'https://api.telegram.org'}/bot${token}`;
 export const botFileApi = (token: string, base?: string) => `${base || 'https://api.telegram.org'}/file/bot${token}`;
 
-export async function tg(api: string, method: string, payload: Record<string, unknown>) {
+export async function tg<T = { username?: string; file_path?: string }>(api: string, method: string, payload: Record<string, unknown>) {
   const res = await fetch(`${api}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  return (await res.json()) as { ok: boolean; result?: { username?: string; file_path?: string }; description?: string };
+  return (await res.json()) as { ok: boolean; result?: T; description?: string };
 }
 
 const hex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -282,6 +284,7 @@ ${MONTHS_NOM[Number(d.today.slice(5, 7)) - 1]} — <b>${fmt0(o.monthTotal)} ${sy
           { text: '⚙️ Настройки', callback_data: 'm:set' },
           { text: '❓ Помощь', callback_data: 'm:help' },
         ],
+        [{ text: '🎨 Стикеры Трэка', callback_data: 'stk' }],
       ],
     },
   };
@@ -484,6 +487,7 @@ export async function handleUpdate(d: BotDeps, u: TgUpdate) {
   if (cmd === 'stats') return sendScreen(d, chatId, screen(d, user, 'st:month'));
   if (cmd === 'last') return sendScreen(d, chatId, screen(d, user, 'ls:0'));
   if (cmd === 'undo') return undo(d, user, chatId);
+  if (cmd === 'stickers') return stickerPack(d, chatId, msg.from?.id ?? chatId);
   if (cmd === 'unlink') return sendScreen(d, chatId, unlinkScreen(user));
   if (cmd) return send(d, chatId, 'Не знаю такой команды. /menu — меню, /help — что я умею.');
   if (msg.voice) return addFromVoice(d, user, chatId, msg.voice);
@@ -560,6 +564,45 @@ async function addFromText(d: BotDeps, user: Linked, chatId: number, text: strin
     const e = await insertExpense(d, user, p);
     await send(d, chatId, `${card(d, e, sym)}\n\n<i>${esc(await quipFor(d, user, e))}</i>`, expenseKeyboard(e.id));
   }
+}
+
+// ---------- стикерпак Трэка ----------
+
+/**
+ * Выпускает набор стикеров Трэка (картинки — с сайта, список — src/stickers.ts) или дописывает в него
+ * новые, если список вырос. Владелец набора — тот, кто первым попросил. Затем присылает ссылку.
+ */
+async function stickerPack(d: BotDeps, chatId: number, tgUserId: number) {
+  const bot = await botUsername(d.api);
+  if (!bot || !d.siteUrl) return send(d, chatId, 'Не получилось достать стикеры, попробуй чуть позже.');
+  const name = `trek_by_${bot}`;
+  const input = (i: number) => ({ sticker: `${d.siteUrl}${stickerFile(i)}`, format: 'static', emoji_list: STICKERS[i].emoji });
+  let set = await tg<{ stickers: { file_id: string }[] }>(d.api, 'getStickerSet', { name });
+  if (!set.ok) {
+    await tg(d.api, 'sendChatAction', { chat_id: chatId, action: 'choose_sticker' });
+    const created = await tg(d.api, 'createNewStickerSet', {
+      user_id: tgUserId,
+      name,
+      title: 'Трэк · СпендТрекер',
+      stickers: STICKERS.map((_, i) => input(i)),
+    });
+    if (!created.ok) {
+      console.error('createNewStickerSet failed', created.description);
+      return send(d, chatId, 'Не получилось выпустить стикеры. Попробуй ещё раз чуть позже.');
+    }
+    set = await tg<{ stickers: { file_id: string }[] }>(d.api, 'getStickerSet', { name });
+  } else if ((set.result?.stickers.length ?? 0) < STICKERS.length) {
+    // В список добавили новые стикеры — дописываем их (получится только у владельца набора)
+    for (let i = set.result?.stickers.length ?? 0; i < STICKERS.length; i++) {
+      const r = await tg(d.api, 'addStickerToSet', { user_id: tgUserId, name, sticker: input(i) });
+      if (!r.ok) break;
+    }
+  }
+  const first = set.result?.stickers[0]?.file_id;
+  if (first) await tg(d.api, 'sendSticker', { chat_id: chatId, sticker: first });
+  return send(d, chatId, `🎨 <b>Стикеры Трэка</b> — ${STICKERS.length} штук: «Записал!», «Опять кофе?», «Кэшбэк!», «Денег нет» и другие.\n\nДобавь их и отправляй друзьям 👇`, {
+    inline_keyboard: [[{ text: '➕ Добавить стикеры', url: `https://t.me/addstickers/${name}` }]],
+  });
 }
 
 /** Реплика Трэка: собирает, что было сегодня и в этом месяце, и отдаёт в quip() */
@@ -727,6 +770,11 @@ async function onCallback(d: BotDeps, q: TgCallback) {
     await d.db.prepare('UPDATE users SET currency = ? WHERE id = ?').bind(code, user.id).run();
     await show(settingsScreen(d, { ...user, currency: code }));
     return answer(`Валюта: ${d.currencies[code].symbol}`);
+  }
+  if (data === 'stk') {
+    await answer('Секунду, готовлю стикеры…');
+    if (msg) await stickerPack(d, msg.chat.id, q.from.id);
+    return;
   }
   if (data === 'ntf') {
     const notify = user.notify ? 0 : 1;
