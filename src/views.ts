@@ -2,6 +2,7 @@ import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
 import { COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, VOICE_JS } from './client';
 import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS } from './styles';
+import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
 
 type H = HtmlEscapedString | Promise<HtmlEscapedString>;
 export type Flash = [category: string, message: string];
@@ -70,14 +71,14 @@ export function layout(o: LayoutOpts, content: H) {
 <link rel="manifest" href="/manifest.webmanifest">
 <title>${o.title}</title>
 <style>
-${raw(BASE_CSS)}${raw(o.extraCss ?? '')}</style>
+${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
 </head>
 <body>
   <div class="toasts">${o.flashes.map(([cat, msg]) => html`<div class="flash ${cat}">${msg}</div>`)}</div>
   ${o.bare ? content : html`<div class="${o.center ? 'center-wrap' : 'wrap'}">${content}</div>`}
   ${o.loggedIn ? html`<nav class="tabbar">${tabs}
   </nav>` : ''}
-  <script>${raw(COMMON_JS)}${raw(o.scripts ?? '')}</script>
+  <script>${raw(COMMON_JS)}${raw(MASCOT_JS)}${raw(o.scripts ?? '')}</script>
 </body>
 </html>`;
 }
@@ -121,6 +122,7 @@ export function landingPage(d: { demo: boolean }) {
 </header>
 <main class="l-wrap">
   <section class="l-hero">
+    <div class="reveal" style="margin-bottom:14px">${raw(mascot('wave', 112))}</div>
     <div class="eyebrow reveal">Новый СпендТрекер</div>
     <h1 class="l-h1 reveal" style="--d:.08s">Деньги.<br><span class="g">Под контролем.</span></h1>
     <p class="l-lead reveal" style="--d:.16s">Записывай траты голосом, сканируй покупки и смотри, куда уходят деньги. Красиво и без лишних шагов.</p>
@@ -202,6 +204,7 @@ export function landingPage(d: { demo: boolean }) {
   </section>
 
   <section class="l-cta">
+    <div class="reveal" style="margin-bottom:10px">${raw(mascot('happy', 96))}</div>
     <h2 class="l-h2 reveal">Начни сегодня.</h2>
     <p class="l-p reveal" style="margin:0 auto 28px">Бесплатно. Без рекламы. Прямо в браузере — и на главном экране iPhone.</p>
     <div class="l-ctas reveal">${cta}</div>
@@ -218,9 +221,7 @@ export function authPage(kind: 'login' | 'register', flashes: Flash[], demo = fa
   return layout(
     { title: isLogin ? 'Вход' : 'Регистрация', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
-<a href="/" class="reveal" style="display:block; width:76px; height:76px; margin:0 auto 22px; border-radius:20px; background:var(--grad); color:#fff; box-shadow:0 18px 50px -14px rgba(111,141,255,.7)">
-  <span style="display:flex; align-items:center; justify-content:center; height:100%">${raw(WALLET_SVG.replace('<svg ', '<svg style="width:40px;height:40px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round" '))}</span>
-</a>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(isLogin ? 'wave' : 'happy', 104))}</div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? 'С возвращением' : 'Новый аккаунт'}</h1>
 <p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${isLogin ? 'Войди, чтобы продолжить' : 'Пара секунд — и можно считать траты'}</p>
 <form method="POST" class="reveal" style="--d:.15s">
@@ -253,9 +254,7 @@ export function tgAppPage(next: string) {
   @keyframes tg-spin { to { transform: rotate(360deg); } }`,
     },
     html`<div style="height: max(18vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="width:76px; height:76px; margin:0 auto 22px; border-radius:20px; background:var(--grad); color:#fff; box-shadow:0 18px 50px -14px rgba(111,141,255,.7)">
-  <span style="display:flex; align-items:center; justify-content:center; height:100%">${raw(WALLET_SVG.replace('<svg ', '<svg style="width:40px;height:40px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round" '))}</span>
-</div>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104))}</div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">СпендТрекер</h1>
 <p class="reveal" id="tg-status" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 0">Входим в аккаунт…</p>
 <div class="tg-spin" id="tg-spin"></div>
@@ -467,6 +466,49 @@ function expenseRows(recent: ExpenseRow[], today: string, sym: string, deletable
   });
 }
 
+// ---------- Копи на главной ----------
+
+const escText = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** Что Копи говорит сегодня: сравнивает траты за день с обычными для этого месяца */
+function kopiCard(d: { sym: string; today: string; todayTotal: number; monthTotal: number; recent: ExpenseRow[]; byCategory: { category: string; total: number }[] }) {
+  const sym = escText(d.sym);
+  const day = Number(d.today.slice(8, 10));
+  const usual = day > 1 ? (d.monthTotal - d.todayTotal) / (day - 1) : 0;
+  const today = `<b>${fmt0(d.todayTotal)} ${sym}</b>`;
+  let mood: Mood;
+  let text: string;
+  if (!d.recent.length) {
+    mood = 'wave';
+    text = 'Привет! Я <b>Копи</b> 👋 Помогу следить за деньгами. Запиши первую трату — скажи её голосом или отсканируй покупку.';
+  } else if (!d.todayTotal) {
+    mood = 'happy';
+    text = 'Сегодня ни одной траты. Так держать! 🌱';
+  } else if (usual > 0 && d.todayTotal > usual * 1.5) {
+    mood = 'worried';
+    text = `Ого, сегодня уже ${today}. Обычно за день выходит около ${fmt0(usual)} ${sym}.`;
+  } else if (usual > 0 && d.todayTotal < usual * 0.8) {
+    mood = 'happy';
+    text = `Сегодня ${today} — меньше, чем обычно. Копим! 🌱`;
+  } else {
+    mood = 'wink';
+    text = `Сегодня ${today}. Всё под контролем 😉`;
+  }
+  const top = d.byCategory[0];
+  const tips = [
+    text,
+    'Нажми «Голосом» и скажи «кофе 250» — я всё запишу.',
+    'Наведи камеру на штрих-код — найду товар и магазин рядом.',
+    ...(top ? [`В этом месяце больше всего уходит на «${escText(top.category)}» — ${fmt0(top.total)} ${sym}.`] : []),
+    'Пиши мне траты и в Telegram — подключи бота в профиле.',
+    'Хе-хе, щекотно! 😄',
+  ];
+  return html`<div class="kopi-card reveal" style="--d:.03s" data-tips="${JSON.stringify(tips)}" data-i="0">
+  ${raw(mascot(mood, 64))}
+  <div class="kopi-bubble"><span class="who">Копи</span><span class="kopi-text">${raw(text)}</span></div>
+</div>`;
+}
+
 // ---------- главная ----------
 
 export function dashboardPage(d: {
@@ -512,6 +554,8 @@ export function dashboardPage(d: {
   </div>
 </div>
 
+${kopiCard(d)}
+
 <div class="actions reveal" style="--d:.06s">
   <button type="button" class="action voice" id="act-voice"><span class="ring">${raw(MIC_SVG)}</span>Голосом</button>
   <button type="button" class="action" id="act-scan"><span class="ring">${raw(SCAN_SVG)}</span>Сканировать</button>
@@ -543,7 +587,7 @@ ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory
   <h3 style="margin-bottom:2px;">Последние записи</h3>
   ${d.recent.length
     ? recentRows
-    : html`<p style="color: var(--text-2); font-size: 15px; margin:12px 0 4px;">Пока нет записей — скажи трату голосом или отсканируй покупку.</p>`}
+    : html`<div class="kopi-empty">${raw(mascot('sleep', 72))}<div>Пока нет записей — скажи трату голосом или отсканируй покупку.</div></div>`}
 </div>
 
 <div class="sheet-back" id="voice">
