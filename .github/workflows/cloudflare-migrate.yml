@@ -146,7 +146,7 @@ jobs:
           secret=$(printf '%s' "$t" | sha256sum | cut -c1-48)
           hook="${{ steps.subdomain.outputs.url }}/tg/webhook"
           curl -sS "$api/setWebhook" -H 'Content-Type: application/json' \
-            --data "$(jq -nc --arg u "$hook" --arg s "$secret" '{url: $u, secret_token: $s, allowed_updates: ["message", "callback_query", "inline_query", "chosen_inline_result"]}')" | jq -c '{ok, description}'
+            --data "$(jq -nc --arg u "$hook" --arg s "$secret" '{url: $u, secret_token: $s, allowed_updates: ["message", "callback_query", "inline_query", "chosen_inline_result", "guest_message"]}')" | jq -c '{ok, description}'
           curl -sS "$api/setMyCommands" -H 'Content-Type: application/json' --data '{"commands": [
             {"command": "menu", "description": "Меню"},
             {"command": "stats", "description": "Статистика"},
