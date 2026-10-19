@@ -9,6 +9,7 @@ import {
   botFileApi,
   botUsername,
   handleUpdate,
+  sendAdminReport,
   sendEveningDigests,
   sendWeeklyDigests,
   verifyInitData,
@@ -36,6 +37,7 @@ type Env = {
   SHORTCUT_URL?: string;
   DEMO?: string; // "1" — демо-версия с кнопкой «Войти в демо»
   TELEGRAM_BOT_TOKEN?: string; // токен от @BotFather; workflow кладёт его из секрета GitHub
+  TELEGRAM_ADMIN_ID?: string; // Telegram ID владельца — ему одному доступна /admin (секрет из GitHub)
   TELEGRAM_API?: string; // только для локальной проверки: адрес заглушки вместо api.telegram.org
   ASSETS: Fetcher; // статика из public/
   AI?: Ai; // Workers AI: распознавание голосовых в Telegram-боте
@@ -687,6 +689,7 @@ function botDeps(env: Env, token: string, siteUrl: string): BotDeps {
     since: { day: periodStart('day'), week: periodStart('week'), month: periodStart('month') },
     overview: (uid) => spendingOverview(db, uid, 0),
     leaderboard: (uid, since) => leaderboard(db, uid, since),
+    adminId: /^\d+$/.test(env.TELEGRAM_ADMIN_ID ?? '') ? Number(env.TELEGRAM_ADMIN_ID) : null,
     asset: async (path) => {
       const r = await env.ASSETS.fetch(new Request(`https://assets.local${path}`));
       return r.ok ? r.blob() : null;
@@ -893,6 +896,7 @@ app.post('/settings/delete_account', async (c) => {
 // В рассылке нет ссылок на сайт, поэтому адрес сайта не нужен.
 const EVENING_CRON = '0 18 * * *'; // 21:00 по Москве
 const WEEKLY_CRON = '0 7 * * 1'; // понедельник, 10:00 по Москве
+const ADMIN_CRON = '0 6 * * *'; // 9:00 по Москве — утренняя сводка владельцу
 
 export default {
   fetch: app.fetch,
@@ -902,5 +906,6 @@ export default {
     const d = botDeps(env, token, '');
     if (event.cron === EVENING_CRON) ctx.waitUntil(sendEveningDigests(d));
     if (event.cron === WEEKLY_CRON) ctx.waitUntil(sendWeeklyDigests(d));
+    if (event.cron === ADMIN_CRON) ctx.waitUntil(sendAdminReport(d));
   },
 } satisfies ExportedHandler<Env>;
