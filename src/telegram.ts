@@ -17,6 +17,8 @@ interface TgMessage {
   chat: { id: number; type: string };
   text?: string;
   voice?: { file_id: string; duration: number };
+  guest_query_id?: string; // гостевой режим: бота упомянули в чужом чате
+  guest_bot_caller_user?: TgUser; // кто упомянул
 }
 interface TgCallback {
   id: string;
@@ -41,6 +43,7 @@ export interface TgUpdate {
   callback_query?: TgCallback;
   inline_query?: TgInlineQuery;
   chosen_inline_result?: TgChosenInline;
+  guest_message?: TgMessage;
 }
 type Button = { text: string; callback_data?: string; url?: string; web_app?: { url: string } };
 type Keyboard = { inline_keyboard: Button[][] };
@@ -452,6 +455,7 @@ export async function handleUpdate(d: BotDeps, u: TgUpdate) {
   if (u.callback_query) return onCallback(d, u.callback_query);
   if (u.inline_query) return onInlineQuery(d, u.inline_query);
   if (u.chosen_inline_result) return onChosenInline(d, u.chosen_inline_result);
+  if (u.guest_message) return onGuestMessage(d, u.guest_message);
   const msg = u.message;
   if (!msg || msg.chat.type !== 'private') return;
   const chatId = msg.chat.id;
@@ -613,6 +617,32 @@ async function onInlineQuery(d: BotDeps, q: TgInlineQuery) {
       reply_markup: { inline_keyboard: [[{ text: '⏳ Записываю…', callback_data: 'w' }]] },
     },
   ]);
+}
+
+// ---------- гостевой режим: «@бот сигареты 250» прямо в переписке, бот отвечает «Бот для тебя» ----------
+
+async function onGuestMessage(d: BotDeps, msg: TgMessage) {
+  if (!msg.guest_query_id) return;
+  const reply = (text: string, kb?: Keyboard) =>
+    tg(d.api, 'answerGuestQuery', {
+      guest_query_id: msg.guest_query_id,
+      result: {
+        type: 'article',
+        id: 'guest',
+        title: 'СпендТрекер',
+        input_message_content: { message_text: text, parse_mode: 'HTML', link_preview_options: { is_disabled: true } },
+        ...(kb ? { reply_markup: kb } : {}),
+      },
+    });
+  const caller = msg.guest_bot_caller_user ?? msg.from;
+  const user = caller ? await linkedUser(d, caller.id) : null;
+  if (!user) return reply('Чтобы записывать траты, подключи бота: на сайте <b>Профиль → «Подключить Telegram»</b>.');
+  // Убираем упоминания вида @бот, остальное — трата
+  const text = (msg.text ?? '').replace(/@\w+/g, ' ').trim();
+  const p = parseExpense(text, d.today, CATEGORY_RULES);
+  if (!validAmount(p)) return reply('Не нашёл сумму. Напиши, например: <code>@бот сигареты 250</code>');
+  const e = await insertExpense(d, user, p);
+  return reply(card(d, e, symOf(d, user)), expenseKeyboard(e.id));
 }
 
 async function onChosenInline(d: BotDeps, r: TgChosenInline) {
