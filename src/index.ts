@@ -4,7 +4,18 @@ import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
-import { botApi, botFileApi, botUsername, handleUpdate, verifyInitData, webhookSecret, type TgUpdate } from './telegram';
+import {
+  botApi,
+  botFileApi,
+  botUsername,
+  handleUpdate,
+  sendEveningDigests,
+  sendWeeklyDigests,
+  verifyInitData,
+  webhookSecret,
+  type BotDeps,
+  type TgUpdate,
+} from './telegram';
 import {
   authPage,
   landingPage,
@@ -661,6 +672,23 @@ async function transcribe(ai: Ai, audio: ArrayBuffer) {
   return r.text ?? '';
 }
 
+function botDeps(env: Env, token: string, siteUrl: string): BotDeps {
+  const db = env.DB;
+  return {
+    db,
+    api: botApi(token, env.TELEGRAM_API),
+    file: botFileApi(token, env.TELEGRAM_API),
+    transcribe: env.AI ? (audio) => transcribe(env.AI as Ai, audio) : null,
+    siteUrl,
+    categories: CATEGORIES,
+    currencies: CURRENCIES,
+    today: periodStart('day'),
+    since: { day: periodStart('day'), week: periodStart('week'), month: periodStart('month') },
+    overview: (uid) => spendingOverview(db, uid, 0),
+    leaderboard: (uid, since) => leaderboard(db, uid, since),
+  };
+}
+
 app.post('/tg/webhook', async (c) => {
   // Сюда Telegram присылает сообщения боту. Чужие запросы отсекаем по секрету из setWebhook.
   const token = c.env.TELEGRAM_BOT_TOKEN;
@@ -672,24 +700,8 @@ app.post('/tg/webhook', async (c) => {
   } catch {
     return c.text('ok');
   }
-  const db = c.env.DB;
   try {
-    await handleUpdate(
-      {
-        db,
-        api: botApi(token, c.env.TELEGRAM_API),
-        file: botFileApi(token, c.env.TELEGRAM_API),
-        transcribe: c.env.AI ? (audio) => transcribe(c.env.AI as Ai, audio) : null,
-        siteUrl: new URL(c.req.url).origin,
-        categories: CATEGORIES,
-        currencies: CURRENCIES,
-        today: periodStart('day'),
-        since: { day: periodStart('day'), week: periodStart('week'), month: periodStart('month') },
-        overview: (uid) => spendingOverview(db, uid, 0),
-        leaderboard: (uid, since) => leaderboard(db, uid, since),
-      },
-      update,
-    );
+    await handleUpdate(botDeps(c.env, token, new URL(c.req.url).origin), update);
   } catch (e) {
     // Отвечаем 200 в любом случае, иначе Telegram будет повторять это сообщение снова и снова
     console.error('telegram update failed', e);
@@ -872,4 +884,18 @@ app.post('/settings/delete_account', async (c) => {
   return c.redirect('/login');
 });
 
-export default app;
+// Расписание (triggers.crons в wrangler.jsonc): итоги от Трэка в Telegram.
+// В рассылке нет ссылок на сайт, поэтому адрес сайта не нужен.
+const EVENING_CRON = '0 18 * * *'; // 21:00 по Москве
+const WEEKLY_CRON = '0 7 * * 1'; // понедельник, 10:00 по Москве
+
+export default {
+  fetch: app.fetch,
+  async scheduled(event, env, ctx) {
+    const token = env.TELEGRAM_BOT_TOKEN;
+    if (!token) return;
+    const d = botDeps(env, token, '');
+    if (event.cron === EVENING_CRON) ctx.waitUntil(sendEveningDigests(d));
+    if (event.cron === WEEKLY_CRON) ctx.waitUntil(sendWeeklyDigests(d));
+  },
+} satisfies ExportedHandler<Env>;
