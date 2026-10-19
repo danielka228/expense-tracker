@@ -152,6 +152,7 @@ jobs:
             {"command": "stats", "description": "Статистика"},
             {"command": "last", "description": "Мои траты"},
             {"command": "undo", "description": "Удалить последнюю запись"},
+            {"command": "stickers", "description": "Стикеры Трэка"},
             {"command": "help", "description": "Как пользоваться"}]}' | jq -c '{ok}'
           # Кнопка слева от поля ввода открывает сайт прямо в Telegram (Mini App) — сразу в аккаунте
           app="${{ steps.subdomain.outputs.url }}/tg/app"
