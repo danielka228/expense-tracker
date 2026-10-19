@@ -5,6 +5,7 @@
 // регистрирует этот адрес через setWebhook с секретом webhookSecret(токен).
 
 import { CATEGORY_RULES, parseExpense, type ParsedExpense } from './parse';
+import { eveningText, quip, weeklyText } from './trek';
 import { fmt0, MONTHS_NOM, MONTHS_SHORT, type ExpenseRow } from './views';
 
 interface TgUser {
@@ -72,6 +73,7 @@ interface Linked {
   username: string;
   currency: string;
   pending_category: string | null; // выбрана в меню «Добавить», ждёт сумму
+  notify: number; // 1 — Трэк присылает вечерние и недельные итоги
 }
 
 const EMOJI: Record<string, string> = {
@@ -241,7 +243,7 @@ function periodRow(prefix: string, current: Period): Button[] {
 function linkedUser(d: BotDeps, chatId: number) {
   return d.db
     .prepare(
-      `SELECT u.id, u.username, u.currency,
+      `SELECT u.id, u.username, u.currency, t.notify,
               CASE WHEN t.pending_at > datetime('now', '-10 minutes') THEN t.pending_category END AS pending_category
        FROM telegram_links t JOIN users u ON u.id = t.user_id WHERE t.chat_id = ?`,
     )
@@ -383,9 +385,11 @@ function settingsScreen(d: BotDeps, user: Linked): Screen {
 
 Аккаунт — <b>${esc(user.username)}</b>
 Валюта — <b>${esc(cur.symbol)}</b> ${esc(cur.label)}
-Telegram — подключён`,
+Telegram — подключён
+Итоги от Трэка — ${user.notify ? 'присылать вечером и по понедельникам' : 'выключены'}`,
     kb: {
       inline_keyboard: [
+        [{ text: user.notify ? '🔔 Итоги от Трэка: вкл' : '🔕 Итоги от Трэка: выкл', callback_data: 'ntf' }],
         [
           { text: '💱 Валюта', callback_data: 'm:cur' },
           { text: '🔌 Отключить бота', callback_data: 'm:unl' },
@@ -554,8 +558,36 @@ async function addFromText(d: BotDeps, user: Linked, chatId: number, text: strin
   }
   for (const p of parsed) {
     const e = await insertExpense(d, user, p);
-    await send(d, chatId, card(d, e, sym), expenseKeyboard(e.id));
+    await send(d, chatId, `${card(d, e, sym)}\n\n<i>${esc(await quipFor(d, user, e))}</i>`, expenseKeyboard(e.id));
   }
+}
+
+/** Реплика Трэка: собирает, что было сегодня и в этом месяце, и отдаёт в quip() */
+async function quipFor(d: BotDeps, user: Linked, e: ExpenseRow) {
+  const [day, o] = await Promise.all([
+    d.db
+      .prepare(
+        `SELECT COUNT(*) AS n,
+                SUM(CASE WHEN note LIKE '%кофе%' OR note LIKE '%Кофе%' THEN 1 ELSE 0 END) AS coffee,
+                (SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE user_id = ?1 AND category = 'Табак' AND expense_date >= ?3) AS tobacco
+         FROM expenses WHERE user_id = ?1 AND expense_date = ?2`,
+      )
+      .bind(user.id, d.today, d.since.month)
+      .first<{ n: number; coffee: number | null; tobacco: number }>(),
+    d.overview(user.id),
+  ]);
+  const dayOfMonth = Number(d.today.slice(8, 10));
+  return quip({
+    category: e.category,
+    note: e.note,
+    amount: e.amount,
+    sym: symOf(d, user),
+    hourMsk: (new Date().getUTCHours() + 3) % 24,
+    todayCount: day?.n ?? 1,
+    coffeeToday: day?.coffee ?? 0,
+    tobaccoMonth: day?.tobacco ?? 0,
+    usualDay: dayOfMonth > 1 ? (o.monthTotal - o.todayTotal) / (dayOfMonth - 1) : 0,
+  });
 }
 
 const validAmount = (p: ParsedExpense) => !!p.amount && p.amount > 0 && p.amount < 1e9;
@@ -696,6 +728,12 @@ async function onCallback(d: BotDeps, q: TgCallback) {
     await show(settingsScreen(d, { ...user, currency: code }));
     return answer(`Валюта: ${d.currencies[code].symbol}`);
   }
+  if (data === 'ntf') {
+    const notify = user.notify ? 0 : 1;
+    await d.db.prepare('UPDATE telegram_links SET notify = ? WHERE user_id = ?').bind(notify, user.id).run();
+    await show(settingsScreen(d, { ...user, notify }));
+    return answer(notify ? 'Трэк будет присылать итоги 🔔' : 'Больше не буду присылать итоги 🔕');
+  }
   if (data === 'unl!') {
     await d.db.prepare('DELETE FROM telegram_links WHERE user_id = ?').bind(user.id).run();
     await tg(d.api, 'editMessageText', {
@@ -744,4 +782,81 @@ async function onCallback(d: BotDeps, q: TgCallback) {
     kb: { inline_keyboard: page === undefined ? [] : [back(`m:ls:${page}`, '‹ К списку')] },
   });
   return answer('Удалено');
+}
+
+// ---------- итоги от Трэка: по расписанию (cron в wrangler.jsonc) ----------
+
+const shiftDay = (iso: string, days: number) => new Date(Date.parse(iso) + days * 86400000).toISOString().slice(0, 10);
+
+interface Subscriber {
+  chat_id: number;
+  id: number;
+  currency: string;
+}
+
+function subscribers(d: BotDeps) {
+  return d.db
+    .prepare('SELECT t.chat_id, u.id, u.currency FROM telegram_links t JOIN users u ON u.id = t.user_id WHERE t.notify = 1')
+    .all<Subscriber>()
+    .then((r) => r.results);
+}
+
+/** Сумма, число трат и главная категория за даты from..to включительно */
+async function periodSummary(d: BotDeps, userId: number, from: string, to: string) {
+  const [sum, top] = await d.db.batch([
+    d.db
+      .prepare('SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND expense_date BETWEEN ? AND ?')
+      .bind(userId, from, to),
+    d.db
+      .prepare(
+        `SELECT category, SUM(amount) AS total FROM expenses WHERE user_id = ? AND expense_date BETWEEN ? AND ?
+         GROUP BY category ORDER BY total DESC LIMIT 1`,
+      )
+      .bind(userId, from, to),
+  ]);
+  const s = sum.results[0] as { n: number; total: number };
+  return { count: s.n, total: s.total, top: (top.results[0] as { category: string; total: number } | undefined) ?? null };
+}
+
+const digestKeyboard = (stats: string): Keyboard => ({
+  inline_keyboard: [
+    [
+      { text: '📊 Статистика', callback_data: stats },
+      { text: '🔕 Не присылать', callback_data: 'ntf' },
+    ],
+  ],
+});
+
+/** 21:00 по Москве: итоги дня всем, кто не выключил сообщения и вообще пользуется ботом */
+export async function sendEveningDigests(d: BotDeps) {
+  const dayOfMonth = Number(d.today.slice(8, 10));
+  for (const u of await subscribers(d)) {
+    try {
+      const ever = await d.db.prepare('SELECT 1 FROM expenses WHERE user_id = ? LIMIT 1').bind(u.id).first();
+      if (!ever) continue;
+      const day = await periodSummary(d, u.id, d.today, d.today);
+      const month = dayOfMonth > 1 ? await periodSummary(d, u.id, d.since.month, shiftDay(d.today, -1)) : null;
+      const sym = esc((d.currencies[u.currency] ?? d.currencies.RUB).symbol);
+      const text = eveningText({ sym, ...day, usualDay: month ? month.total / (dayOfMonth - 1) : 0 });
+      await send(d, u.chat_id, text, digestKeyboard('m:st:day'));
+    } catch (e) {
+      console.error('evening digest failed', u.chat_id, e);
+    }
+  }
+}
+
+/** Понедельник утром: итоги прошлой недели в сравнении с позапрошлой */
+export async function sendWeeklyDigests(d: BotDeps) {
+  const start = shiftDay(d.since.week, -7);
+  for (const u of await subscribers(d)) {
+    try {
+      const week = await periodSummary(d, u.id, start, shiftDay(d.since.week, -1));
+      if (!week.count) continue;
+      const prev = await periodSummary(d, u.id, shiftDay(start, -7), shiftDay(start, -1));
+      const sym = esc((d.currencies[u.currency] ?? d.currencies.RUB).symbol);
+      await send(d, u.chat_id, weeklyText({ sym, ...week, prevTotal: prev.total }), digestKeyboard('m:st:week'));
+    } catch (e) {
+      console.error('weekly digest failed', u.chat_id, e);
+    }
+  }
 }
