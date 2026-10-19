@@ -239,6 +239,55 @@ ${isLogin
   );
 }
 
+// ---------- сайт внутри Telegram (Mini App) ----------
+
+export function tgAppPage(next: string) {
+  return layout(
+    {
+      title: 'СпендТрекер',
+      flashes: [],
+      loggedIn: false,
+      center: true,
+      extraCss: `${DASHBOARD_CSS}
+  .tg-spin { width: 26px; height: 26px; margin: 22px auto 0; border-radius: 50%; border: 2.5px solid var(--fill); border-top-color: var(--accent); animation: tg-spin .8s linear infinite; }
+  @keyframes tg-spin { to { transform: rotate(360deg); } }`,
+    },
+    html`<div style="height: max(18vh, calc(24px + env(safe-area-inset-top)))"></div>
+<div class="reveal" style="width:76px; height:76px; margin:0 auto 22px; border-radius:20px; background:var(--grad); color:#fff; box-shadow:0 18px 50px -14px rgba(111,141,255,.7)">
+  <span style="display:flex; align-items:center; justify-content:center; height:100%">${raw(WALLET_SVG.replace('<svg ', '<svg style="width:40px;height:40px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round" '))}</span>
+</div>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">СпендТрекер</h1>
+<p class="reveal" id="tg-status" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 0">Входим в аккаунт…</p>
+<div class="tg-spin" id="tg-spin"></div>
+<a class="btn reveal" id="tg-login" href="/login" style="--d:.15s; margin-top:26px" hidden>Войти по логину и паролю</a>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script>
+(function () {
+  var next = ${raw(JSON.stringify(next))};
+  var tg = window.Telegram && window.Telegram.WebApp;
+  function fail(text) {
+    document.getElementById('tg-status').textContent = text;
+    document.getElementById('tg-spin').hidden = true;
+    document.getElementById('tg-login').hidden = false;
+  }
+  if (!tg || !tg.initData) return fail('Эта страница открывается из Telegram-бота.');
+  tg.ready();
+  tg.expand();
+  try { tg.setHeaderColor('#000000'); tg.setBackgroundColor('#000000'); } catch (e) {}
+  fetch('/tg/auth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ initData: tg.initData }), credentials: 'same-origin' })
+    .then(function (r) { return r.json(); })
+    .then(function (j) {
+      if (j.ok) return location.replace(next);
+      fail(j.error === 'not_linked'
+        ? 'Этот Telegram ещё не подключён к аккаунту. Войди и нажми в профиле «Подключить Telegram».'
+        : 'Не получилось войти автоматически.');
+    })
+    .catch(function () { fail('Нет связи с сервером. Попробуй ещё раз.'); });
+})();
+</script>`,
+  );
+}
+
 // ---------- иконки категорий ----------
 
 const ICONS = {
