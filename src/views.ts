@@ -1000,14 +1000,50 @@ const SQ = {
   coins: '<svg viewBox="0 0 24 24"><circle cx="9" cy="9" r="6"/><path d="M18.1 10.4A6 6 0 1 1 10.4 18.1"/><path d="M9 6.5v5"/><path d="M7 7.5h3a1 1 0 0 1 0 2H8a1 1 0 0 0 0 2h3"/></svg>',
   bolt: '<svg viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7z"/></svg>',
   out: '<svg viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/></svg>',
+  tg: '<svg viewBox="0 0 24 24"><path d="M21 4 3 11l6 2.5M21 4l-3.5 16-8.5-6.5M21 4 9 13.5V19l3-3"/></svg>',
+  bell: '<svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>',
+  unlink: '<svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 4 8"/><path d="M8 12h4"/><path d="m2 2 20 20"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
 };
 const sq = (icon: keyof typeof SQ, bg: string) => raw(`<span class="sq" style="background:${bg}">${SQ[icon]}</span>`);
+
+// Telegram в настройках: привязать аккаунт (вход на сайт через Telegram) отдельно от бота —
+// бот пишет только тем, кто сам открыл его и нажал «Старт».
+function telegramSettings(t: { linked: boolean; tgUsername: string | null; bot: string | null; login: boolean }) {
+  if (!t.login && !t.bot) return '';
+  if (!t.linked) {
+    return html`<div class="section-h">Telegram</div>
+<div class="list reveal" style="--inset:58px; --d:.03s">
+  ${t.login
+    ? html`<a class="row" href="/auth/telegram?link=1&back=settings">${sq('tg', '#2aabee')}<span class="grow">Привязать Telegram</span>${CHEV}</a>`
+    : html`<form method="POST" action="/profile/telegram" style="margin:0"><button type="submit" class="row">${sq('tg', '#2aabee')}<span class="grow">Привязать Telegram</span>${CHEV}</button></form>`}
+</div>
+<div class="footnote">${t.login
+      ? 'После привязки можно входить на сайт кнопкой «Войти через Telegram». Бот писать не будет, пока сам не разрешишь.'
+      : 'Откроется бот: нажми «Старт», и он привяжется к аккаунту.'}</div>`;
+  }
+  return html`<div class="section-h">Telegram</div>
+<div class="list reveal" style="--inset:58px; --d:.03s">
+  <div class="row">${sq('tg', '#2aabee')}<span class="grow">Telegram</span><span class="value">${t.tgUsername ? `@${t.tgUsername}` : 'привязан'}</span></div>
+  ${t.bot
+    ? html`<a class="row" href="https://t.me/${t.bot}">${sq('bell', '#ff9f0a')}<span class="grow">Разрешить боту писать</span>${CHEV}</a>`
+    : ''}
+  <form method="POST" action="/profile/telegram/unlink" style="margin:0" onsubmit="return confirm('Отвязать Telegram? Входить через Telegram и получать сообщения от бота больше не получится.');">
+    <input type="hidden" name="back" value="settings">
+    <button type="submit" class="row danger">${sq('unlink', '#ff453a')}<span class="grow">Отвязать Telegram</span></button>
+  </form>
+</div>
+<div class="footnote">${t.bot
+    ? html`Чтобы бот присылал итоги дня и принимал траты сообщениями, открой @${t.bot} и нажми «Старт» — так ты разрешишь ему писать.`
+    : 'Входи на сайт кнопкой «Войти через Telegram».'}</div>`;
+}
 
 export function settingsPage(d: {
   flashes: Flash[];
   username: string;
   hasPassword: boolean;
+  // login — включён вход через Telegram на сайте; bot — ник бота, если бот подключён
+  telegram: { linked: boolean; tgUsername: string | null; bot: string | null; login: boolean };
   currencies: Record<string, Currency>;
   currentCurrency: string;
 }) {
@@ -1041,6 +1077,7 @@ export function settingsPage(d: {
   </details>
   <a class="row" href="/profile">${sq('bolt', '#ff9f0a')}<span class="grow">Быстрая трата с iPhone</span>${CHEV}</a>
 </div>
+${telegramSettings(d.telegram)}
 
 <div class="list reveal" style="--inset:58px; --d:.05s">
   <a class="row" href="/logout">${sq('out', '#636366')}<span class="grow">Выйти</span></a>
