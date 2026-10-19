@@ -148,11 +148,15 @@ jobs:
           curl -sS "$api/setWebhook" -H 'Content-Type: application/json' \
             --data "$(jq -nc --arg u "$hook" --arg s "$secret" '{url: $u, secret_token: $s, allowed_updates: ["message", "callback_query", "inline_query", "chosen_inline_result"]}')" | jq -c '{ok, description}'
           curl -sS "$api/setMyCommands" -H 'Content-Type: application/json' --data '{"commands": [
-            {"command": "stats", "description": "Сколько потрачено"},
-            {"command": "last", "description": "Последние траты"},
+            {"command": "menu", "description": "Меню"},
+            {"command": "stats", "description": "Статистика"},
+            {"command": "last", "description": "Мои траты"},
             {"command": "undo", "description": "Удалить последнюю запись"},
-            {"command": "help", "description": "Как пользоваться"},
-            {"command": "unlink", "description": "Отключить бота от аккаунта"}]}' | jq -c '{ok}'
+            {"command": "help", "description": "Как пользоваться"}]}' | jq -c '{ok}'
+          # Кнопка слева от поля ввода открывает сайт прямо в Telegram (Mini App) — сразу в аккаунте
+          app="${{ steps.subdomain.outputs.url }}/tg/app"
+          curl -sS "$api/setChatMenuButton" -H 'Content-Type: application/json' \
+            --data "$(jq -nc --arg u "$app" '{menu_button: {type: "web_app", text: "СпендТрекер", web_app: {url: $u}}}')" | jq -c '{ok, description}'
           curl -sS "$api/setMyDescription" -H 'Content-Type: application/json' \
             --data '{"description": "Записываю траты в СпендТрекер. Напиши «кофе 250» — и трата уже на сайте."}' | jq -c '{ok}'
           info=$(curl -sS "$api/getWebhookInfo" | jq -c '.result | {url, pending_update_count, last_error_message}')

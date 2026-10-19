@@ -1,4 +1,5 @@
-// Telegram-бот: записывает траты из сообщений («кофе 250»), показывает сводку и последние записи.
+// Telegram-бот: записывает траты из сообщений и голосовых («кофе 250»), а всё остальное — через меню
+// с кнопками, которое живёт в одном сообщении и перерисовывается на месте (как в Crypto Bot).
 // Инлайн-режим: «@бот сигареты 250» в любом чате → карточка «Записать» → трата записана, сообщение в чате.
 // Telegram присылает обновления на POST /tg/webhook (см. index.ts), а workflow при деплое
 // регистрирует этот адрес через setWebhook с секретом webhookSecret(токен).
@@ -41,8 +42,13 @@ export interface TgUpdate {
   inline_query?: TgInlineQuery;
   chosen_inline_result?: TgChosenInline;
 }
-type Button = { text: string; callback_data?: string; url?: string };
+type Button = { text: string; callback_data?: string; url?: string; web_app?: { url: string } };
 type Keyboard = { inline_keyboard: Button[][] };
+type Period = 'day' | 'week' | 'month';
+interface Screen {
+  text: string;
+  kb: Keyboard;
+}
 
 export interface BotDeps {
   db: D1Database;
@@ -51,21 +57,18 @@ export interface BotDeps {
   transcribe: ((audio: ArrayBuffer) => Promise<string>) | null; // распознавание речи; null — голосовые не понимаем
   siteUrl: string;
   categories: string[];
+  currencies: Record<string, { label: string; symbol: string }>;
   today: string;
-  symbol(currency: string): string;
-  overview(userId: number): Promise<{
-    todayTotal: number;
-    weekTotal: number;
-    monthTotal: number;
-    byCategory: { category: string; total: number }[];
-    recent: ExpenseRow[];
-  }>;
+  since: Record<Period, string>; // с какой даты считается день, неделя и месяц
+  overview(userId: number): Promise<{ todayTotal: number; weekTotal: number; monthTotal: number }>;
+  leaderboard(userId: number, since: string): Promise<{ username: string; total: number; is_me: boolean }[]>;
 }
 
 interface Linked {
   id: number;
   username: string;
   currency: string;
+  pending_category: string | null; // выбрана в меню «Добавить», ждёт сумму
 }
 
 const EMOJI: Record<string, string> = {
@@ -80,21 +83,30 @@ const EMOJI: Record<string, string> = {
 };
 const emoji = (cat: string) => EMOJI[cat] ?? '📦';
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const symOf = (d: BotDeps, user: Linked) => (d.currencies[user.currency] ?? d.currencies.RUB).symbol;
+const PERIODS: [Period, string][] = [
+  ['day', 'День'],
+  ['week', 'Неделя'],
+  ['month', 'Месяц'],
+];
+const LIST_PAGE = 6;
 
-const HELP = `Просто напиши или надиктуй голосовым трату, и я её запишу:
+const HELP = `❓ <b>Как пользоваться</b>
+
+Просто напиши или надиктуй голосовым трату, и я её запишу:
 <code>кофе 250</code>
 <code>вчера такси 540</code>
 <code>полторы тысячи продукты</code>
 Можно несколько трат сразу, каждую с новой строки или отдельной фразой.
 
-В любом чате с человеком набери @ и имя бота, затем трату: <code>сигареты 250</code>. Нажми на появившуюся карточку, и трата запишется, а в чате останется сообщение о ней.
-
 Категорию угадываю сам. Под каждой записью есть кнопки, чтобы поменять категорию или удалить запись.
 
-/stats — сколько потрачено
-/last — последние траты
-/undo — удалить последнюю запись
-/unlink — отключить бота от аккаунта`;
+В любом чате с человеком набери @ и имя бота, затем трату: <code>сигареты 250</code>. Нажми на появившуюся карточку, и трата запишется, а в чате останется сообщение о ней.
+
+/menu — меню
+/stats — статистика
+/last — мои траты
+/undo — удалить последнюю запись`;
 
 /** Адрес Bot API. TELEGRAM_API можно подменить для локальной проверки без настоящего Telegram. */
 export const botApi = (token: string, base?: string) => `${base || 'https://api.telegram.org'}/bot${token}`;
@@ -109,13 +121,40 @@ export async function tg(api: string, method: string, payload: Record<string, un
   return (await res.json()) as { ok: boolean; result?: { username?: string; file_path?: string }; description?: string };
 }
 
+const hex = (buf: ArrayBuffer) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
+
 /** Секрет, который Telegram присылает в заголовке каждого запроса. Workflow считает так же: sha256(токен), первые 48 символов. */
 export async function webhookSecret(token: string) {
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
-  return [...new Uint8Array(digest)]
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')
-    .slice(0, 48);
+  return hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(token))).slice(0, 48);
+}
+
+/**
+ * Проверка данных, с которыми Telegram открывает сайт как Mini App (Telegram.WebApp.initData).
+ * Подпись: HMAC-SHA256(ключ = HMAC-SHA256("WebAppData", токен бота), строка «ключ=значение» по алфавиту).
+ * Возвращает id пользователя Telegram или null.
+ */
+export async function verifyInitData(initData: string, token: string, maxAgeSec = 86400): Promise<number | null> {
+  const params = new URLSearchParams(initData);
+  const hash = params.get('hash');
+  if (!hash) return null;
+  params.delete('hash');
+  const check = [...params.entries()]
+    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    .map(([k, v]) => `${k}=${v}`)
+    .join('\n');
+  const enc = new TextEncoder();
+  const hmac = (key: BufferSource) => crypto.subtle.importKey('raw', key, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const secret = await crypto.subtle.sign('HMAC', await hmac(enc.encode('WebAppData')), enc.encode(token));
+  const sig = hex(await crypto.subtle.sign('HMAC', await hmac(secret), enc.encode(check)));
+  if (sig !== hash) return null;
+  const authDate = Number(params.get('auth_date'));
+  if (!authDate || Date.now() / 1000 - authDate > maxAgeSec) return null;
+  try {
+    const id = (JSON.parse(params.get('user') ?? 'null') as { id?: number } | null)?.id;
+    return typeof id === 'number' ? id : null;
+  } catch {
+    return null;
+  }
 }
 
 let cachedName: { api: string; name: string } | null = null;
@@ -157,29 +196,257 @@ function card(d: BotDeps, e: ExpenseRow, sym: string) {
 ${emoji(e.category)} ${esc(e.category)} · ${dayLabel(e.expense_date, d.today)}`;
 }
 
-const mainKeyboard = (id: number): Keyboard => ({
-  inline_keyboard: [
-    [
-      { text: '🏷 Категория', callback_data: `c:${id}` },
-      { text: '🗑 Удалить', callback_data: `d:${id}` },
-    ],
-  ],
+/** Плитка кнопок по две в ряд */
+function grid(buttons: Button[], cols = 2): Button[][] {
+  const rows: Button[][] = [];
+  for (let i = 0; i < buttons.length; i += cols) rows.push(buttons.slice(i, i + cols));
+  return rows;
+}
+
+const back = (to = 'm:home', text = '‹ Назад'): Button[] => [{ text, callback_data: to }];
+
+/** Кнопка, которая открывает сайт прямо в Telegram (Mini App) уже со входом в аккаунт */
+const appButton = (d: BotDeps, text: string, path = '/dashboard'): Button => ({
+  text,
+  web_app: { url: `${d.siteUrl}/tg/app?next=${encodeURIComponent(path)}` },
 });
 
-function categoryKeyboard(d: BotDeps, id: number): Keyboard {
-  const buttons = d.categories.map((cat, i) => ({ text: `${emoji(cat)} ${cat}`, callback_data: `s:${id}:${i}` }));
-  const rows: Button[][] = [];
-  for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
-  rows.push([{ text: '‹ Назад', callback_data: `b:${id}` }]);
+// Кнопки под тратой. page — трата открыта из списка «Мои траты», тогда есть возврат к нему.
+const pg = (page?: number) => (page === undefined ? '' : `:p${page}`);
+
+function expenseKeyboard(id: number, page?: number): Keyboard {
+  const rows: Button[][] = [
+    [
+      { text: '🏷 Категория', callback_data: `c:${id}${pg(page)}` },
+      { text: '🗑 Удалить', callback_data: `d:${id}${pg(page)}` },
+    ],
+  ];
+  if (page !== undefined) rows.push(back(`m:ls:${page}`, '‹ К списку'));
   return { inline_keyboard: rows };
+}
+
+function categoryKeyboard(d: BotDeps, id: number, page?: number): Keyboard {
+  const buttons = d.categories.map((cat, i) => ({ text: `${emoji(cat)} ${cat}`, callback_data: `s:${id}:${i}${pg(page)}` }));
+  return { inline_keyboard: [...grid(buttons), back(`b:${id}${pg(page)}`)] };
+}
+
+/** Переключатель периода, как сегменты на сайте: выбранный отмечен точками */
+function periodRow(prefix: string, current: Period): Button[] {
+  return PERIODS.map(([p, label]) => ({ text: p === current ? `· ${label} ·` : label, callback_data: `${prefix}:${p}` }));
 }
 
 function linkedUser(d: BotDeps, chatId: number) {
   return d.db
-    .prepare('SELECT u.id, u.username, u.currency FROM telegram_links t JOIN users u ON u.id = t.user_id WHERE t.chat_id = ?')
+    .prepare(
+      `SELECT u.id, u.username, u.currency,
+              CASE WHEN t.pending_at > datetime('now', '-10 minutes') THEN t.pending_category END AS pending_category
+       FROM telegram_links t JOIN users u ON u.id = t.user_id WHERE t.chat_id = ?`,
+    )
     .bind(chatId)
     .first<Linked>();
 }
+
+const setPending = (d: BotDeps, user: Linked, cat: string | null) =>
+  d.db.prepare("UPDATE telegram_links SET pending_category = ?, pending_at = datetime('now') WHERE user_id = ?").bind(cat, user.id).run();
+
+// ---------- экраны меню ----------
+
+async function homeScreen(d: BotDeps, user: Linked): Promise<Screen> {
+  const sym = esc(symOf(d, user));
+  const o = await d.overview(user.id);
+  return {
+    text: `💸 <b>СпендТрекер</b> · ${esc(user.username)}
+
+Сегодня — <b>${fmt0(o.todayTotal)} ${sym}</b>
+Неделя — <b>${fmt0(o.weekTotal)} ${sym}</b>
+${MONTHS_NOM[Number(d.today.slice(5, 7)) - 1]} — <b>${fmt0(o.monthTotal)} ${sym}</b>
+
+<i>Чтобы записать трату, просто напиши или надиктуй: «кофе 250»</i>`,
+    kb: {
+      inline_keyboard: [
+        [appButton(d, '📱 Открыть СпендТрекер')],
+        [
+          { text: '➕ Добавить', callback_data: 'm:add' },
+          { text: '📊 Статистика', callback_data: 'm:st:month' },
+        ],
+        [
+          { text: '🧾 Мои траты', callback_data: 'm:ls:0' },
+          { text: '👥 Друзья', callback_data: 'm:fr:month' },
+        ],
+        [
+          { text: '⚙️ Настройки', callback_data: 'm:set' },
+          { text: '❓ Помощь', callback_data: 'm:help' },
+        ],
+      ],
+    },
+  };
+}
+
+function addScreen(d: BotDeps): Screen {
+  return {
+    text: `➕ <b>Новая трата</b>
+
+Выбери категорию, а потом отправь сумму и, если хочешь, заметку — например <code>250 обед</code>.
+
+Можно и без меню: напиши «кофе 250», и категорию я угадаю.`,
+    kb: { inline_keyboard: [...grid(d.categories.map((cat, i) => ({ text: `${emoji(cat)} ${cat}`, callback_data: `pc:${i}` }))), back()] },
+  };
+}
+
+function pendingScreen(cat: string): Screen {
+  return {
+    text: `${emoji(cat)} <b>${esc(cat)}</b>
+
+Отправь сумму и заметку одним сообщением или голосовым: <code>250 обед</code>`,
+    kb: { inline_keyboard: [back('pc:x', '✖️ Отмена')] },
+  };
+}
+
+const periodTitle = (d: BotDeps, p: Period) =>
+  p === 'day' ? 'сегодня' : p === 'week' ? 'за неделю' : MONTHS_NOM[Number(d.today.slice(5, 7)) - 1].toLowerCase();
+
+async function statsScreen(d: BotDeps, user: Linked, period: Period): Promise<Screen> {
+  const sym = esc(symOf(d, user));
+  const { results } = await d.db
+    .prepare('SELECT category, SUM(amount) AS total FROM expenses WHERE user_id = ? AND expense_date >= ? GROUP BY category ORDER BY total DESC')
+    .bind(user.id, d.since[period])
+    .all<{ category: string; total: number }>();
+  const sum = results.reduce((s, r) => s + r.total, 0);
+  const rows = results.map((r) => {
+    const pct = Math.round((r.total / sum) * 100);
+    const filled = Math.max(1, Math.round(pct / 10));
+    return `${emoji(r.category)} ${esc(r.category)} · <b>${fmt0(r.total)} ${sym}</b>\n${'▰'.repeat(filled)}${'▱'.repeat(10 - filled)}  ${pct}%`;
+  });
+  return {
+    text: `📊 <b>Статистика · ${periodTitle(d, period)}</b>
+
+${sum ? `Потрачено <b>${fmt0(sum)} ${sym}</b>\n\n${rows.join('\n\n')}` : 'За этот период трат пока нет.'}`,
+    kb: { inline_keyboard: [periodRow('m:st', period), [appButton(d, '📈 Графики на сайте')], back()] },
+  };
+}
+
+async function listScreen(d: BotDeps, user: Linked, page: number): Promise<Screen> {
+  const sym = symOf(d, user);
+  const [countRes, rowsRes] = await d.db.batch([
+    d.db.prepare('SELECT COUNT(*) AS n FROM expenses WHERE user_id = ?').bind(user.id),
+    d.db
+      .prepare(
+        `SELECT id, amount, category, note, expense_date FROM expenses WHERE user_id = ?
+         ORDER BY expense_date DESC, created_at DESC, id DESC LIMIT ? OFFSET ?`,
+      )
+      .bind(user.id, LIST_PAGE, page * LIST_PAGE),
+  ]);
+  const total = (countRes.results[0] as { n: number }).n;
+  const pages = Math.max(1, Math.ceil(total / LIST_PAGE));
+  const items = (rowsRes.results as unknown as ExpenseRow[]).map((e) => [
+    {
+      text: `${emoji(e.category)} ${e.note || e.category} · ${fmt0(e.amount)} ${sym} · ${dayLabel(e.expense_date, d.today)}`,
+      callback_data: `e:${e.id}:p${page}`,
+    },
+  ]);
+  const nav: Button[] = [];
+  if (pages > 1) {
+    if (page > 0) nav.push({ text: '‹', callback_data: `m:ls:${page - 1}` });
+    nav.push({ text: `· ${page + 1} из ${pages} ·`, callback_data: 'n' });
+    if (page < pages - 1) nav.push({ text: '›', callback_data: `m:ls:${page + 1}` });
+  }
+  return {
+    text: total
+      ? `🧾 <b>Мои траты</b> · ${total}\n\nНажми на трату, чтобы поменять категорию или удалить её.`
+      : '🧾 <b>Мои траты</b>\n\nПока нет ни одной траты. Напиши, например: <code>кофе 250</code>',
+    kb: { inline_keyboard: [...items, ...(nav.length ? [nav] : []), back()] },
+  };
+}
+
+async function friendsScreen(d: BotDeps, user: Linked, period: Period): Promise<Screen> {
+  const sym = esc(symOf(d, user));
+  const board = await d.leaderboard(user.id, d.since[period]);
+  const medals = ['🥇', '🥈', '🥉'];
+  const rows = board.map(
+    (r, i) => `${medals[i] ?? `${i + 1}.`} ${r.is_me ? '<b>Ты</b>' : esc(r.username)} — <b>${fmt0(r.total)} ${sym}</b>`,
+  );
+  return {
+    text: `👥 <b>Друзья · ${periodTitle(d, period)}</b>
+
+${board.length > 1 ? rows.join('\n') : 'Пока никого нет. Добавь друзей по нику — и смотрите, кто сколько тратит.'}`,
+    kb: { inline_keyboard: [periodRow('m:fr', period), [appButton(d, '➕ Добавить друга', '/friends')], back()] },
+  };
+}
+
+function settingsScreen(d: BotDeps, user: Linked): Screen {
+  const cur = d.currencies[user.currency] ?? d.currencies.RUB;
+  return {
+    text: `⚙️ <b>Настройки</b>
+
+Аккаунт — <b>${esc(user.username)}</b>
+Валюта — <b>${esc(cur.symbol)}</b> ${esc(cur.label)}
+Telegram — подключён`,
+    kb: {
+      inline_keyboard: [
+        [
+          { text: '💱 Валюта', callback_data: 'm:cur' },
+          { text: '🔌 Отключить бота', callback_data: 'm:unl' },
+        ],
+        [appButton(d, '🌐 Все настройки на сайте', '/settings')],
+        back(),
+      ],
+    },
+  };
+}
+
+function currencyScreen(d: BotDeps, user: Linked): Screen {
+  const buttons = Object.entries(d.currencies).map(([code, c]) => ({
+    text: `${code === user.currency ? '✓ ' : ''}${c.symbol} · ${code}`,
+    callback_data: `cur:${code}`,
+  }));
+  return { text: '💱 <b>Валюта</b>\n\nВ ней показываются все суммы — здесь и на сайте.', kb: { inline_keyboard: [...grid(buttons), back('m:set')] } };
+}
+
+function unlinkScreen(user: Linked): Screen {
+  return {
+    text: `🔌 <b>Отключить бота от аккаунта ${esc(user.username)}?</b>\n\nТраты останутся на сайте. Подключить снова можно в профиле.`,
+    kb: {
+      inline_keyboard: [
+        [
+          { text: 'Да, отключить', callback_data: 'unl!' },
+          { text: 'Отмена', callback_data: 'm:set' },
+        ],
+      ],
+    },
+  };
+}
+
+function screen(d: BotDeps, user: Linked, route: string): Promise<Screen> | Screen {
+  const [name, arg] = route.split(':');
+  const period = (PERIODS.some(([p]) => p === arg) ? arg : 'month') as Period;
+  switch (name) {
+    case 'add':
+      return addScreen(d);
+    case 'st':
+      return statsScreen(d, user, period);
+    case 'ls':
+      return listScreen(d, user, Math.max(0, Number(arg) || 0));
+    case 'fr':
+      return friendsScreen(d, user, period);
+    case 'set':
+      return settingsScreen(d, user);
+    case 'cur':
+      return currencyScreen(d, user);
+    case 'unl':
+      return unlinkScreen(user);
+    case 'help':
+      return { text: HELP, kb: { inline_keyboard: [back()] } };
+    default:
+      return homeScreen(d, user);
+  }
+}
+
+async function sendScreen(d: BotDeps, chatId: number, s: Screen | Promise<Screen>) {
+  const { text, kb } = await s;
+  return send(d, chatId, text, kb);
+}
+
+// ---------- сообщения ----------
 
 export async function handleUpdate(d: BotDeps, u: TgUpdate) {
   if (u.callback_query) return onCallback(d, u.callback_query);
@@ -198,21 +465,19 @@ export async function handleUpdate(d: BotDeps, u: TgUpdate) {
     return send(
       d,
       chatId,
-      'Привет! Я записываю траты в СпендТрекер.\n\nЧтобы начать, подключи меня к своему аккаунту: на сайте открой <b>Профиль</b> и нажми <b>«Подключить Telegram»</b>.',
+      '👋 Привет! Я записываю траты в <b>СпендТрекер</b>.\n\nЧтобы начать, подключи меня к своему аккаунту: на сайте открой <b>Профиль</b> и нажми <b>«Подключить Telegram»</b>.',
       { inline_keyboard: [[{ text: 'Открыть профиль', url: `${d.siteUrl}/profile` }]] },
     );
   }
 
   const cmd = text.match(/^\/(\w+)/)?.[1];
-  if (cmd === 'start' || cmd === 'help') return send(d, chatId, HELP);
-  if (cmd === 'stats') return stats(d, user, chatId);
-  if (cmd === 'last') return last(d, user, chatId);
+  if (cmd === 'start' || cmd === 'menu') return sendScreen(d, chatId, homeScreen(d, user));
+  if (cmd === 'help') return sendScreen(d, chatId, screen(d, user, 'help'));
+  if (cmd === 'stats') return sendScreen(d, chatId, screen(d, user, 'st:month'));
+  if (cmd === 'last') return sendScreen(d, chatId, screen(d, user, 'ls:0'));
   if (cmd === 'undo') return undo(d, user, chatId);
-  if (cmd === 'unlink') {
-    await d.db.prepare('DELETE FROM telegram_links WHERE chat_id = ?').bind(chatId).run();
-    return send(d, chatId, 'Бот отключён от аккаунта. Подключить снова можно в профиле на сайте.');
-  }
-  if (cmd) return send(d, chatId, 'Не знаю такой команды. /help — что я умею.');
+  if (cmd === 'unlink') return sendScreen(d, chatId, unlinkScreen(user));
+  if (cmd) return send(d, chatId, 'Не знаю такой команды. /menu — меню, /help — что я умею.');
   if (msg.voice) return addFromVoice(d, user, chatId, msg.voice);
   if (!text) return send(d, chatId, 'Напиши трату текстом или надиктуй голосовым: <code>кофе 250</code>');
   return addFromText(d, user, chatId, text);
@@ -235,7 +500,9 @@ async function link(d: BotDeps, msg: TgMessage, code: string) {
     d.db.prepare('DELETE FROM telegram_codes WHERE user_id = ?').bind(row.user_id),
   ]);
   const user = await linkedUser(d, chatId);
-  return send(d, chatId, `Готово! Бот подключён к аккаунту <b>${esc(user?.username ?? '')}</b>.\n\n${HELP}`);
+  if (!user) return;
+  await send(d, chatId, `🎉 Готово! Бот подключён к аккаунту <b>${esc(user.username)}</b>.`);
+  return sendScreen(d, chatId, homeScreen(d, user));
 }
 
 async function addFromVoice(d: BotDeps, user: Linked, chatId: number, voice: { file_id: string; duration: number }) {
@@ -256,7 +523,7 @@ async function addFromVoice(d: BotDeps, user: Linked, chatId: number, voice: { f
 }
 
 async function addFromText(d: BotDeps, user: Linked, chatId: number, text: string) {
-  const sym = d.symbol(user.currency);
+  const sym = symOf(d, user);
   // Каждая строка или фраза — отдельная трата. Кусок без суммы («Кофе.» из «Кофе. 250 рублей.»)
   // приклеиваем к следующему: так распознавание речи нередко расставляет точки.
   const parts = text.split(/\n|(?<=[.!?;])\s+/).map((l) => l.trim()).filter(Boolean).slice(0, 20);
@@ -276,9 +543,14 @@ async function addFromText(d: BotDeps, user: Linked, chatId: number, text: strin
   if (!parsed.length) {
     return send(d, chatId, 'Не нашёл сумму. Напиши, например: <code>кофе 250</code> или <code>вчера такси 540</code>');
   }
+  // Категория, выбранная в меню «Добавить», важнее угаданной
+  if (user.pending_category) {
+    for (const p of parsed) p.category = user.pending_category;
+    await setPending(d, user, null);
+  }
   for (const p of parsed) {
     const e = await insertExpense(d, user, p);
-    await send(d, chatId, card(d, e, sym), mainKeyboard(e.id));
+    await send(d, chatId, card(d, e, sym), expenseKeyboard(e.id));
   }
 }
 
@@ -304,6 +576,15 @@ async function insertExpense(d: BotDeps, user: Linked, p: ParsedExpense) {
   return e;
 }
 
+async function undo(d: BotDeps, user: Linked, chatId: number) {
+  const e = await d.db
+    .prepare('DELETE FROM expenses WHERE id = (SELECT MAX(id) FROM expenses WHERE user_id = ?1) AND user_id = ?1 RETURNING amount, note, category')
+    .bind(user.id)
+    .first<{ amount: number; note: string | null; category: string }>();
+  if (!e) return send(d, chatId, 'Удалять нечего: трат пока нет.');
+  return send(d, chatId, `↩️ Удалил: ${fmt0(e.amount)} ${esc(symOf(d, user))} · ${esc(e.note || e.category)}`);
+}
+
 // ---------- инлайн-режим: «@бот сигареты 250» в любом чате ----------
 
 async function onInlineQuery(d: BotDeps, q: TgInlineQuery) {
@@ -316,7 +597,7 @@ async function onInlineQuery(d: BotDeps, q: TgInlineQuery) {
   if (!validAmount(p)) return answer([], { text: 'Напиши трату и сумму: «кофе 250»', start_parameter: 'help' });
 
   const e = toExpense(d, p);
-  const sym = d.symbol(user.currency);
+  const sym = symOf(d, user);
   // Сообщение уходит в чат сразу, а трата записывается, когда Telegram пришлёт chosen_inline_result.
   // Кнопка нужна, чтобы Telegram дал inline_message_id и сообщение можно было поправить на «✅».
   return answer([
@@ -343,84 +624,94 @@ async function onChosenInline(d: BotDeps, r: TgChosenInline) {
   if (r.inline_message_id) {
     await tg(d.api, 'editMessageText', {
       inline_message_id: r.inline_message_id,
-      text: card(d, e, d.symbol(user.currency)),
+      text: card(d, e, symOf(d, user)),
       parse_mode: 'HTML',
-      reply_markup: mainKeyboard(e.id),
+      reply_markup: expenseKeyboard(e.id),
     });
   }
 }
 
-async function stats(d: BotDeps, user: Linked, chatId: number) {
-  const sym = esc(d.symbol(user.currency));
-  const o = await d.overview(user.id);
-  const sum = o.byCategory.reduce((s, r) => s + r.total, 0);
-  const cats = o.byCategory
-    .map((r) => `${emoji(r.category)} ${esc(r.category)} — ${fmt0(r.total)} ${sym} · ${Math.round((r.total / sum) * 100)}%`)
-    .join('\n');
-  const text = `<b>${MONTHS_NOM[Number(d.today.slice(5, 7)) - 1]}</b> — ${fmt0(o.monthTotal)} ${sym}
-Сегодня: ${fmt0(o.todayTotal)} ${sym} · Неделя: ${fmt0(o.weekTotal)} ${sym}${cats ? `\n\n${cats}` : ''}`;
-  return send(d, chatId, text, { inline_keyboard: [[{ text: 'Открыть сайт', url: `${d.siteUrl}/dashboard` }]] });
-}
-
-async function last(d: BotDeps, user: Linked, chatId: number) {
-  const sym = esc(d.symbol(user.currency));
-  const { recent } = await d.overview(user.id);
-  if (!recent.length) return send(d, chatId, 'Пока нет ни одной траты. Напиши, например: <code>кофе 250</code>');
-  const rows = recent.map(
-    (e) => `${dayLabel(e.expense_date, d.today)} · ${emoji(e.category)} ${esc(e.note || e.category)} — <b>${fmt0(e.amount)} ${sym}</b>`,
-  );
-  return send(d, chatId, `<b>Последние траты</b>\n${rows.join('\n')}`);
-}
-
-async function undo(d: BotDeps, user: Linked, chatId: number) {
-  const e = await d.db
-    .prepare('DELETE FROM expenses WHERE id = (SELECT MAX(id) FROM expenses WHERE user_id = ?1) AND user_id = ?1 RETURNING amount, note, category')
-    .bind(user.id)
-    .first<{ amount: number; note: string | null; category: string }>();
-  if (!e) return send(d, chatId, 'Удалять нечего: трат пока нет.');
-  return send(d, chatId, `↩️ Удалил: ${fmt0(e.amount)} ${esc(d.symbol(user.currency))} · ${esc(e.note || e.category)}`);
-}
+// ---------- кнопки ----------
 
 async function onCallback(d: BotDeps, q: TgCallback) {
   const answer = (text?: string) => tg(d.api, 'answerCallbackQuery', { callback_query_id: q.id, ...(text ? { text } : {}) });
+  const data = q.data ?? '';
+  if (data === 'w') return answer('Секунду, записываю…');
+  if (data === 'n') return answer();
   const msg = q.message;
   const edit = msg ? { chat_id: msg.chat.id, message_id: msg.message_id } : q.inline_message_id ? { inline_message_id: q.inline_message_id } : null;
-  const m = (q.data ?? '').match(/^([cdsb]):(\d+)(?::(\d+))?$/);
-  if (q.data === 'w') return answer('Секунду, записываю…');
-  if (!edit || !m) return answer();
-  // Кнопки видит и собеседник в общем чате, поэтому трату ищем у того, кто нажал
+  if (!edit) return answer();
+  // Кнопки под сообщением в общем чате видит и собеседник, поэтому всё ищем у того, кто нажал
   const user = await linkedUser(d, q.from.id);
-  if (!user) return answer('Это не твоя запись');
+  if (!user) return answer(msg ? 'Бот не подключён к аккаунту' : 'Это не твоя запись');
+  const show = async (s: Screen | Promise<Screen>) => {
+    const { text, kb } = await s;
+    await tg(d.api, 'editMessageText', { ...edit, text, parse_mode: 'HTML', reply_markup: kb, link_preview_options: { is_disabled: true } });
+  };
 
+  if (data.startsWith('m:')) {
+    await show(screen(d, user, data.slice(2)));
+    return answer();
+  }
+  if (data.startsWith('pc:')) {
+    const cat = d.categories[Number(data.slice(3))];
+    await setPending(d, user, cat ?? null);
+    await show(cat ? pendingScreen(cat) : homeScreen(d, user));
+    return answer(cat ? `${emoji(cat)} ${cat}` : undefined);
+  }
+  if (data.startsWith('cur:')) {
+    const code = data.slice(4);
+    if (!d.currencies[code]) return answer();
+    await d.db.prepare('UPDATE users SET currency = ? WHERE id = ?').bind(code, user.id).run();
+    await show(settingsScreen(d, { ...user, currency: code }));
+    return answer(`Валюта: ${d.currencies[code].symbol}`);
+  }
+  if (data === 'unl!') {
+    await d.db.prepare('DELETE FROM telegram_links WHERE user_id = ?').bind(user.id).run();
+    await tg(d.api, 'editMessageText', {
+      ...edit,
+      text: '🔌 Бот отключён от аккаунта. Подключить снова можно в профиле на сайте.',
+      reply_markup: { inline_keyboard: [[{ text: 'Открыть профиль', url: `${d.siteUrl}/profile` }]] },
+    });
+    return answer('Отключено');
+  }
+
+  // Трата: e — открыть из списка, c — выбор категории, s — сохранить категорию, b — назад, d — удалить
+  const m = data.match(/^([ecdsb]):(\d+)(?::(\d+))?(?::p(\d+))?$/);
+  if (!m) return answer();
   const id = Number(m[2]);
+  const page = m[4] === undefined ? undefined : Number(m[4]);
   const e = await d.db
     .prepare('SELECT id, amount, category, note, expense_date FROM expenses WHERE id = ? AND user_id = ?')
     .bind(id, user.id)
     .first<ExpenseRow>();
   if (!e) return answer('Этой записи нет — её удалили или она не твоя');
-  const sym = d.symbol(user.currency);
+  const sym = symOf(d, user);
 
+  if (m[1] === 'e') {
+    await show({ text: card(d, e, sym), kb: expenseKeyboard(id, page) });
+    return answer();
+  }
   if (m[1] === 'c') {
-    await tg(d.api, 'editMessageReplyMarkup', { ...edit, reply_markup: categoryKeyboard(d, id) });
+    await tg(d.api, 'editMessageReplyMarkup', { ...edit, reply_markup: categoryKeyboard(d, id, page) });
     return answer();
   }
   if (m[1] === 'b') {
-    await tg(d.api, 'editMessageReplyMarkup', { ...edit, reply_markup: mainKeyboard(id) });
+    await tg(d.api, 'editMessageReplyMarkup', { ...edit, reply_markup: expenseKeyboard(id, page) });
     return answer();
   }
   if (m[1] === 's') {
     const cat = d.categories[Number(m[3])];
     if (!cat) return answer();
     await d.db.prepare('UPDATE expenses SET category = ? WHERE id = ? AND user_id = ?').bind(cat, id, user.id).run();
-    await tg(d.api, 'editMessageText', { ...edit, text: card(d, { ...e, category: cat }, sym), parse_mode: 'HTML', reply_markup: mainKeyboard(id) });
+    await show({ text: card(d, { ...e, category: cat }, sym), kb: expenseKeyboard(id, page) });
     return answer(`${emoji(cat)} ${cat}`);
   }
   // d — удалить
   await d.db.prepare('DELETE FROM expenses WHERE id = ? AND user_id = ?').bind(id, user.id).run();
-  await tg(d.api, 'editMessageText', {
-    ...edit,
+  await show({
     text: `🗑 <s>${fmt0(e.amount)} ${esc(sym)}${e.note ? ` · ${esc(e.note)}` : ''}</s> — удалено`,
-    parse_mode: 'HTML',
+    kb: { inline_keyboard: page === undefined ? [] : [back(`m:ls:${page}`, '‹ К списку')] },
   });
   return answer('Удалено');
 }

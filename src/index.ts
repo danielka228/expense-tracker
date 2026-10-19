@@ -4,12 +4,13 @@ import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
-import { botApi, botFileApi, botUsername, handleUpdate, webhookSecret, type TgUpdate } from './telegram';
+import { botApi, botFileApi, botUsername, handleUpdate, verifyInitData, webhookSecret, type TgUpdate } from './telegram';
 import {
   authPage,
   landingPage,
   dashboardPage,
   friendsPage,
+  tgAppPage,
   friendProfilePage,
   profilePage,
   settingsPage,
@@ -438,6 +439,21 @@ app.post('/delete/:id{[0-9]+}', async (c) => {
   return c.redirect('/dashboard');
 });
 
+/** Рейтинг: я и друзья, кто сколько потратил с даты since. Общий для страницы «Друзья» и бота. */
+async function leaderboard(db: D1Database, userId: number, since: string) {
+  const ids = [...(await getFriendIds(db, userId)), userId];
+  const { results } = await db
+    .prepare(
+      `SELECT u.id, u.username, COALESCE(SUM(e.amount), 0) AS total
+       FROM users u LEFT JOIN expenses e ON e.user_id = u.id AND e.expense_date >= ?
+       WHERE u.id IN (SELECT value FROM json_each(?))
+       GROUP BY u.id ORDER BY total DESC`,
+    )
+    .bind(since, JSON.stringify(ids))
+    .all<{ id: number; username: string; total: number }>();
+  return results.map((r) => ({ ...r, is_me: r.id === userId }));
+}
+
 app.get('/friends', async (c) => {
   const user = c.get('user');
   const db = c.env.DB;
@@ -445,29 +461,17 @@ app.get('/friends', async (c) => {
   if (!['day', 'week', 'month'].includes(period)) period = 'month';
   const since = periodStart(period);
 
-  const ids = [...(await getFriendIds(db, user.id)), user.id];
-  const [boardRes, incomingRes] = await db.batch([
-    db
-      .prepare(
-        `SELECT u.id, u.username, COALESCE(SUM(e.amount), 0) AS total
-         FROM users u LEFT JOIN expenses e ON e.user_id = u.id AND e.expense_date >= ?
-         WHERE u.id IN (SELECT value FROM json_each(?))
-         GROUP BY u.id ORDER BY total DESC`,
-      )
-      .bind(since, JSON.stringify(ids)),
+  const [board, incomingRes] = await Promise.all([
+    leaderboard(db, user.id, since),
     db
       .prepare(
         `SELECT f.id, u.id AS user_id, u.username FROM friendships f
          JOIN users u ON u.id = f.from_user_id
          WHERE f.to_user_id = ? AND f.status = 'pending' ORDER BY f.id`,
       )
-      .bind(user.id),
+      .bind(user.id)
+      .all(),
   ]);
-
-  const board = (boardRes.results as { id: number; username: string; total: number }[]).map((r) => ({
-    ...r,
-    is_me: r.id === user.id,
-  }));
 
   return c.html(
     friendsPage({
@@ -627,6 +631,25 @@ app.post('/profile/telegram/unlink', async (c) => {
   return c.redirect('/profile');
 });
 
+// Сайт внутри Telegram (Mini App): кнопки бота открывают /tg/app, страница отдаёт initData,
+// мы проверяем подпись Telegram и входим в привязанный аккаунт без пароля.
+app.get('/tg/app', (c) => {
+  const next = c.req.query('next') ?? '';
+  return c.html(tgAppPage(/^\/[a-z0-9_/-]*$/i.test(next) && !next.startsWith('//') ? next : '/dashboard'));
+});
+
+app.post('/tg/auth', async (c) => {
+  const token = c.env.TELEGRAM_BOT_TOKEN;
+  if (!token) return c.json({ ok: false, error: 'no_bot' }, 404);
+  const body = await c.req.json<{ initData?: string }>().catch(() => ({}) as { initData?: string });
+  const tgId = body.initData ? await verifyInitData(body.initData, token) : null;
+  if (!tgId) return c.json({ ok: false, error: 'bad_signature' }, 401);
+  const link = await c.env.DB.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tgId).first<{ user_id: number }>();
+  if (!link) return c.json({ ok: false, error: 'not_linked' });
+  await login(c, link.user_id);
+  return c.json({ ok: true });
+});
+
 // Распознавание голосовых: Whisper на Workers AI. Подсказка с цифрами — чтобы суммы приходили цифрами, а не словами.
 async function transcribe(ai: Ai, audio: ArrayBuffer) {
   const r = await ai.run('@cf/openai/whisper-large-v3-turbo', {
@@ -659,9 +682,11 @@ app.post('/tg/webhook', async (c) => {
         transcribe: c.env.AI ? (audio) => transcribe(c.env.AI as Ai, audio) : null,
         siteUrl: new URL(c.req.url).origin,
         categories: CATEGORIES,
+        currencies: CURRENCIES,
         today: periodStart('day'),
-        symbol: (cur) => (CURRENCIES[cur] ?? CURRENCIES.RUB).symbol,
-        overview: (uid) => spendingOverview(db, uid, 10),
+        since: { day: periodStart('day'), week: periodStart('week'), month: periodStart('month') },
+        overview: (uid) => spendingOverview(db, uid, 0),
+        leaderboard: (uid, since) => leaderboard(db, uid, since),
       },
       update,
     );
