@@ -216,14 +216,35 @@ export function landingPage(d: { demo: boolean }) {
 
 // ---------- вход и регистрация ----------
 
-export function authPage(kind: 'login' | 'register', flashes: Flash[], demo = false) {
+// Логотип Telegram (бумажный самолётик) для кнопки «Войти через Telegram»
+const TG_ICON =
+  '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M21.9 4.3 18.7 19.4c-.2 1.1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9.1-8.2c.4-.4-.1-.6-.6-.2L6.2 13 1.4 11.5c-1-.3-1.1-1 .2-1.5L20.5 2.8c.9-.3 1.6.2 1.4 1.5z"/></svg>';
+const TG_CSS = `
+  .btn-tg { display: flex; align-items: center; justify-content: center; gap: 9px; background: #2aabee; color: #fff; }
+  .btn-tg:hover { background: #229ed9; }
+  .auth-or { display: flex; align-items: center; gap: 12px; color: var(--text-3, var(--text-2)); font-size: 13px; margin: 18px 4px; }
+  .auth-or::before, .auth-or::after { content: ''; flex: 1; height: 1px; background: var(--separator, rgba(128,128,128,.3)); }
+  .tg-note { text-align: center; color: var(--text-2); font-size: 14px; margin: -12px 0 20px; }`;
+
+export function authPage(
+  kind: 'login' | 'register',
+  flashes: Flash[],
+  opts: { demo?: boolean; tgLogin?: boolean; tgPending?: boolean } = {},
+) {
   const isLogin = kind === 'login';
+  const demo = !!opts.demo;
   return layout(
-    { title: isLogin ? 'Вход' : 'Регистрация', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS },
+    { title: isLogin ? 'Вход' : 'Регистрация', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS + TG_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
 <div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(isLogin ? 'wave' : 'happy', 104))}</div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? 'С возвращением' : 'Новый аккаунт'}</h1>
 <p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${isLogin ? 'Войди, чтобы продолжить' : 'Пара секунд — и можно считать траты'}</p>
+${opts.tgPending
+  ? html`<p class="tg-note reveal" style="--d:.12s">${isLogin ? 'Войди в свой аккаунт' : 'Создай аккаунт'} — и Telegram сразу к нему привяжется</p>`
+  : opts.tgLogin
+    ? html`<a class="btn btn-tg reveal" style="--d:.12s" href="/auth/telegram">${raw(TG_ICON)}${isLogin ? 'Войти через Telegram' : 'Продолжить с Telegram'}</a>
+<div class="auth-or reveal" style="--d:.14s">или по логину</div>`
+    : ''}
 <form method="POST" class="reveal" style="--d:.15s">
   <div class="form-rows">
     <label class="form-row" style="margin:0"><span>Логин</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
@@ -237,6 +258,24 @@ ${demo
 ${isLogin
   ? html`<div class="footer-link reveal" style="--d:.25s">Нет аккаунта? <a href="/register">Зарегистрироваться</a></div>`
   : html`<div class="footer-link reveal" style="--d:.25s">Уже есть аккаунт? <a href="/login">Войти</a></div>`}`,
+  );
+}
+
+// Вошли через Telegram, а аккаунта с ним ещё нет: создать новый или привязать к существующему
+export function tgNewAccountPage(flashes: Flash[], name: string) {
+  return layout(
+    { title: 'Вход через Telegram', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS + TG_CSS },
+    html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('wave', 104))}</div>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">Привет, ${name}!</h1>
+<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">
+  Telegram подтвердил вход. Этот Telegram пока не привязан ни к одному аккаунту СпендТрекера.
+</p>
+<form method="POST" action="/auth/telegram/new" class="reveal" style="--d:.15s; margin:0">
+  <button type="submit" class="btn-tg">${raw(TG_ICON)}Создать аккаунт через Telegram</button>
+</form>
+<a class="btn btn-tinted reveal" href="/login" style="--d:.2s; margin-top:10px">У меня уже есть аккаунт</a>
+<div class="footer-link reveal" style="--d:.25s">Войдёшь по логину и паролю — и Telegram привяжется к нему.</div>`,
   );
 }
 
@@ -968,6 +1007,7 @@ const sq = (icon: keyof typeof SQ, bg: string) => raw(`<span class="sq" style="b
 export function settingsPage(d: {
   flashes: Flash[];
   username: string;
+  hasPassword: boolean;
   currencies: Record<string, Currency>;
   currentCurrency: string;
 }) {
@@ -992,8 +1032,10 @@ export function settingsPage(d: {
     <summary class="row" style="cursor:pointer">${sq('key', '#8e81ff')}<span class="grow">Пароль</span>${CHEV}</summary>
     <form method="POST" autocomplete="off" class="expand">
       <input type="hidden" name="action" value="change_password">
-      <input type="password" name="current_password" required autocomplete="current-password" placeholder="Текущий пароль" aria-label="Текущий пароль">
-      <input type="password" name="new_password" required autocomplete="new-password" placeholder="Новый пароль" aria-label="Новый пароль">
+      ${d.hasPassword
+        ? html`<input type="password" name="current_password" required autocomplete="current-password" placeholder="Текущий пароль" aria-label="Текущий пароль">`
+        : html`<p style="margin:0 0 4px; color:var(--text-2); font-size:14px">Ты входишь через Telegram. Задай пароль, чтобы входить и по логину <b>${d.username}</b>.</p>`}
+      <input type="password" name="new_password" required autocomplete="new-password" placeholder="${d.hasPassword ? 'Новый пароль' : 'Пароль'}" aria-label="Новый пароль">
       <button type="submit">Сохранить</button>
     </form>
   </details>

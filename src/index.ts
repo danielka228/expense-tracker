@@ -4,6 +4,7 @@ import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
+import { authorizeUrl, finishLogin, newLoginState, type TgIdentity, type TgLoginConfig, type TgLoginState } from './tglogin';
 import {
   botApi,
   botFileApi,
@@ -23,6 +24,7 @@ import {
   dashboardPage,
   friendsPage,
   tgAppPage,
+  tgNewAccountPage,
   friendProfilePage,
   profilePage,
   settingsPage,
@@ -39,6 +41,9 @@ type Env = {
   TELEGRAM_BOT_TOKEN?: string; // токен от @BotFather; workflow кладёт его из секрета GitHub
   TELEGRAM_ADMIN_ID?: string; // Telegram ID владельца — ему одному доступна /admin (секрет из GitHub)
   TELEGRAM_API?: string; // только для локальной проверки: адрес заглушки вместо api.telegram.org
+  TELEGRAM_LOGIN_CLIENT_ID?: string; // «Войти через Telegram»: Client ID и Client Secret из @BotFather (секреты GitHub)
+  TELEGRAM_LOGIN_CLIENT_SECRET?: string;
+  TELEGRAM_OAUTH?: string; // только для локальной проверки: адрес заглушки вместо oauth.telegram.org
   ASSETS: Fetcher; // статика из public/
   AI?: Ai; // Workers AI: распознавание голосовых в Telegram-боте
 };
@@ -69,6 +74,8 @@ const CURRENCIES: Record<string, Currency> = {
 const DEFAULT_SHORTCUT_URL = 'https://www.icloud.com/shortcuts/6c88ade890e541c9b81532cfbc4cdb59';
 const SESSION_COOKIE = 'session';
 const FLASH_COOKIE = 'flash';
+const TG_STATE_COOKIE = 'tg_login'; // state/nonce/PKCE на время входа через Telegram
+const TG_PENDING_COOKIE = 'tg_pending'; // проверенный Telegram, который ещё не привязан ни к одному аккаунту
 const SESSION_MAX_AGE = 90 * 24 * 3600;
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 
@@ -215,12 +222,13 @@ app.get('/', async (c) => {
   return c.html(landingPage({ demo: c.env.DEMO === '1' }));
 });
 
-app.get('/register', (c) => c.html(authPage('register', popFlashes(c), c.env.DEMO === '1')));
+const authOpts = async (c: C) => ({ demo: c.env.DEMO === '1', tgLogin: !!tgLoginConfig(c), tgPending: !!(await readTgPending(c)) });
+app.get('/register', async (c) => c.html(authPage('register', popFlashes(c), await authOpts(c))));
 app.post('/register', async (c) => {
   const form = await c.req.parseBody();
   const username = formStr(form, 'username').trim();
   const password = formStr(form, 'password');
-  const fail = (msg: string) => c.html(authPage('register', [...popFlashes(c), ['error', msg]], c.env.DEMO === '1'));
+  const fail = async (msg: string) => c.html(authPage('register', [...popFlashes(c), ['error', msg]], await authOpts(c)));
 
   if (!username || !password) return fail('Заполните все поля');
   if (password.length < 4) return fail('Пароль должен быть не короче 4 символов');
@@ -232,11 +240,12 @@ app.post('/register', async (c) => {
     .bind(username, hashPassword(password))
     .first<{ id: number }>();
   await login(c, row!.id);
+  await linkPendingTelegram(c, row!.id);
   flash(c, 'Регистрация прошла успешно!', 'success');
   return c.redirect('/dashboard');
 });
 
-app.get('/login', (c) => c.html(authPage('login', popFlashes(c), c.env.DEMO === '1')));
+app.get('/login', async (c) => c.html(authPage('login', popFlashes(c), await authOpts(c))));
 app.post('/login', async (c) => {
   const form = await c.req.parseBody();
   const username = formStr(form, 'username').trim();
@@ -248,9 +257,10 @@ app.post('/login', async (c) => {
       await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hashPassword(password), user.id).run();
     }
     await login(c, user.id);
+    await linkPendingTelegram(c, user.id);
     return c.redirect('/dashboard');
   }
-  return c.html(authPage('login', [...popFlashes(c), ['error', 'Неверный логин или пароль']], c.env.DEMO === '1'));
+  return c.html(authPage('login', [...popFlashes(c), ['error', 'Неверный логин или пароль']], await authOpts(c)));
 });
 
 app.get('/logout', (c) => {
@@ -645,6 +655,146 @@ app.post('/profile/telegram/unlink', async (c) => {
   return c.redirect('/profile');
 });
 
+// ---------- «Войти через Telegram» (OpenID Connect, src/tglogin.ts) ----------
+
+function tgLoginConfig(c: C): TgLoginConfig | null {
+  const clientId = c.env.TELEGRAM_LOGIN_CLIENT_ID?.trim();
+  const clientSecret = c.env.TELEGRAM_LOGIN_CLIENT_SECRET?.trim();
+  if (!clientId || !clientSecret) return null;
+  return { clientId, clientSecret, redirectUri: `${new URL(c.req.url).origin}/auth/telegram/callback`, issuer: c.env.TELEGRAM_OAUTH };
+}
+
+const shortCookie = (maxAge: number) => ({ path: '/', httpOnly: true, secure: true, sameSite: 'Lax' as const, maxAge });
+
+async function readSignedJson<T>(c: C, name: string): Promise<T | null> {
+  const raw = await getSignedCookie(c, c.env.SECRET_KEY, name);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+const readTgPending = (c: C) => readSignedJson<TgIdentity>(c, TG_PENDING_COOKIE);
+
+async function linkTelegram(db: D1Database, userId: number, tg: TgIdentity) {
+  await db
+    .prepare(
+      `INSERT INTO telegram_links (user_id, chat_id, tg_username) VALUES (?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET chat_id = excluded.chat_id, tg_username = excluded.tg_username, linked_at = datetime('now')`,
+    )
+    .bind(userId, tg.id, tg.username)
+    .run();
+}
+
+// Вошёл по паролю после «У меня уже есть аккаунт» — привязываем проверенный Telegram к этому аккаунту
+async function linkPendingTelegram(c: C, userId: number) {
+  const tg = await readTgPending(c);
+  if (!tg) return;
+  deleteCookie(c, TG_PENDING_COOKIE, { path: '/', secure: true });
+  const taken = await c.env.DB.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tg.id).first<{ user_id: number }>();
+  if (taken && taken.user_id !== userId) return flash(c, 'Этот Telegram уже подключён к другому аккаунту', 'error');
+  await linkTelegram(c.env.DB, userId, tg);
+  flash(c, 'Telegram подключён — теперь можно входить в один тап', 'success');
+}
+
+// Фото из Telegram становится аватаркой нового аккаунта (только JPEG, как и при обычной загрузке)
+async function saveTelegramPhoto(db: D1Database, userId: number, url: string | null) {
+  if (!url || !url.startsWith('https://')) return;
+  try {
+    const res = await fetch(url);
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    if (!res.ok || !isJpeg || bytes.length > MAX_AVATAR_BYTES) return;
+    await db.prepare('INSERT OR REPLACE INTO avatars (user_id, data) VALUES (?, ?)').bind(userId, bytes).run();
+  } catch (e) {
+    console.error('telegram photo failed', e);
+  }
+}
+
+app.get('/auth/telegram', async (c) => {
+  const cfg = tgLoginConfig(c);
+  const linking = c.req.query('link') === '1' && !!(await getSessionUserId(c));
+  if (!cfg) {
+    flash(c, 'Вход через Telegram пока не настроен', 'error');
+    return c.redirect(linking ? '/profile' : '/login');
+  }
+  const s = newLoginState();
+  await setSignedCookie(c, TG_STATE_COOKIE, JSON.stringify({ ...s, link: linking }), c.env.SECRET_KEY, shortCookie(600));
+  return c.redirect(await authorizeUrl(cfg, s));
+});
+
+app.get('/auth/telegram/callback', async (c) => {
+  const cfg = tgLoginConfig(c);
+  const saved = await readSignedJson<TgLoginState & { link: boolean }>(c, TG_STATE_COOKIE);
+  deleteCookie(c, TG_STATE_COOKIE, { path: '/', secure: true });
+  const back = saved?.link ? '/profile' : '/login';
+  const code = c.req.query('code');
+  if (!cfg || !saved || !code || c.req.query('state') !== saved.state) {
+    flash(c, c.req.query('error') ? 'Вход через Telegram отменён' : 'Не получилось войти через Telegram, попробуй ещё раз', 'error');
+    return c.redirect(back);
+  }
+  let tg: TgIdentity;
+  try {
+    tg = await finishLogin(cfg, code, saved);
+  } catch (e) {
+    console.error('telegram login failed', e);
+    flash(c, 'Telegram не подтвердил вход, попробуй ещё раз', 'error');
+    return c.redirect(back);
+  }
+
+  const db = c.env.DB;
+  const link = await db.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tg.id).first<{ user_id: number }>();
+  const uid = await getSessionUserId(c);
+  if (saved.link && uid) {
+    if (link && link.user_id !== uid) flash(c, 'Этот Telegram уже подключён к другому аккаунту', 'error');
+    else {
+      await linkTelegram(db, uid, tg);
+      flash(c, 'Telegram подключён', 'success');
+    }
+    return c.redirect('/profile');
+  }
+  if (link) {
+    await login(c, link.user_id);
+    if (tg.username) await db.prepare('UPDATE telegram_links SET tg_username = ? WHERE user_id = ?').bind(tg.username, link.user_id).run();
+    return c.redirect('/dashboard');
+  }
+  // Telegram ещё ни к чему не привязан — спрашиваем: новый аккаунт или войти в существующий
+  await setSignedCookie(c, TG_PENDING_COOKIE, JSON.stringify(tg), c.env.SECRET_KEY, shortCookie(900));
+  return c.redirect('/auth/telegram/new');
+});
+
+app.get('/auth/telegram/new', async (c) => {
+  const tg = await readTgPending(c);
+  if (!tg) return c.redirect('/login');
+  return c.html(tgNewAccountPage(popFlashes(c), tg.name ?? (tg.username ? `@${tg.username}` : 'друг')));
+});
+
+app.post('/auth/telegram/new', async (c) => {
+  const tg = await readTgPending(c);
+  if (!tg) return c.redirect('/login');
+  deleteCookie(c, TG_PENDING_COOKIE, { path: '/', secure: true });
+  const db = c.env.DB;
+  const link = await db.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tg.id).first<{ user_id: number }>();
+  if (link) {
+    await login(c, link.user_id);
+    return c.redirect('/dashboard');
+  }
+  // Логин — ник из Telegram, а если он занят или его нет — tg<ID>. Пароля нет: его можно задать в настройках.
+  const base = tg.username ?? `tg${tg.id}`;
+  let username = base;
+  for (let i = 2; await db.prepare('SELECT 1 FROM users WHERE username = ?').bind(username).first(); i++) {
+    username = i < 10 ? `${base}${i}` : `tg${tg.id}_${i}`;
+  }
+  const row = await db.prepare("INSERT INTO users (username, password_hash) VALUES (?, '') RETURNING id").bind(username).first<{ id: number }>();
+  await linkTelegram(db, row!.id, tg);
+  await saveTelegramPhoto(db, row!.id, tg.picture);
+  await login(c, row!.id);
+  flash(c, `Аккаунт создан! Твой логин — ${username}`, 'success');
+  return c.redirect('/dashboard');
+});
+
 // Сайт внутри Telegram (Mini App): кнопки бота открывают /tg/app, страница отдаёт initData,
 // мы проверяем подпись Telegram и входим в привязанный аккаунт без пароля.
 app.get('/tg/app', (c) => {
@@ -844,7 +994,13 @@ app.post('/api/add', async (c) => {
 app.get('/settings', (c) => {
   const user = c.get('user');
   return c.html(
-    settingsPage({ flashes: popFlashes(c), username: user.username, currencies: CURRENCIES, currentCurrency: user.currency }),
+    settingsPage({
+      flashes: popFlashes(c),
+      username: user.username,
+      hasPassword: !!user.password_hash,
+      currencies: CURRENCIES,
+      currentCurrency: user.currency,
+    }),
   );
 });
 
@@ -854,7 +1010,8 @@ app.post('/settings', async (c) => {
   const action = formStr(form, 'action');
 
   if (action === 'change_password') {
-    if (!checkPassword(user.password_hash, formStr(form, 'current_password'))) {
+    // У аккаунта, созданного через Telegram, пароля ещё нет — его задают без «текущего»
+    if (user.password_hash && !checkPassword(user.password_hash, formStr(form, 'current_password'))) {
       flash(c, 'Текущий пароль неверен', 'error');
       return c.redirect('/settings');
     }
@@ -864,7 +1021,7 @@ app.post('/settings', async (c) => {
       return c.redirect('/settings');
     }
     await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hashPassword(newPassword), user.id).run();
-    flash(c, 'Пароль изменён', 'success');
+    flash(c, user.password_hash ? 'Пароль изменён' : 'Пароль задан — теперь можно входить и по логину', 'success');
   } else if (action === 'change_currency') {
     const cur = formStr(form, 'currency');
     if (cur in CURRENCIES) {
