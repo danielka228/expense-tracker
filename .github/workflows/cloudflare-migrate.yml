@@ -1,7 +1,8 @@
 # Деплой на Cloudflare: сам после мержа в main или вручную: GitHub → Actions → «Переезд на Cloudflare» → Run workflow.
 # target=preview выкладывает отдельную демо-версию expense-tracker-preview со своей базой — основной сайт не трогается.
 # Нужны секреты репозитория: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID (и DATABASE_URL — только для переноса данных).
-# Необязательный TELEGRAM_BOT_TOKEN (токен от @BotFather) включает Telegram-бота на основном сайте.
+# Необязательный TELEGRAM_BOT_TOKEN (токен от @BotFather) включает Telegram-бота на основном сайте,
+# а TELEGRAM_ADMIN_ID (свой ID узнаётся командой /myid у бота) — админ-панель /admin только для владельца.
 name: Переезд на Cloudflare
 
 on:
@@ -130,6 +131,7 @@ jobs:
         if: env.TARGET == 'production'
         env:
           TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_ADMIN: ${{ secrets.TELEGRAM_ADMIN_ID }}
         run: |
           t=$(printf '%s' "$TG_TOKEN" | tr -d " \t\r\n\"'")
           if [ -z "$t" ]; then
@@ -160,6 +162,18 @@ jobs:
             --data "$(jq -nc --arg u "$app" '{menu_button: {type: "web_app", text: "СпендТрекер", web_app: {url: $u}}}')" | jq -c '{ok, description}'
           curl -sS "$api/setMyDescription" -H 'Content-Type: application/json' \
             --data '{"description": "Записываю траты в СпендТрекер. Напиши «кофе 250» — и трата уже на сайте."}' | jq -c '{ok}'
+          # Админ-панель: ID владельца — в секрет Worker, а /admin — в меню команд только его чата
+          admin=$(printf '%s' "$TG_ADMIN" | tr -cd '0-9')
+          if [ -n "$admin" ]; then
+            printf '%s' "$admin" | npx wrangler secret put TELEGRAM_ADMIN_ID $ENV_ARGS
+            curl -sS "$api/setMyCommands" -H 'Content-Type: application/json' --data "$(jq -nc --argjson id "$admin" '{scope: {type: "chat", chat_id: $id}, commands: [
+              {command: "menu", description: "Меню"}, {command: "admin", description: "Админ-панель"},
+              {command: "stats", description: "Статистика"}, {command: "last", description: "Мои траты"},
+              {command: "undo", description: "Удалить последнюю запись"}, {command: "stickers", description: "Стикеры Трэка"},
+              {command: "help", description: "Как пользоваться"}]}')" | jq -c '{ok, description}'
+          else
+            echo "Секрет TELEGRAM_ADMIN_ID не задан — админ-панель выключена. Узнай свой ID командой /myid у бота."
+          fi
           info=$(curl -sS "$api/getWebhookInfo" | jq -c '.result | {url, pending_update_count, last_error_message}')
           echo "Вебхук: $info"
           { echo; echo "Telegram-бот: https://t.me/$bot"; echo; echo "Вебхук: \`$info\`"; } >> "$GITHUB_STEP_SUMMARY"

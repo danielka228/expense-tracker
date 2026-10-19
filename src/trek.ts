@@ -60,7 +60,7 @@ const CAT_EMOJI: Record<string, string> = {
   Прочее: '📦',
 };
 
-const plural = (n: number, one: string, few: string, many: string) => {
+export const plural = (n: number, one: string, few: string, many: string) => {
   const m10 = n % 10;
   const m100 = n % 100;
   if (m10 === 1 && m100 !== 11) return one;

@@ -6,7 +6,7 @@
 
 import { CATEGORY_RULES, parseExpense, type ParsedExpense } from './parse';
 import { STICKERS, animStickerFile, stickerFile } from './stickers';
-import { eveningText, quip, weeklyText } from './trek';
+import { eveningText, plural, quip, weeklyText } from './trek';
 import { fmt0, MONTHS_NOM, MONTHS_SHORT, type ExpenseRow } from './views';
 
 interface TgUser {
@@ -68,6 +68,7 @@ export interface BotDeps {
   overview(userId: number): Promise<{ todayTotal: number; weekTotal: number; monthTotal: number }>;
   leaderboard(userId: number, since: string): Promise<{ username: string; total: number; is_me: boolean }[]>;
   asset(path: string): Promise<Blob | null>; // файл из public/ (видеостикеры загружаются в Telegram файлом)
+  adminId: number | null; // Telegram ID владельца сайта: только ему доступна /admin
 }
 
 interface Linked {
@@ -471,6 +472,10 @@ export async function handleUpdate(d: BotDeps, u: TgUpdate) {
 
   const start = text.match(/^\/start(?:@\w+)?\s+([A-Za-z0-9_-]{8,64})$/);
   if (start) return link(d, msg, start[1]);
+  // Свой Telegram ID может узнать любой — он нужен владельцу, чтобы включить админ-панель
+  if (/^\/myid(@\w+)?$/.test(text)) return send(d, chatId, `Твой Telegram ID: <code>${msg.from?.id ?? chatId}</code>`);
+  // Админ-панель — только владельцу; для остальных команды /admin как будто нет
+  if (/^\/admin(@\w+)?$/.test(text) && isAdmin(d, msg.from?.id)) return sendScreen(d, chatId, adminScreen(d, 'main'));
 
   const user = await linkedUser(d, chatId);
   if (!user) {
@@ -799,13 +804,18 @@ async function onCallback(d: BotDeps, q: TgCallback) {
   const msg = q.message;
   const edit = msg ? { chat_id: msg.chat.id, message_id: msg.message_id } : q.inline_message_id ? { inline_message_id: q.inline_message_id } : null;
   if (!edit) return answer();
-  // Кнопки под сообщением в общем чате видит и собеседник, поэтому всё ищем у того, кто нажал
-  const user = await linkedUser(d, q.from.id);
-  if (!user) return answer(msg ? 'Бот не подключён к аккаунту' : 'Это не твоя запись');
   const show = async (s: Screen | Promise<Screen>) => {
     const { text, kb } = await s;
     await tg(d.api, 'editMessageText', { ...edit, text, parse_mode: 'HTML', reply_markup: kb, link_preview_options: { is_disabled: true } });
   };
+  if (data === 'adm' || data === 'adm:new') {
+    if (!isAdmin(d, q.from.id)) return answer();
+    await show(adminScreen(d, data === 'adm' ? 'main' : 'new'));
+    return answer('Обновлено');
+  }
+  // Кнопки под сообщением в общем чате видит и собеседник, поэтому всё ищем у того, кто нажал
+  const user = await linkedUser(d, q.from.id);
+  if (!user) return answer(msg ? 'Бот не подключён к аккаунту' : 'Это не твоя запись');
 
   if (data.startsWith('m:')) {
     await show(screen(d, user, data.slice(2)));
@@ -960,4 +970,73 @@ export async function sendWeeklyDigests(d: BotDeps) {
       console.error('weekly digest failed', u.chat_id, e);
     }
   }
+}
+
+// ---------- админ-панель владельца ----------
+
+const isAdmin = (d: BotDeps, tgId: number | undefined) => d.adminId !== null && tgId === d.adminId;
+
+async function adminScreen(d: BotDeps, view: 'main' | 'new'): Promise<Screen> {
+  const kb: Keyboard = {
+    inline_keyboard: [
+      [
+        { text: '🔄 Обновить', callback_data: 'adm' },
+        { text: '🆕 Новые пользователи', callback_data: 'adm:new' },
+      ],
+    ],
+  };
+  if (view === 'new') {
+    const { results } = await d.db
+      .prepare(
+        `SELECT u.username, u.created_at, COUNT(e.id) AS n, MAX(t.user_id IS NOT NULL) AS tg
+         FROM users u LEFT JOIN expenses e ON e.user_id = u.id LEFT JOIN telegram_links t ON t.user_id = u.id
+         GROUP BY u.id ORDER BY u.created_at DESC, u.id DESC LIMIT 15`,
+      )
+      .all<{ username: string; created_at: string; n: number; tg: number }>();
+    const rows = results.map(
+      (u) => `• <b>${esc(u.username)}</b> — ${u.created_at.slice(8, 10)}.${u.created_at.slice(5, 7)} · ${u.n} ${plural(u.n, 'трата', 'траты', 'трат')}${u.tg ? ' · 🤖' : ''}`,
+    );
+    return {
+      text: `🆕 <b>Последние регистрации</b>\n\n${rows.join('\n') || 'Пока никого.'}\n\n<i>🤖 — подключил Telegram-бота</i>`,
+      kb: { inline_keyboard: [[{ text: '‹ К сводке', callback_data: 'adm' }]] },
+    };
+  }
+  const s = await d.db
+    .prepare(
+      `SELECT
+        (SELECT COUNT(*) FROM users) AS users,
+        (SELECT COUNT(*) FROM users WHERE created_at >= datetime('now', '-1 day')) AS new_day,
+        (SELECT COUNT(*) FROM users WHERE created_at >= datetime('now', '-7 days')) AS new_week,
+        (SELECT COUNT(*) FROM users WHERE created_at >= datetime('now', '-30 days')) AS new_month,
+        (SELECT COUNT(DISTINCT user_id) FROM expenses WHERE expense_date = ?1) AS active_day,
+        (SELECT COUNT(DISTINCT user_id) FROM expenses WHERE expense_date >= ?2) AS active_week,
+        (SELECT COUNT(*) FROM expenses) AS expenses,
+        (SELECT COUNT(*) FROM expenses WHERE expense_date = ?1) AS expenses_day,
+        (SELECT COUNT(*) FROM telegram_links) AS tg,
+        (SELECT COUNT(*) FROM friendships WHERE status = 'accepted') AS friends`,
+    )
+    .bind(d.today, shiftDay(d.today, -6))
+    .first<Record<string, number>>();
+  const v = (k: string) => fmt0(s?.[k] ?? 0);
+  return {
+    text: `🛠 <b>Админ-панель СпендТрекера</b>
+
+👥 Пользователей — <b>${v('users')}</b>
+Новых: за сутки <b>${v('new_day')}</b> · за неделю <b>${v('new_week')}</b> · за месяц <b>${v('new_month')}</b>
+
+🔥 Активных (записали трату): сегодня <b>${v('active_day')}</b> · за 7 дней <b>${v('active_week')}</b>
+🧾 Трат всего — <b>${v('expenses')}</b>, сегодня — <b>${v('expenses_day')}</b>
+🤖 Подключили бота — <b>${v('tg')}</b>
+👫 Пар друзей — <b>${v('friends')}</b>
+
+<i>Видно только тебе</i>`,
+    kb,
+  };
+}
+
+/** Утренняя сводка владельцу (cron) */
+export async function sendAdminReport(d: BotDeps) {
+  if (d.adminId === null) return;
+  const { text, kb } = await adminScreen(d, 'main');
+  await send(d, d.adminId, `☀️ Доброе утро! Сводка по сайту:\n\n${text}`, kb);
 }
