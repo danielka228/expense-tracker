@@ -129,6 +129,39 @@ jobs:
             openssl rand -hex 32 | npx wrangler secret put SECRET_KEY $ENV_ARGS
           fi
 
+      # Красивый адрес сайта. Домен куплен в Cloudflare, поэтому его зона уже в этом аккаунте.
+      # Шаг не валит деплой: если у токена не хватает прав или домен ещё «подхватывается», сайт остаётся на workers.dev,
+      # а следующий деплой (любой мерж или ручной запуск) попробует снова.
+      - name: Свой домен
+        id: domain
+        if: env.TARGET == 'production'
+        run: |
+          host="traaaack.app"
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/domains"
+          failed=""
+          for h in "$host" "www.$host"; do
+            res=$(curl -sS -X PUT -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" -H "Content-Type: application/json" \
+              --data "$(jq -nc --arg h "$h" --arg s "$WORKER" '{hostname: $h, service: $s, environment: "production"}')" "$api" || true)
+            echo "$h: $(echo "$res" | jq -c '{success, errors: [.errors[]?.message]}' 2>/dev/null || echo "$res")"
+            [ "$(echo "$res" | jq -r '.success' 2>/dev/null)" = "true" ] || failed="$failed $h"
+          done
+          if [ -n "$failed" ]; then
+            echo "::warning::Не удалось подключить к сайту:$failed. Скорее всего токену Cloudflare не хватает прав на этот домен. Подключи вручную: Cloudflare → Workers & Pages → $WORKER → Settings → Domains & Routes → Add → Custom domain."
+          fi
+          # Ждём, пока домен начнёт отвечать (сертификат выпускается до пары минут)
+          for i in $(seq 1 12); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://$host/login" || true)
+            [ "$code" = "200" ] && break
+            sleep 10
+          done
+          if [ "$code" = "200" ]; then
+            echo "url=https://$host" >> "$GITHUB_OUTPUT"
+            echo "Сайт отвечает на https://$host"
+            { echo; echo "Сайт на своём домене: https://$host"; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::warning::https://$host пока не отвечает (код $code). Бот остаётся на workers.dev, а домен подхватится при следующем деплое."
+          fi
+
       - name: Telegram-бот
         if: env.TARGET == 'production'
         env:
@@ -150,7 +183,7 @@ jobs:
           printf '%s' "$t" | npx wrangler secret put TELEGRAM_BOT_TOKEN $ENV_ARGS
           # Тот же секрет Worker считает у себя (webhookSecret в src/telegram.ts) и сверяет с заголовком запроса
           secret=$(printf '%s' "$t" | sha256sum | cut -c1-48)
-          hook="${{ steps.subdomain.outputs.url }}/tg/webhook"
+          hook="${{ steps.domain.outputs.url || steps.subdomain.outputs.url }}/tg/webhook"
           curl -sS "$api/setWebhook" -H 'Content-Type: application/json' \
             --data "$(jq -nc --arg u "$hook" --arg s "$secret" '{url: $u, secret_token: $s, allowed_updates: ["message", "callback_query", "inline_query", "chosen_inline_result", "guest_message"]}')" | jq -c '{ok, description}'
           curl -sS "$api/setMyCommands" -H 'Content-Type: application/json' --data '{"commands": [
@@ -161,7 +194,7 @@ jobs:
             {"command": "stickers", "description": "Стикеры Трэка"},
             {"command": "help", "description": "Как пользоваться"}]}' | jq -c '{ok}'
           # Кнопка слева от поля ввода открывает сайт прямо в Telegram (Mini App) — сразу в аккаунте
-          app="${{ steps.subdomain.outputs.url }}/tg/app"
+          app="${{ steps.domain.outputs.url || steps.subdomain.outputs.url }}/tg/app"
           curl -sS "$api/setChatMenuButton" -H 'Content-Type: application/json' \
             --data "$(jq -nc --arg u "$app" '{menu_button: {type: "web_app", text: "СпендТрекер", web_app: {url: $u}}}')" | jq -c '{ok, description}'
           curl -sS "$api/setMyDescription" -H 'Content-Type: application/json' \
@@ -185,7 +218,7 @@ jobs:
             echo "::add-mask::$login_secret"
             printf '%s' "$login_id" | npx wrangler secret put TELEGRAM_LOGIN_CLIENT_ID $ENV_ARGS
             printf '%s' "$login_secret" | npx wrangler secret put TELEGRAM_LOGIN_CLIENT_SECRET $ENV_ARGS
-            { echo; echo "Вход через Telegram включён. Адрес возврата для @BotFather: \`${{ steps.subdomain.outputs.url }}/auth/telegram/callback\`"; } >> "$GITHUB_STEP_SUMMARY"
+            { echo; echo "Вход через Telegram включён. Адреса возврата для @BotFather (добавь все): \`${{ steps.domain.outputs.url }}/auth/telegram/callback\` и \`${{ steps.subdomain.outputs.url }}/auth/telegram/callback\`"; } >> "$GITHUB_STEP_SUMMARY"
           else
             echo "Секреты TELEGRAM_LOGIN_CLIENT_ID / TELEGRAM_LOGIN_CLIENT_SECRET не заданы — кнопки «Войти через Telegram» на сайте не будет."
           fi

@@ -48,7 +48,11 @@ interface LayoutOpts {
   bare?: boolean; // без общей обёртки (страница-презентация)
   extraCss?: string;
   scripts?: string;
+  share?: string; // адрес сайта (https://…): публичной странице добавляем превью для чатов и соцсетей
 }
+
+const SHARE_TITLE = 'СпендТрекер — траты под контролем';
+const SHARE_TEXT = 'Записывай траты за пару касаний: на сайте, в Telegram-боте или голосом. Сканер штрихкодов, друзья и сводки от Трэка.';
 
 export function layout(o: LayoutOpts, content: H) {
   const tabs = (Object.keys(TAB_ICONS) as Tab[]).map(
@@ -70,6 +74,20 @@ export function layout(o: LayoutOpts, content: H) {
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <title>${o.title}</title>
+${o.share
+  ? html`<meta name="description" content="${SHARE_TEXT}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="СпендТрекер">
+<meta property="og:locale" content="ru_RU">
+<meta property="og:title" content="${SHARE_TITLE}">
+<meta property="og:description" content="${SHARE_TEXT}">
+<meta property="og:url" content="${o.share}/">
+<meta property="og:image" content="${o.share}/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Трэк, персонаж СпендТрекера">
+<meta name="twitter:card" content="summary_large_image">`
+  : ''}
 <style>
 ${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
 </head>
@@ -97,7 +115,7 @@ function scrub(text: string, accentFrom?: number) {
   return text.split(' ').map((w, i) => html`<span class="${accentFrom !== undefined && i >= accentFrom ? 'g' : ''}">${w} </span>`);
 }
 
-export function landingPage(d: { demo: boolean }) {
+export function landingPage(d: { demo: boolean; origin: string }) {
   const today = new Date().toISOString().slice(0, 10);
   const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(today) - (6 - i) * 86400000).toISOString().slice(0, 10));
   const sampleWeek = days.map((date, i) => ({ date, total: [1500, 640, 2300, 890, 4500, 1200, 350][i] }));
@@ -115,7 +133,7 @@ export function landingPage(d: { demo: boolean }) {
   const barcode = [3, 1, 2, 1, 1, 3, 1, 2, 2, 1, 1, 2, 3, 1, 1, 2, 1, 3, 2, 1, 1, 2, 1, 1, 3, 1, 2, 1];
 
   return layout(
-    { title: 'СпендТрекер — траты под контролем', flashes: [], loggedIn: false, bare: true, extraCss: DASHBOARD_CSS + FRIENDS_CSS + LANDING_CSS, scripts: LANDING_JS },
+    { title: 'СпендТрекер — траты под контролем', flashes: [], loggedIn: false, bare: true, extraCss: DASHBOARD_CSS + FRIENDS_CSS + LANDING_CSS, scripts: LANDING_JS, share: d.origin },
     html`<header class="l-nav">
   <a class="l-logo" href="/"><i>${raw(WALLET_SVG)}</i>СпендТрекер</a>
   <a class="pill" href="/login">Войти</a>
@@ -229,12 +247,12 @@ const TG_CSS = `
 export function authPage(
   kind: 'login' | 'register',
   flashes: Flash[],
-  opts: { demo?: boolean; tgLogin?: boolean; tgPending?: boolean } = {},
+  opts: { demo?: boolean; tgLogin?: boolean; tgPending?: boolean; origin?: string } = {},
 ) {
   const isLogin = kind === 'login';
   const demo = !!opts.demo;
   return layout(
-    { title: isLogin ? 'Вход' : 'Регистрация', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS + TG_CSS },
+    { title: isLogin ? 'Вход' : 'Регистрация', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS + TG_CSS, share: opts.origin },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
 <div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(isLogin ? 'wave' : 'happy', 104))}</div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? 'С возвращением' : 'Новый аккаунт'}</h1>
