@@ -183,9 +183,17 @@ jobs:
           printf '%s' "$t" | npx wrangler secret put TELEGRAM_BOT_TOKEN $ENV_ARGS
           # Тот же секрет Worker считает у себя (webhookSecret в src/telegram.ts) и сверяет с заголовком запроса
           secret=$(printf '%s' "$t" | sha256sum | cut -c1-48)
-          hook="${{ steps.domain.outputs.url || steps.subdomain.outputs.url }}/tg/webhook"
-          curl -sS "$api/setWebhook" -H 'Content-Type: application/json' \
-            --data "$(jq -nc --arg u "$hook" --arg s "$secret" '{url: $u, secret_token: $s, allowed_updates: ["message", "callback_query", "inline_query", "chosen_inline_result", "guest_message"]}')" | jq -c '{ok, description}'
+          # Вебхук оставляем на workers.dev: Telegram принимает только адреса с IPv4, а у свежего домена
+          # он может появиться не сразу. Для людей это незаметно — красивый адрес бот показывает в ссылках (SITE_URL).
+          hook="${{ steps.subdomain.outputs.url }}/tg/webhook"
+          wh=$(curl -sS "$api/setWebhook" -H 'Content-Type: application/json' \
+            --data "$(jq -nc --arg u "$hook" --arg s "$secret" '{url: $u, secret_token: $s, allowed_updates: ["message", "callback_query", "inline_query", "chosen_inline_result", "guest_message"]}')")
+          echo "$wh" | jq -c '{ok, description}'
+          [ "$(echo "$wh" | jq -r '.ok')" = "true" ] || { echo "::error::Telegram не принял вебхук $hook — бот не будет получать сообщения"; exit 1; }
+          site="${{ steps.domain.outputs.url }}"
+          if [ -n "$site" ]; then
+            printf '%s' "$site" | npx wrangler secret put SITE_URL $ENV_ARGS
+          fi
           curl -sS "$api/setMyCommands" -H 'Content-Type: application/json' --data '{"commands": [
             {"command": "menu", "description": "Меню"},
             {"command": "stats", "description": "Статистика"},
