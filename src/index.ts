@@ -41,6 +41,7 @@ type Env = {
   DEMO?: string; // "1" — демо-версия с кнопкой «Войти в демо»
   TELEGRAM_BOT_TOKEN?: string; // токен от @BotFather; workflow кладёт его из секрета GitHub
   TELEGRAM_ADMIN_ID?: string; // Telegram ID владельца — ему одному доступна /admin (секрет из GitHub)
+  SITE_URL?: string; // красивый адрес сайта (https://traaaack.app): бот показывает его в ссылках; ставит деплой
   TELEGRAM_API?: string; // только для локальной проверки: адрес заглушки вместо api.telegram.org
   TELEGRAM_LOGIN_CLIENT_ID?: string; // «Войти через Telegram»: Client ID и Client Secret из @BotFather (секреты GitHub)
   TELEGRAM_LOGIN_CLIENT_SECRET?: string;
@@ -894,7 +895,9 @@ app.post('/tg/webhook', async (c) => {
     return c.text('ok');
   }
   try {
-    await handleUpdate(botDeps(c.env, token, new URL(c.req.url).origin), update);
+    // Вебхук приходит на workers.dev, а в ссылках бот показывает свой домен, если он подключён
+    const site = c.env.SITE_URL?.trim().replace(/\/+$/, '');
+    await handleUpdate(botDeps(c.env, token, site && site.startsWith('https://') ? site : new URL(c.req.url).origin), update);
   } catch (e) {
     // Отвечаем 200 в любом случае, иначе Telegram будет повторять это сообщение снова и снова
     console.error('telegram update failed', e);
