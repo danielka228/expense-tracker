@@ -11,6 +11,7 @@ export const PRODUCT_CATEGORIES = ['Еда', 'Транспорт', 'Жильё',
 export interface Guess {
   name: string;
   category: string;
+  amount?: number; // цена с ценника или итог чека — только если просили (recognizeProduct с withAmount)
 }
 
 type Runner = { run(model: string, input: unknown): Promise<unknown> };
@@ -28,7 +29,7 @@ const ask = async (ai: Runner, messages: unknown[], maxTokens: number, ms: numbe
 export function parseGuess(raw: string): Guess | null {
   const m = raw.match(/\{[\s\S]*?\}/);
   if (!m) return null;
-  let j: { name?: unknown; category?: unknown };
+  let j: { name?: unknown; category?: unknown; amount?: unknown };
   try {
     j = JSON.parse(m[0]);
   } catch {
@@ -39,15 +40,18 @@ export function parseGuess(raw: string): Guess | null {
   const name = j.name.replace(/[<>`\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 100);
   if (name.length < 2 || /^(null|none|unknown|неизвестно|не знаю|нет)$/i.test(name)) return null;
   const category = typeof j.category === 'string' && PRODUCT_CATEGORIES.includes(j.category) ? j.category : 'Прочее';
-  return { name, category };
+  const amount = Number(String(j.amount).replace(',', '.').replace(/\s/g, ''));
+  return { name, category, ...(amount > 0 && amount < 1e7 ? { amount: Math.round(amount * 100) / 100 } : {}) };
 }
 
 const RULES = `Верни только JSON вида {"name": "...", "category": "..."} без пояснений.
 name — короткое название покупки по-русски: «Бренд Продукт объём», например «Простоквашино Молоко 2,5% 930 мл». Латиницей оставляй только названия брендов. Единицы пиши по-русски (л, мл, г, кг).
 category — одна из: ${PRODUCT_CATEGORIES.join(', ')}.`;
 
-/** Фото упаковки → название и категория. null — не разобрал или ИИ недоступен. */
-export async function recognizeProduct(ai: Runner, jpeg: Uint8Array): Promise<Guess | null> {
+const AMOUNT_RULE = `\nДобавь в JSON поле "amount" — число. Если на фото чек: name — «Чек» и название магазина, amount — итоговая сумма. Если на фото ценник: amount — цена. Иначе amount: null.`;
+
+/** Фото упаковки → название и категория (withAmount — ещё и сумма с ценника или чека). null — не разобрал или ИИ недоступен. */
+export async function recognizeProduct(ai: Runner, jpeg: Uint8Array, withAmount = false): Promise<Guess | null> {
   let b64 = '';
   for (let i = 0; i < jpeg.length; i += 0x8000) b64 += String.fromCharCode(...jpeg.subarray(i, i + 0x8000));
   try {
@@ -59,7 +63,7 @@ export async function recognizeProduct(ai: Runner, jpeg: Uint8Array): Promise<Gu
           content: [
             {
               type: 'text',
-              text: `На фото товар из магазина. Определи, что это. ${RULES}\nЕсли на фото не товар или ничего не разобрать, верни {"name": null, "category": null}.`,
+              text: `На фото товар из магазина. Определи, что это. ${RULES}${withAmount ? AMOUNT_RULE : ''}\nЕсли на фото не товар или ничего не разобрать, верни {"name": null, "category": null}.`,
             },
             { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${btoa(b64)}` } },
           ],
@@ -102,4 +106,18 @@ export async function tidyProduct(
     console.error('tidyProduct failed', e);
     return null;
   }
+}
+
+// Workers AI тарифицируется, поэтому у каждого человека суточный лимит запросов по фото (сайт и бот считают вместе).
+// Возвращает false, когда лимит исчерпан.
+const PHOTO_LIMIT_PER_DAY = 30;
+export async function takeAiQuota(db: D1Database, userId: number): Promise<boolean> {
+  const row = await db
+    .prepare(
+      `INSERT INTO ai_usage (user_id, day, n) VALUES (?, date('now'), 1)
+       ON CONFLICT(user_id, day) DO UPDATE SET n = n + 1 WHERE n < ? RETURNING n`,
+    )
+    .bind(userId, PHOTO_LIMIT_PER_DAY)
+    .first();
+  return !!row;
 }

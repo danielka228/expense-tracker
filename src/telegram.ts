@@ -7,6 +7,7 @@
 import { CATEGORY_RULES, parseExpense, type ParsedExpense } from './parse';
 import { STICKERS, animStickerFile, stickerFile } from './stickers';
 import { eveningText, plural, quip, weeklyText } from './trek';
+import { takeAiQuota, type Guess } from './vision';
 import { fmt0, MONTHS_NOM, MONTHS_SHORT, type ExpenseRow } from './views';
 
 interface TgUser {
@@ -19,6 +20,8 @@ interface TgMessage {
   chat: { id: number; type: string };
   text?: string;
   voice?: { file_id: string; duration: number };
+  photo?: { file_id: string; width: number }[]; // один снимок в нескольких размерах, от малого к большому
+  caption?: string;
   guest_query_id?: string; // гостевой режим: бота упомянули в чужом чате
   guest_bot_caller_user?: TgUser; // кто упомянул
 }
@@ -60,6 +63,7 @@ export interface BotDeps {
   api: string; // https://api.telegram.org/bot<токен>, см. botApi
   file: string; // откуда скачивать файлы (голосовые), см. botFileApi
   transcribe: ((audio: ArrayBuffer) => Promise<string>) | null; // распознавание речи; null — голосовые не понимаем
+  readPhoto: ((jpeg: Uint8Array) => Promise<Guess | null>) | null; // что и за сколько на фото товара или чека; null — фото не понимаем
   siteUrl: string;
   categories: string[];
   currencies: Record<string, { label: string; symbol: string }>;
@@ -106,6 +110,8 @@ const HELP = `❓ <b>Как пользоваться</b>
 <code>вчера такси 540</code>
 <code>полторы тысячи продукты</code>
 Можно несколько трат сразу, каждую с новой строки или отдельной фразой.
+
+Можно прислать фото чека или товара: назову покупку и возьму сумму из чека или с ценника. Если цены не видно, подпиши фото суммой: <code>89</code>.
 
 Категорию угадываю сам. Под каждой записью есть кнопки, чтобы поменять категорию или удалить запись.
 
@@ -497,6 +503,7 @@ export async function handleUpdate(d: BotDeps, u: TgUpdate) {
   if (cmd === 'unlink') return sendScreen(d, chatId, unlinkScreen(user));
   if (cmd) return send(d, chatId, 'Не знаю такой команды. /menu — меню, /help — что я умею.');
   if (msg.voice) return addFromVoice(d, user, chatId, msg.voice);
+  if (msg.photo) return addFromPhoto(d, user, chatId, msg.photo, (msg.caption ?? '').trim());
   if (!text) return send(d, chatId, 'Напиши трату текстом или надиктуй голосовым: <code>кофе 250</code>');
   return addFromText(d, user, chatId, text);
 }
@@ -541,7 +548,6 @@ async function addFromVoice(d: BotDeps, user: Linked, chatId: number, voice: { f
 }
 
 async function addFromText(d: BotDeps, user: Linked, chatId: number, text: string) {
-  const sym = symOf(d, user);
   // Каждая строка или фраза — отдельная трата. Кусок без суммы («Кофе.» из «Кофе. 250 рублей.»)
   // приклеиваем к следующему: так распознавание речи нередко расставляет точки.
   const parts = text.split(/\n|(?<=[.!?;])\s+/).map((l) => l.trim()).filter(Boolean).slice(0, 20);
@@ -561,6 +567,10 @@ async function addFromText(d: BotDeps, user: Linked, chatId: number, text: strin
   if (!parsed.length) {
     return send(d, chatId, 'Не нашёл сумму. Напиши, например: <code>кофе 250</code> или <code>вчера такси 540</code>');
   }
+  return addParsed(d, user, chatId, parsed);
+}
+
+async function addParsed(d: BotDeps, user: Linked, chatId: number, parsed: ParsedExpense[]) {
   // Категория, выбранная в меню «Добавить», важнее угаданной
   if (user.pending_category) {
     for (const p of parsed) p.category = user.pending_category;
@@ -568,8 +578,33 @@ async function addFromText(d: BotDeps, user: Linked, chatId: number, text: strin
   }
   for (const p of parsed) {
     const e = await insertExpense(d, user, p);
-    await send(d, chatId, `${card(d, e, sym)}\n\n<i>${esc(await quipFor(d, user, e))}</i>`, expenseKeyboard(e.id));
+    await send(d, chatId, `${card(d, e, symOf(d, user))}\n\n<i>${esc(await quipFor(d, user, e))}</i>`, expenseKeyboard(e.id));
   }
+}
+
+// Фото товара или чека: ИИ называет покупку и читает сумму (итог чека или ценник); подпись к фото может задать сумму или всё сразу
+async function addFromPhoto(d: BotDeps, user: Linked, chatId: number, photos: { file_id: string; width: number }[], caption: string) {
+  const typed = parseExpense(caption, d.today, CATEGORY_RULES);
+  if (validAmount(typed) && typed.note) return addFromText(d, user, chatId, caption); // в подписи уже всё есть, ИИ не нужен
+  const hint = 'Напиши текстом: <code>кофе 250</code>';
+  if (!d.readPhoto) return send(d, chatId, `Фото пока не понимаю. ${hint}`);
+  if (!(await takeAiQuota(d.db, user.id))) return send(d, chatId, `На сегодня фото закончились. ${hint}`);
+  await tg(d.api, 'sendChatAction', { chat_id: chatId, action: 'typing' });
+  let guess: Guess | null = null;
+  try {
+    const photo = photos.find((p) => p.width >= 800) ?? photos[photos.length - 1];
+    const path = (await tg(d.api, 'getFile', { file_id: photo.file_id })).result?.file_path;
+    const img = path ? await fetch(`${d.file}/${path}`) : null;
+    if (img?.ok) guess = await d.readPhoto(new Uint8Array(await img.arrayBuffer()));
+  } catch (e) {
+    console.error('photo recognition failed', e);
+  }
+  if (!guess) return send(d, chatId, `Не разобрал, что на фото. ${hint}`);
+  const amount = typed.amount ?? guess.amount;
+  if (!amount) {
+    return send(d, chatId, `Похоже на «${esc(guess.name)}», но цены не вижу. Пришли фото с подписью-суммой, например <code>89</code>, или напиши текстом.`);
+  }
+  return addParsed(d, user, chatId, [{ amount, category: guess.category, note: typed.note || guess.name, date: null }]);
 }
 
 // ---------- стикерпаки Трэка ----------
