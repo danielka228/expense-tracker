@@ -690,6 +690,12 @@ app.post('/profile/telegram/unlink', async (c) => {
 
 // ---------- «Войти через Telegram» (OpenID Connect, src/tglogin.ts) ----------
 
+// Красивый адрес сайта из SITE_URL (https://traaaack.app), если домен подключён
+function canonicalOrigin(c: C): string | null {
+  const site = c.env.SITE_URL?.trim().replace(/\/+$/, '');
+  return site && site.startsWith('https://') ? site : null;
+}
+
 function tgLoginConfig(c: C): TgLoginConfig | null {
   const clientId = c.env.TELEGRAM_LOGIN_CLIENT_ID?.trim();
   const clientSecret = c.env.TELEGRAM_LOGIN_CLIENT_SECRET?.trim();
@@ -751,6 +757,17 @@ app.get('/auth/telegram', async (c) => {
   // ?link=1 — привязка Telegram к уже открытому аккаунту (из Настроек или Профиля), а не вход
   const linking = c.req.query('link') === '1' && !!(await getSessionUserId(c));
   const back = c.req.query('back') === 'settings' ? '/settings' : '/profile';
+  // В @BotFather зарегистрирован адрес возврата только на основном домене, а «защитные» куки привязаны к адресу сайта:
+  // поэтому вход через Telegram всегда начинаем на основном домене, даже если кнопку нажали на старом адресе
+  const site = canonicalOrigin(c);
+  const here = new URL(c.req.url);
+  if (site && here.origin !== site) {
+    if (linking) {
+      flash(c, `Чтобы привязать Telegram, открой сайт на ${site.replace('https://', '')}`, 'error');
+      return c.redirect(back);
+    }
+    return c.redirect(`${site}${here.pathname}${here.search}`);
+  }
   if (!cfg) {
     flash(c, 'Вход через Telegram пока не настроен', 'error');
     return c.redirect(linking ? back : '/login');
@@ -896,8 +913,7 @@ app.post('/tg/webhook', async (c) => {
   }
   try {
     // Вебхук приходит на workers.dev, а в ссылках бот показывает свой домен, если он подключён
-    const site = c.env.SITE_URL?.trim().replace(/\/+$/, '');
-    await handleUpdate(botDeps(c.env, token, site && site.startsWith('https://') ? site : new URL(c.req.url).origin), update);
+    await handleUpdate(botDeps(c.env, token, canonicalOrigin(c) ?? new URL(c.req.url).origin), update);
   } catch (e) {
     // Отвечаем 200 в любом случае, иначе Telegram будет повторять это сообщение снова и снова
     console.error('telegram update failed', e);
