@@ -1,6 +1,8 @@
 // Поиск товара по штрих-коду (Open Food Facts) и магазинов рядом (OpenStreetMap / Overpass).
 // Ответы внешних сервисов кэшируются в D1: Cache API на *.workers.dev не работает.
 
+import { tidyProduct } from './vision';
+
 const UA = 'SpendTracker/1.0 (expense tracker; https://github.com/danielka228/expense-tracker)';
 const PRODUCT_TTL_DAYS = 30;
 const MISSING_TTL_DAYS = 1;
@@ -62,7 +64,8 @@ export function parseOffProduct(barcode: string, json: unknown): Product {
 const PRODUCT_SOURCES = ['world.openfoodfacts.org', 'world.openproductsfacts.org', 'world.openbeautyfacts.org'];
 const NOT_FOUND = (barcode: string): Product => ({ barcode, found: false, name: null, brand: null, quantity: null, image: null, category: null });
 
-export async function lookupProduct(db: D1Database, barcode: string): Promise<Product> {
+// ai — Workers AI (необязательно): приводит найденное в базе название в порядок, результат кэшируется вместе с товаром
+export async function lookupProduct(db: D1Database, barcode: string, ai?: Ai): Promise<Product> {
   // Названия, которые вписали пользователи, не устаревают; ответы баз кэшируются на время
   const cached = await db
     .prepare(
@@ -91,6 +94,14 @@ export async function lookupProduct(db: D1Database, barcode: string): Promise<Pr
   }
   // Ни одна база не ответила — не кэшируем, попробуем в следующий раз
   if (!answered) return product;
+
+  if (ai && product.found) {
+    const g = await tidyProduct(ai, product);
+    if (g) {
+      // В аккуратное название уже вошли бренд и объём. Категорию из тегов базы оставляем, если она не просто «Еда»
+      product = { ...product, name: g.name, brand: null, quantity: null, category: product.category && product.category !== 'Еда' ? product.category : g.category };
+    }
+  }
 
   await db
     .prepare(

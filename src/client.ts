@@ -442,6 +442,9 @@ export const SCAN_JS = `
   var addBtn = document.getElementById('scan-add'), againBtn = document.getElementById('scan-again');
   var manualToggle = document.getElementById('scan-manual-toggle'), manualBox = document.getElementById('scan-manual');
   var codeInp = document.getElementById('scan-code'), codeGo = document.getElementById('scan-code-go');
+  var photoBox = document.getElementById('scan-photo-box'), photoBtn = document.getElementById('scan-photo');
+  var photoFile = document.getElementById('scan-photo-file'), photoMsg = document.getElementById('scan-photo-msg');
+  var aiOn = false;
   var form = document.getElementById('add-form');
   var sym = form.getAttribute('data-sym');
   var esc = window.esc;
@@ -572,7 +575,7 @@ export const SCAN_JS = `
     result.hidden = false;
     prodEl.innerHTML = '<div class="pic none">' + BOX_SVG + '</div><div><div class="pn">Ищу товар…</div><div class="pb">' + esc(c) + '</div></div>';
     fetch('/api/product/' + c, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
-      product = j.product; prices = j.prices || prices;
+      product = j.product; prices = j.prices || prices; aiOn = !!j.ai;
     }).catch(function () {
       product = { barcode: c, found: false };
     }).then(function () { renderProduct(); updatePrice(); });
@@ -588,8 +591,56 @@ export const SCAN_JS = `
     nameEl.placeholder = meta.tobacco ? 'Например, Winston Blue' : 'Что купил';
     // Код с пачки однозначно говорит, что это табак — категорию ставим сами
     if (p.category) catEl.value = p.category; else if (meta.tobacco) catEl.value = 'Табак';
-    if (!p.found) setTimeout(function () { nameEl.focus(); }, 300);
+    // Нет ни в одной базе — можно сфотографировать упаковку, ИИ подскажет название
+    photoBox.hidden = p.found || !aiOn;
+    photoMsg.hidden = true;
+    photoBtn.disabled = false;
+    if (!p.found && !aiOn) setTimeout(function () { nameEl.focus(); }, 300);
   }
+
+  // Фото уменьшаем до 800 px по длинной стороне: так быстрее уходит и дешевле разбирается
+  function shrinkPhoto(file) {
+    return new Promise(function (ok, no) {
+      var img = new Image(), url = URL.createObjectURL(file);
+      img.onload = function () {
+        var k = Math.min(1, 800 / Math.max(img.width, img.height));
+        var cv = document.createElement('canvas');
+        cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        URL.revokeObjectURL(url);
+        cv.toBlob(function (b) { b ? ok(b) : no(); }, 'image/jpeg', 0.82);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); no(); };
+      img.src = url;
+    });
+  }
+
+  function say(text, bad) { photoMsg.textContent = text; photoMsg.hidden = false; photoMsg.classList.toggle('bad', !!bad); }
+
+  photoBtn.addEventListener('click', function () { photoFile.value = ''; photoFile.click(); });
+  photoFile.addEventListener('change', function () {
+    var f = photoFile.files && photoFile.files[0];
+    if (!f || !code) return;
+    photoBtn.disabled = true; say('Смотрю на фото…');
+    var mine = code;
+    shrinkPhoto(f).then(function (blob) {
+      return fetch('/api/product/' + mine + '/photo', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob, credentials: 'same-origin' });
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (mine !== code) return;
+      photoBtn.disabled = false;
+      if (j.ok) {
+        nameEl.value = j.name; catEl.value = j.category;
+        say('Похоже на «' + j.name + '». Проверь название — оно запомнится для этого кода.');
+      } else if (j.error === 'limit') {
+        say('На сегодня фото закончились — впиши название сам.', true);
+      } else {
+        say('Не разобрал товар на фото. Попробуй ещё раз или впиши название.', true);
+      }
+      if (!j.ok) nameEl.focus();
+    }).catch(function () {
+      photoBtn.disabled = false; say('Не получилось отправить фото. Впиши название сам.', true); nameEl.focus();
+    });
+  });
 
   function updatePrice() {
     var lines = [], suggest = null;
@@ -638,6 +689,7 @@ export const SCAN_JS = `
     result.hidden = true; manualBox.hidden = true; manualToggle.hidden = false;
     amountEl.value = ''; if (amountEl.fit) amountEl.fit();
     nameEl.value = ''; pricesEl.innerHTML = '';
+    photoBox.hidden = true; photoMsg.hidden = true;
   }
 
   openBtn.addEventListener('click', function () {
