@@ -82,6 +82,16 @@ const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 
 const app = new Hono<App>();
 
+// www.traaaack.app → traaaack.app (только чтение страниц: запросы с данными, например вебхук, не трогаем)
+app.use('*', async (c, next) => {
+  const u = new URL(c.req.url);
+  if (u.hostname.startsWith('www.') && (c.req.method === 'GET' || c.req.method === 'HEAD')) {
+    u.hostname = u.hostname.slice(4);
+    return c.redirect(u.toString(), 301);
+  }
+  await next();
+});
+
 // ---------- сессия и flash-сообщения ----------
 
 async function getSessionUserId(c: C): Promise<number | null> {
@@ -220,10 +230,10 @@ for (const p of ['/dashboard', '/delete/*', '/friends', '/friends/*', '/profile'
 
 app.get('/', async (c) => {
   if (await getSessionUserId(c)) return c.redirect('/dashboard');
-  return c.html(landingPage({ demo: c.env.DEMO === '1' }));
+  return c.html(landingPage({ demo: c.env.DEMO === '1', origin: new URL(c.req.url).origin }));
 });
 
-const authOpts = async (c: C) => ({ demo: c.env.DEMO === '1', tgLogin: !!tgLoginConfig(c), tgPending: !!(await readTgPending(c)) });
+const authOpts = async (c: C) => ({ origin: new URL(c.req.url).origin, demo: c.env.DEMO === '1', tgLogin: !!tgLoginConfig(c), tgPending: !!(await readTgPending(c)) });
 app.get('/register', async (c) => c.html(authPage('register', popFlashes(c), await authOpts(c))));
 app.post('/register', async (c) => {
   const form = await c.req.parseBody();
