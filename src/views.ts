@@ -660,6 +660,11 @@ ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory
     </div>
     <div id="scan-result" hidden>
       <div class="product" id="scan-product"></div>
+      <div class="photo-ask" id="scan-photo-box" hidden>
+        <button type="button" class="btn-tinted" id="scan-photo">Определить по фото</button>
+        <input type="file" id="scan-photo-file" accept="image/*" capture="environment" hidden>
+        <div class="photo-msg" id="scan-photo-msg" hidden></div>
+      </div>
       <div class="prices" id="scan-prices" hidden></div>
       <div class="amount-wrap scan-step"><input class="amount-input" type="text" id="scan-amount" inputmode="decimal" placeholder="0" aria-label="Сумма"><span class="amount-cur">${d.sym}</span></div>
       <div class="store-chips scan-step" id="scan-stores" style="--d:.05s"></div>

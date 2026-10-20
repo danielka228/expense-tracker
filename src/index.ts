@@ -2,6 +2,7 @@ import { Hono, type Context } from 'hono';
 import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
+import { recognizeProduct } from './vision';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
 import { authorizeUrl, finishLogin, newLoginState, type TgIdentity, type TgLoginConfig, type TgLoginState } from './tglogin';
@@ -372,10 +373,31 @@ app.post('/dashboard', async (c) => {
 app.get('/api/product/:code{[0-9]{8,14}}', async (c) => {
   const code = c.req.param('code');
   const [product, prices] = await Promise.all([
-    lookupProduct(c.env.DB, code),
+    lookupProduct(c.env.DB, code, c.env.AI),
     priceHistory(c.env.DB, code, c.get('user').id),
   ]);
-  return c.json({ product, prices });
+  return c.json({ product, prices, ai: !!c.env.AI });
+});
+
+// Фото упаковки → название и категория (ИИ подсказывает, человек проверяет и сохраняет).
+// Workers AI тарифицируется, поэтому у каждого человека есть суточный лимит.
+const PHOTO_LIMIT_PER_DAY = 30;
+const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
+
+app.post('/api/product/:code{[0-9]{8,14}}/photo', async (c) => {
+  if (!c.env.AI) return c.json({ ok: false, error: 'ai_off' }, 503);
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (!isJpeg || bytes.length > MAX_PHOTO_BYTES) return c.json({ ok: false, error: 'bad_image' }, 400);
+  const used = await c.env.DB.prepare(
+    `INSERT INTO ai_usage (user_id, day, n) VALUES (?, date('now'), 1)
+     ON CONFLICT(user_id, day) DO UPDATE SET n = n + 1 WHERE n < ? RETURNING n`,
+  )
+    .bind(c.get('user').id, PHOTO_LIMIT_PER_DAY)
+    .first();
+  if (!used) return c.json({ ok: false, error: 'limit' }, 429);
+  const guess = await recognizeProduct(c.env.AI, bytes);
+  return c.json(guess ? { ok: true, name: guess.name, category: guess.category } : { ok: false, error: 'unknown' });
 });
 
 app.get('/api/stores', async (c) => {
@@ -1051,6 +1073,7 @@ app.post('/settings/delete_account', async (c) => {
     db.prepare('DELETE FROM api_tokens WHERE user_id = ?').bind(id),
     db.prepare('DELETE FROM telegram_links WHERE user_id = ?').bind(id),
     db.prepare('DELETE FROM telegram_codes WHERE user_id = ?').bind(id),
+    db.prepare('DELETE FROM ai_usage WHERE user_id = ?').bind(id),
     db.prepare('DELETE FROM users WHERE id = ?').bind(id),
   ]);
   logout(c);

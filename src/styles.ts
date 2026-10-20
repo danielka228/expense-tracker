@@ -476,6 +476,10 @@ export const DASHBOARD_CSS = `
   .manual-code { display: flex; gap: 8px; }
   .manual-code input { margin: 0; }
   .manual-code button { width: auto; flex: none; }
+  .photo-ask { margin: 10px 0 4px; }
+  .photo-ask button { width: 100%; }
+  .photo-msg { margin-top: 8px; font-size: 13px; line-height: 1.4; color: var(--text-2); text-align: center; }
+  .photo-msg.bad { color: var(--red); }
 `;
 
 export const FRIENDS_CSS = `
