@@ -1,6 +1,7 @@
 // Поиск товара по штрих-коду (Open Food Facts) и магазинов рядом (OpenStreetMap / Overpass).
 // Ответы внешних сервисов кэшируются в D1: Cache API на *.workers.dev не работает.
 
+import { aiDayAllowed } from './limits';
 import { tidyProduct } from './vision';
 
 const UA = 'SpendTracker/1.0 (expense tracker; https://github.com/danielka228/expense-tracker)';
@@ -38,6 +39,8 @@ function productCategory(tags: string[]): string | null {
   return null;
 }
 
+const OFF_IMAGE = /^https:\/\/[a-z0-9.-]+\.(openfoodfacts|openproductsfacts|openbeautyfacts)\.org\/[^\s"'()<>\\]*$/;
+
 export function parseOffProduct(barcode: string, json: unknown): Product {
   const j = json as { status?: number; product?: Record<string, unknown> };
   const p = j?.product;
@@ -55,7 +58,8 @@ export function parseOffProduct(barcode: string, json: unknown): Product {
     name,
     brand,
     quantity: str(p.quantity),
-    image: str(p.image_front_small_url) ?? str(p.image_small_url),
+    // Картинка встаёт в style страницы, поэтому берём только адреса самих баз Open Food Facts
+    image: [str(p.image_front_small_url), str(p.image_small_url)].find((u) => !!u && OFF_IMAGE.test(u)) ?? null,
     category: productCategory(tags),
   };
 }
@@ -95,7 +99,7 @@ export async function lookupProduct(db: D1Database, barcode: string, ai?: Ai): P
   // Ни одна база не ответила — не кэшируем, попробуем в следующий раз
   if (!answered) return product;
 
-  if (ai && product.found) {
+  if (ai && product.found && (await aiDayAllowed(db))) {
     const g = await tidyProduct(ai, product);
     if (g) {
       // В аккуратное название уже вошли бренд и объём. Категорию из тегов базы оставляем, если она не просто «Еда»
