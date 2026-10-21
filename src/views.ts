@@ -3,6 +3,7 @@ import type { HtmlEscapedString } from 'hono/utils/html';
 import { COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, VOICE_JS } from './client';
 import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS } from './styles';
 import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
+import { plural } from './trek';
 
 type H = HtmlEscapedString | Promise<HtmlEscapedString>;
 export type Flash = [category: string, message: string];
@@ -407,6 +408,7 @@ export interface ExpenseRow {
 
 const MONTHS_IN = ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'];
 export const MONTHS_NOM = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
+const MONTHS_GEN = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря'];
 export const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const WEEKDAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
@@ -1109,5 +1111,126 @@ ${telegramSettings(d.telegram)}
   </form>
 </div>
 <div class="footnote">Удаление сотрёт все траты, друзей и фото без возможности восстановления.</div>`,
+  );
+}
+
+// ---------- «Мой месяц»: картинка 1080×1920 для сторис ----------
+// Карточка собирается в SVG здесь, а в PNG/JPEG её превращает браузер (canvas): так Worker'у не нужна графическая библиотека.
+// Шрифты только системные — SVG, нарисованный как картинка, веб-шрифты не подгружает.
+
+export interface MonthCard {
+  month: number; // 0–11
+  username: string;
+  sym: string;
+  total: number;
+  count: number;
+  cats: { category: string; total: number }[]; // до трёх, по убыванию
+  top: { note: string; n: number } | null; // самая частая запись
+  prev: number; // сумма за те же дни прошлого месяца
+  bot: string | null;
+}
+
+const CARD_COLORS = ['#8e81ff', '#5ad1c6', '#ffb35c'];
+
+export function monthCardSvg(c: MonthCard): string {
+  const e = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
+  const font = `-apple-system, 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif`;
+  const prevName = MONTHS_GEN[(c.month + 11) % 12];
+  const pct = c.prev > 0 ? Math.round((Math.abs(c.total - c.prev) / c.prev) * 100) : null;
+  const cmp =
+    pct === null ? 'Все траты под контролем' : pct === 0 ? `Как за те же дни ${prevName}` : `На ${pct}% ${c.total < c.prev ? 'меньше' : 'больше'}, чем за те же дни ${prevName}`;
+  const mood: Mood = pct === null || pct === 0 ? 'happy' : c.total < c.prev ? 'cool' : 'worried';
+  const trek = mascot(mood, 300).match(/<svg[\s\S]*<\/svg>/)![0];
+  const cats = c.cats
+    .map((k, i) => {
+      const y = 1190 + i * 118;
+      const w = Math.max(16, Math.round((k.total / c.total) * 912));
+      return `<text x="84" y="${y}" font-size="44" font-weight="700" fill="#fff">${e(k.category)}</text>
+        <text x="996" y="${y}" font-size="44" font-weight="800" fill="#fff" text-anchor="end">${fmt0(k.total)} ${e(c.sym)}</text>
+        <rect x="84" y="${y + 24}" width="912" height="18" rx="9" fill="rgba(255,255,255,.1)"/>
+        <rect x="84" y="${y + 24}" width="${w}" height="18" rx="9" fill="${CARD_COLORS[i]}"/>`;
+    })
+    .join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1920" width="1080" height="1920" font-family="${font}">
+  <defs>
+    <radialGradient id="mc1" cx="50%" cy="22%" r="60%"><stop offset="0" stop-color="#3a2f9a"/><stop offset="1" stop-color="#3a2f9a" stop-opacity="0"/></radialGradient>
+    <radialGradient id="mc2" cx="100%" cy="100%" r="55%"><stop offset="0" stop-color="#145a6e"/><stop offset="1" stop-color="#145a6e" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1080" height="1920" fill="#08070f"/><rect width="1080" height="1920" fill="url(#mc1)"/><rect width="1080" height="1920" fill="url(#mc2)"/>
+  <text x="540" y="120" font-size="38" font-weight="800" fill="rgba(235,235,245,.7)" text-anchor="middle">СпендТрекер</text>
+  <g transform="translate(390 170)">${trek}</g>
+  <text x="540" y="640" font-size="104" font-weight="900" fill="#fff" text-anchor="middle" letter-spacing="-2">Мой ${MONTHS_NOM[c.month].toLowerCase()}</text>
+  <text x="540" y="705" font-size="40" font-weight="600" fill="rgba(235,235,245,.6)" text-anchor="middle">${e(c.username)}</text>
+  <text x="540" y="890" font-size="150" font-weight="900" fill="#fff" text-anchor="middle" letter-spacing="-4">${fmt0(c.total)} ${e(c.sym)}</text>
+  <text x="540" y="960" font-size="44" font-weight="600" fill="rgba(235,235,245,.7)" text-anchor="middle">за ${fmt0(c.count)} ${plural(c.count, 'трату', 'траты', 'трат')}</text>
+  <rect x="84" y="1010" width="912" height="84" rx="42" fill="rgba(255,255,255,.08)"/>
+  <text x="540" y="1065" font-size="34" font-weight="700" fill="#fff" text-anchor="middle">${e(cmp)}</text>
+  ${cats}
+  ${c.top ? `<text x="540" y="1600" font-size="44" font-weight="700" fill="#fff" text-anchor="middle">Чаще всего: ${e(c.top.note)} × ${c.top.n}</text>` : ''}
+  <text x="540" y="1790" font-size="36" font-weight="700" fill="rgba(235,235,245,.75)" text-anchor="middle">${c.bot ? `Считаю траты в Telegram · @${e(c.bot)}` : 'Считаю траты в СпендТрекере'}</text>
+  <text x="540" y="1845" font-size="32" font-weight="700" fill="rgba(235,235,245,.5)" text-anchor="middle">traaaack.app</text>
+</svg>`;
+}
+
+export function monthPage(d: { flashes: Flash[]; card: MonthCard | null; canSend: boolean }) {
+  const css = `
+  .mc { max-width: 380px; margin: 0 auto; display: grid; gap: 14px; }
+  .mc-frame { border-radius: 22px; overflow: hidden; aspect-ratio: 9 / 16; max-width: 100%; background: #08070f; }
+  .mc-frame svg, .mc-frame img { display: block; width: 100%; height: 100%; }
+  .mc-hint { text-align: center; color: var(--text-2); font-size: 14px; margin: 0; }`;
+  if (!d.card) {
+    return layout(
+      { title: 'Мой месяц', flashes: d.flashes, loggedIn: true, extraCss: DASHBOARD_CSS + css },
+      html`${header('Мой месяц')}<div class="card reveal" style="text-align:center">${raw(mascot('sleep', 110))}<p style="margin:12px 0 0">В этом месяце трат пока нет. Запиши первую — и здесь появится картинка для сторис.</p><a class="btn" href="/dashboard" style="margin-top:14px">Добавить трату</a></div>`,
+    );
+  }
+  return layout(
+    { title: 'Мой месяц', flashes: d.flashes, loggedIn: true, extraCss: DASHBOARD_CSS + css },
+    html`${header('Мой месяц', undefined, html`Картинка для сторис`)}
+<div class="mc reveal">
+  <div class="mc-frame" id="mc-frame">${raw(monthCardSvg(d.card))}</div>
+  <button type="button" id="mc-share" hidden>📤 Поделиться</button>
+  ${d.canSend ? html`<button type="button" id="mc-send" class="btn-tinted" disabled>📩 Прислать картинку в Telegram</button>` : ''}
+  <p class="mc-hint" id="mc-hint">Готовлю картинку…</p>
+</div>
+<script>
+(function () {
+  var frame = document.getElementById('mc-frame'), hint = document.getElementById('mc-hint');
+  var shareBtn = document.getElementById('mc-share'), sendBtn = document.getElementById('mc-send');
+  var svg = frame.querySelector('svg'), blob = null;
+  var im = new Image();
+  im.onload = function () {
+    var c = document.createElement('canvas'); c.width = 1080; c.height = 1920;
+    try {
+      c.getContext('2d').drawImage(im, 0, 0, 1080, 1920);
+      c.toBlob(function (b) {
+        if (!b) return fail();
+        blob = b;
+        var img = document.createElement('img'); img.src = URL.createObjectURL(b); img.alt = 'Мой месяц в СпендТрекере';
+        frame.replaceChild(img, svg);
+        var file = new File([b], 'spendtracker-month.jpg', { type: 'image/jpeg' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          shareBtn.hidden = false;
+          shareBtn.onclick = function () { navigator.share({ files: [file] }).catch(function () {}); };
+        }
+        if (sendBtn) sendBtn.disabled = false;
+        hint.textContent = 'Нажми и удерживай картинку, чтобы сохранить, — и выложи в сторис.';
+      }, 'image/jpeg', 0.9);
+    } catch (e) { fail(); }
+  };
+  im.onerror = fail;
+  im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(svg));
+  function fail() { hint.textContent = 'Не получилось сделать картинку — сделай скриншот карточки.'; }
+  if (sendBtn) sendBtn.onclick = function () {
+    if (!blob) return;
+    sendBtn.disabled = true; hint.textContent = 'Отправляю…';
+    fetch('/month/send', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob, credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { hint.textContent = j.ok ? 'Отправил в чат с ботом — оттуда легко переслать или выложить в сторис.' : 'Не получилось отправить. Сохрани картинку вручную.'; })
+      .catch(function () { hint.textContent = 'Нет связи. Сохрани картинку вручную.'; })
+      .then(function () { sendBtn.disabled = false; });
+  };
+})();
+</script>`,
   );
 }

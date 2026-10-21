@@ -346,7 +346,7 @@ async function statsScreen(d: BotDeps, user: Linked, period: Period): Promise<Sc
     text: `📊 <b>Статистика · ${periodTitle(d, period)}</b>
 
 ${sum ? `Потрачено <b>${fmt0(sum)} ${sym}</b>\n\n${rows.join('\n\n')}` : 'За этот период трат пока нет.'}`,
-    kb: { inline_keyboard: [periodRow('m:st', period), [appButton(d, '📈 Графики на сайте')], back()] },
+    kb: { inline_keyboard: [periodRow('m:st', period), [appButton(d, '📈 Графики на сайте')], [appButton(d, '📸 Мой месяц картинкой', '/month')], back()] },
   };
 }
 
@@ -638,6 +638,16 @@ interface Pack {
 async function tgForm<T>(api: string, method: string, form: FormData) {
   const res = await fetch(`${api}/${method}`, { method: 'POST', body: form });
   return (await res.json()) as { ok: boolean; result?: T; description?: string };
+}
+
+/** Картинка в чат с ботом (сайт присылает «Мой месяц», чтобы её было легко переслать или выложить в сторис) */
+export async function sendPhoto(api: string, chatId: number, photo: Blob, caption: string) {
+  const form = new FormData();
+  form.set('chat_id', String(chatId));
+  form.set('photo', photo, 'month.jpg');
+  form.set('caption', caption);
+  form.set('parse_mode', 'HTML');
+  return tgForm(api, 'sendPhoto', form);
 }
 
 function packs(d: BotDeps, bot: string, tgUserId: number): Pack[] {
