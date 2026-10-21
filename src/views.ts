@@ -1106,6 +1106,10 @@ ${telegramSettings(d.telegram)}
 
 <div class="list reveal" style="--inset:58px; --d:.05s">
   <a class="row" href="/logout">${sq('out', '#636366')}<span class="grow">Выйти</span></a>
+  <form method="POST" style="margin:0" onsubmit="return confirm('Выйти из аккаунта на всех других устройствах?');">
+    <input type="hidden" name="action" value="logout_all">
+    <button type="submit" class="row">${sq('out', '#8e81ff')}<span class="grow">Выйти на всех устройствах</span></button>
+  </form>
   <form method="POST" action="/settings/delete_account" style="margin:0" onsubmit="return confirm('Точно удалить аккаунт? Это необратимо.');">
     <button type="submit" class="row danger">${sq('trash', '#ff453a')}<span class="grow">Удалить аккаунт</span></button>
   </form>

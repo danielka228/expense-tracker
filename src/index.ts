@@ -3,6 +3,7 @@ import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } 
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
 import { recognizeProduct, takeAiQuota } from './vision';
+import { cleanupLimits, hit } from './limits';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
 import { authorizeUrl, finishLogin, newLoginState, type TgIdentity, type TgLoginConfig, type TgLoginState } from './tglogin';
@@ -59,6 +60,7 @@ interface User {
   password_hash: string;
   currency: string;
   created_at: string | null;
+  session_ver: number;
 }
 
 type App = { Bindings: Env; Variables: { user: User } };
@@ -96,16 +98,55 @@ app.use('*', async (c, next) => {
   await next();
 });
 
+// Защита от подделки запросов с чужих сайтов (вдобавок к SameSite у кук): формы и fetch с другого
+// сайта браузер помечает его Origin — такие запросы не пускаем. Без Origin приходят вебхук Telegram
+// и «Быстрые команды» iPhone — им это не мешает.
+const CROSS_SITE_OK = ['/tg/webhook', '/api/add'];
+app.use('*', async (c, next) => {
+  if (c.req.method !== 'GET' && c.req.method !== 'HEAD') {
+    const origin = c.req.header('Origin');
+    const url = new URL(c.req.url);
+    if (origin && origin !== url.origin && !CROSS_SITE_OK.includes(url.pathname)) return c.text('Forbidden', 403);
+  }
+  await next();
+});
+
+// Защитные заголовки для всех ответов Worker'а. Встраивание во фрейм разрешено только Telegram Web:
+// там открывается сайт как Mini App.
+const SECURITY_HEADERS: Record<string, string> = {
+  'X-Content-Type-Options': 'nosniff',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Strict-Transport-Security': 'max-age=31536000',
+  'Permissions-Policy': 'camera=(self), microphone=(self), geolocation=(self)',
+  'Content-Security-Policy': "frame-ancestors 'self' https://web.telegram.org https://webk.telegram.org https://webz.telegram.org",
+};
+app.use('*', async (c, next) => {
+  await next();
+  try {
+    for (const [k, v] of Object.entries(SECURITY_HEADERS)) if (!c.res.headers.has(k)) c.res.headers.set(k, v);
+  } catch {
+    // ответ с неизменяемыми заголовками — отдаём как есть
+  }
+});
+
 // ---------- сессия и flash-сообщения ----------
 
+// Кука входа — «<id>.<версия сессий>», подписанная SECRET_KEY. Версию увеличивают смена пароля и
+// «Выйти на всех устройствах», после чего все старые куки этого человека перестают приниматься.
+// Старые куки без версии считаются версией 0.
 async function getSessionUserId(c: C): Promise<number | null> {
   const raw = await getSignedCookie(c, c.env.SECRET_KEY, SESSION_COOKIE);
-  const id = raw ? Number(raw) : NaN;
-  return Number.isInteger(id) && id > 0 ? id : null;
+  const [idPart, verPart = '0'] = (raw || '').split('.');
+  const id = Number(idPart);
+  const ver = Number(verPart);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(ver)) return null;
+  const row = await c.env.DB.prepare('SELECT session_ver FROM users WHERE id = ?').bind(id).first<{ session_ver: number }>();
+  return row && row.session_ver === ver ? id : null;
 }
 
 async function login(c: C, userId: number) {
-  await setSignedCookie(c, SESSION_COOKIE, String(userId), c.env.SECRET_KEY, {
+  const row = await c.env.DB.prepare('SELECT session_ver FROM users WHERE id = ?').bind(userId).first<{ session_ver: number }>();
+  await setSignedCookie(c, SESSION_COOKIE, `${userId}.${row?.session_ver ?? 0}`, c.env.SECRET_KEY, {
     path: '/',
     httpOnly: true,
     secure: true,
@@ -113,6 +154,15 @@ async function login(c: C, userId: number) {
     maxAge: SESSION_MAX_AGE,
   });
 }
+
+// Отзывает все входы человека; текущее устройство остаётся в аккаунте
+async function revokeSessions(c: C, userId: number) {
+  await c.env.DB.prepare('UPDATE users SET session_ver = session_ver + 1 WHERE id = ?').bind(userId).run();
+  await login(c, userId);
+}
+
+const clientIp = (c: C) => c.req.header('CF-Connecting-IP') ?? 'unknown';
+const MIN_PASSWORD = 8;
 
 function logout(c: C) {
   deleteCookie(c, SESSION_COOKIE, { path: '/', secure: true });
@@ -246,7 +296,8 @@ app.post('/register', async (c) => {
   const fail = async (msg: string) => c.html(authPage('register', [...popFlashes(c), ['error', msg]], await authOpts(c)));
 
   if (!username || !password) return fail('Заполните все поля');
-  if (password.length < 4) return fail('Пароль должен быть не короче 4 символов');
+  if (password.length < MIN_PASSWORD) return fail(`Пароль должен быть не короче ${MIN_PASSWORD} символов`);
+  if (!(await hit(c.env.DB, `register:${clientIp(c)}`, 5, 3600))) return fail('Слишком много регистраций с этого адреса. Попробуй через час.');
   if (await c.env.DB.prepare('SELECT 1 FROM users WHERE username = ?').bind(username).first()) {
     return fail('Такой пользователь уже существует');
   }
@@ -265,8 +316,13 @@ app.post('/login', async (c) => {
   const form = await c.req.parseBody();
   const username = formStr(form, 'username').trim();
   const password = formStr(form, 'password');
+  // Перебор паролей: не больше 20 попыток за 10 минут с одного адреса и 10 — к одному логину
+  const db = c.env.DB;
+  if (!(await hit(db, `login-ip:${clientIp(c)}`, 20, 600)) || !(await hit(db, `login-user:${username.toLowerCase()}`, 10, 600))) {
+    return c.html(authPage('login', [...popFlashes(c), ['error', 'Слишком много попыток входа. Подожди 10 минут.']], await authOpts(c)));
+  }
 
-  const user = await c.env.DB.prepare('SELECT * FROM users WHERE username = ?').bind(username).first<User>();
+  const user = await db.prepare('SELECT * FROM users WHERE username = ?').bind(username).first<User>();
   if (user && checkPassword(user.password_hash, password)) {
     if (needsRehash(user.password_hash)) {
       await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hashPassword(password), user.id).run();
@@ -453,6 +509,7 @@ app.post('/month/send', async (c) => {
 // ---------- сканер: товар по штрих-коду и магазины рядом ----------
 
 app.get('/api/product/:code{[0-9]{8,14}}', async (c) => {
+  if (!(await hit(c.env.DB, `product:${c.get('user').id}`, 200, 3600))) return c.json({ error: 'limit' }, 429);
   const code = c.req.param('code');
   const [product, prices] = await Promise.all([
     lookupProduct(c.env.DB, code, c.env.AI),
@@ -475,6 +532,7 @@ app.post('/api/product/:code{[0-9]{8,14}}/photo', async (c) => {
 });
 
 app.get('/api/stores', async (c) => {
+  if (!(await hit(c.env.DB, `stores:${c.get('user').id}`, 60, 3600))) return c.json({ stores: [], error: 'limit' }, 429);
   const lat = Number(c.req.query('lat'));
   const lon = Number(c.req.query('lon'));
   if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
@@ -986,8 +1044,17 @@ app.post('/tg/webhook', async (c) => {
 });
 
 app.get('/avatar/:id{[0-9]+}', async (c) => {
+  // Фото видят сам человек и те, с кем есть дружба или заявка в друзья — перебором номеров чужие фото не достать
+  const id = Number(c.req.param('id'));
+  const me = c.get('user').id;
+  const related =
+    id === me ||
+    (await c.env.DB.prepare('SELECT 1 FROM friendships WHERE (from_user_id = ?1 AND to_user_id = ?2) OR (from_user_id = ?2 AND to_user_id = ?1) LIMIT 1')
+      .bind(me, id)
+      .first());
+  if (!related) return c.notFound();
   const a = await c.env.DB.prepare('SELECT data FROM avatars WHERE user_id = ?')
-    .bind(Number(c.req.param('id')))
+    .bind(id)
     .first<{ data: number[] | ArrayBuffer }>();
   if (!a) return c.notFound();
   return c.body(new Uint8Array(a.data as ArrayBuffer), 200, {
@@ -1140,12 +1207,16 @@ app.post('/settings', async (c) => {
       return c.redirect('/settings');
     }
     const newPassword = formStr(form, 'new_password');
-    if (newPassword.length < 4) {
-      flash(c, 'Новый пароль должен быть не короче 4 символов', 'error');
+    if (newPassword.length < MIN_PASSWORD) {
+      flash(c, `Новый пароль должен быть не короче ${MIN_PASSWORD} символов`, 'error');
       return c.redirect('/settings');
     }
     await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hashPassword(newPassword), user.id).run();
-    flash(c, user.password_hash ? 'Пароль изменён' : 'Пароль задан — теперь можно входить и по логину', 'success');
+    await revokeSessions(c, user.id); // кто знал старый пароль, вылетает со всех устройств
+    flash(c, user.password_hash ? 'Пароль изменён, другие устройства вышли из аккаунта' : 'Пароль задан — теперь можно входить и по логину', 'success');
+  } else if (action === 'logout_all') {
+    await revokeSessions(c, user.id);
+    flash(c, 'Готово: вышли на всех устройствах, кроме этого', 'success');
   } else if (action === 'change_currency') {
     const cur = formStr(form, 'currency');
     if (cur in CURRENCIES) {
@@ -1183,6 +1254,7 @@ const ADMIN_CRON = '0 6 * * *'; // 9:00 по Москве — утренняя �
 export default {
   fetch: app.fetch,
   async scheduled(event, env, ctx) {
+    if (event.cron === EVENING_CRON) ctx.waitUntil(cleanupLimits(env.DB));
     const token = env.TELEGRAM_BOT_TOKEN;
     if (!token) return;
     const d = botDeps(env, token, '');

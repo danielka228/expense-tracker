@@ -7,6 +7,7 @@
 import { CATEGORY_RULES, parseExpense, type ParsedExpense } from './parse';
 import { STICKERS, animStickerFile, stickerFile } from './stickers';
 import { eveningText, plural, quip, weeklyText } from './trek';
+import { aiDayAllowed, hit } from './limits';
 import { takeAiQuota, type Guess } from './vision';
 import { fmt0, MONTHS_NOM, MONTHS_SHORT, type ExpenseRow } from './views';
 
@@ -550,6 +551,10 @@ async function link(d: BotDeps, msg: TgMessage, code: string) {
 async function addFromVoice(d: BotDeps, user: Linked, chatId: number, voice: { file_id: string; duration: number }) {
   if (!d.transcribe) return send(d, chatId, 'Голосовые пока не понимаю. Напиши текстом: <code>кофе 250</code>');
   if (voice.duration > 60) return send(d, chatId, 'Голосовое длиннее минуты. Скажи покороче, например: «кофе 250».');
+  // Распознавание тратит Workers AI: не больше 100 голосовых в сутки на человека и общий потолок на сайт
+  if (!(await hit(d.db, `voice:${user.id}`, 100, 86400)) || !(await aiDayAllowed(d.db))) {
+    return send(d, chatId, 'На сегодня голосовые закончились. Напиши текстом: <code>кофе 250</code>');
+  }
   await tg(d.api, 'sendChatAction', { chat_id: chatId, action: 'typing' });
   let text = '';
   try {

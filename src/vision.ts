@@ -4,6 +4,8 @@
 // Модель только подсказывает: что в итоге сохранится, решает человек (название можно поправить перед «Добавить трату»).
 // Названия в открытых базах пишут сами пользователи, поэтому всё, что вернула модель, проверяем и обрезаем.
 
+import { aiDayAllowed } from './limits';
+
 const MODEL = '@cf/google/gemma-3-12b-it';
 
 export const PRODUCT_CATEGORIES = ['Еда', 'Транспорт', 'Жильё', 'Развлечения', 'Здоровье', 'Одежда', 'Табак', 'Прочее'];
@@ -112,6 +114,7 @@ export async function tidyProduct(
 // Возвращает false, когда лимит исчерпан.
 const PHOTO_LIMIT_PER_DAY = 30;
 export async function takeAiQuota(db: D1Database, userId: number): Promise<boolean> {
+  if (!(await aiDayAllowed(db))) return false; // общий потолок на весь сайт
   const row = await db
     .prepare(
       `INSERT INTO ai_usage (user_id, day, n) VALUES (?, date('now'), 1)
