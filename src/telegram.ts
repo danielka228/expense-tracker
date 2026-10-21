@@ -478,6 +478,9 @@ export async function handleUpdate(d: BotDeps, u: TgUpdate) {
 
   const start = text.match(/^\/start(?:@\w+)?\s+([A-Za-z0-9_-]{8,64})$/);
   if (start) return link(d, msg, start[1]);
+  // Метка источника из ссылки t.me/<бот>?start=ig (короче 8 символов, чтобы не спутать с кодом привязки)
+  const source = text.match(/^\/start(?:@\w+)?\s+([A-Za-z0-9_]{1,7})$/)?.[1];
+  if (source) await d.db.prepare('INSERT OR IGNORE INTO tg_sources (chat_id, source) VALUES (?, ?)').bind(chatId, source.toLowerCase()).run();
   // Свой Telegram ID может узнать любой — он нужен владельцу, чтобы включить админ-панель
   if (/^\/myid(@\w+)?$/.test(text)) return send(d, chatId, `Твой Telegram ID: <code>${msg.from?.id ?? chatId}</code>`);
   // Админ-панель — только владельцу; для остальных команды /admin как будто нет
@@ -488,8 +491,13 @@ export async function handleUpdate(d: BotDeps, u: TgUpdate) {
     return send(
       d,
       chatId,
-      '👋 Привет! Я записываю траты в <b>СпендТрекер</b>.\n\nЧтобы начать, подключи меня к своему аккаунту: на сайте открой <b>Профиль</b> и нажми <b>«Подключить Telegram»</b>.',
-      { inline_keyboard: [[{ text: 'Открыть профиль', url: `${d.siteUrl}/profile` }]] },
+      '👋 Привет! Я Трэк, записываю траты в <b>СпендТрекер</b>.\n\nНажми <b>«Начать»</b> и войди через Telegram: аккаунт создастся за пару секунд. Потом просто пиши мне: <code>кофе 250</code>.',
+      {
+        inline_keyboard: [
+          [{ text: '🚀 Начать', url: `${d.siteUrl}/auth/telegram` }],
+          [{ text: 'У меня уже есть аккаунт', url: `${d.siteUrl}/profile` }],
+        ],
+      },
     );
   }
 
@@ -1053,6 +1061,13 @@ async function adminScreen(d: BotDeps, view: 'main' | 'new'): Promise<Screen> {
     .bind(d.today, shiftDay(d.today, -6))
     .first<Record<string, number>>();
   const v = (k: string) => fmt0(s?.[k] ?? 0);
+  const { results: sources } = await d.db
+    .prepare(
+      `SELECT s.source, COUNT(*) AS n, SUM(t.user_id IS NOT NULL) AS linked FROM tg_sources s
+       LEFT JOIN telegram_links t ON t.chat_id = s.chat_id GROUP BY s.source ORDER BY n DESC LIMIT 8`,
+    )
+    .all<{ source: string; n: number; linked: number }>();
+  const from = sources.map((r) => `${esc(r.source)} — <b>${fmt0(r.n)}</b>, с аккаунтом ${fmt0(r.linked)}`).join('\n');
   return {
     text: `🛠 <b>Админ-панель СпендТрекера</b>
 
@@ -1063,6 +1078,9 @@ async function adminScreen(d: BotDeps, view: 'main' | 'new'): Promise<Screen> {
 🧾 Трат всего — <b>${v('expenses')}</b>, сегодня — <b>${v('expenses_day')}</b>
 🤖 Подключили бота — <b>${v('tg')}</b>
 👫 Пар друзей — <b>${v('friends')}</b>
+
+📣 <b>Откуда пришли в бота</b> (метка из ссылки ?start=)
+${from || 'Пока никто не пришёл по ссылке с меткой.'}
 
 <i>Видно только тебе</i>`,
     kb,
