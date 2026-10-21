@@ -13,6 +13,7 @@ import {
   handleUpdate,
   sendAdminReport,
   sendEveningDigests,
+  sendPhoto,
   sendWeeklyDigests,
   verifyInitData,
   webhookSecret,
@@ -27,6 +28,8 @@ import {
   tgAppPage,
   tgNewAccountPage,
   friendProfilePage,
+  monthPage,
+  MONTHS_NOM,
   profilePage,
   settingsPage,
   type Currency,
@@ -223,7 +226,7 @@ const loginRequired = async (c: C, next: () => Promise<void>) => {
   await next();
 };
 
-for (const p of ['/dashboard', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/api/product/*', '/api/stores']) {
+for (const p of ['/dashboard', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/api/product/*', '/api/stores']) {
   app.use(p, loginRequired);
 }
 
@@ -377,6 +380,74 @@ app.post('/dashboard', async (c) => {
   ]);
   flash(c, 'Трата добавлена', 'success');
   return c.redirect('/dashboard');
+});
+
+// ---------- «Мой месяц»: картинка для сторис ----------
+
+app.get('/month', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const since = periodStart('month');
+  const today = isoDate(todayUtc());
+  const [sum, cats, top, prev, link] = await db.batch([
+    db.prepare('SELECT COUNT(*) AS n, COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND expense_date >= ?').bind(user.id, since),
+    db
+      .prepare('SELECT category, SUM(amount) AS total FROM expenses WHERE user_id = ? AND expense_date >= ? GROUP BY category ORDER BY total DESC LIMIT 3')
+      .bind(user.id, since),
+    db
+      .prepare(
+        `SELECT note, COUNT(*) AS n FROM expenses WHERE user_id = ? AND expense_date >= ? AND note IS NOT NULL AND note <> ''
+         GROUP BY note ORDER BY n DESC, MAX(id) DESC LIMIT 1`,
+      )
+      .bind(user.id, since),
+    // ponytail: «те же дни» через date(…, '-1 month'); в конце длинного месяца SQLite съезжает на день-два вперёд
+    db
+      .prepare("SELECT COALESCE(SUM(amount), 0) AS total FROM expenses WHERE user_id = ? AND expense_date >= date(?, '-1 month') AND expense_date <= date(?, '-1 month')")
+      .bind(user.id, since, today),
+    db.prepare('SELECT chat_id FROM telegram_links WHERE user_id = ?').bind(user.id),
+  ]);
+  const s = sum.results[0] as { n: number; total: number };
+  const t = top.results[0] as { note: string; n: number } | undefined;
+  const token = c.env.TELEGRAM_BOT_TOKEN;
+  return c.html(
+    monthPage({
+      flashes: popFlashes(c),
+      canSend: !!token && link.results.length > 0,
+      card: s.n
+        ? {
+            month: Number(since.slice(5, 7)) - 1,
+            username: user.username,
+            sym: symbol(user),
+            total: s.total,
+            count: s.n,
+            cats: cats.results as { category: string; total: number }[],
+            top: t && t.n > 1 ? t : null,
+            prev: (prev.results[0] as { total: number }).total,
+            bot: token ? await botUsername(botApi(token, c.env.TELEGRAM_API)) : null,
+          }
+        : null,
+    }),
+  );
+});
+
+// Готовая картинка из браузера → в чат с ботом: оттуда её проще всего переслать или выложить в сторис
+app.post('/month/send', async (c) => {
+  const token = c.env.TELEGRAM_BOT_TOKEN;
+  const link = await c.env.DB.prepare('SELECT chat_id FROM telegram_links WHERE user_id = ?').bind(c.get('user').id).first<{ chat_id: number }>();
+  if (!token || !link) return c.json({ ok: false, error: 'no_bot' }, 400);
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (!isJpeg || bytes.length > MAX_PHOTO_BYTES) return c.json({ ok: false, error: 'bad_image' }, 400);
+  const api = botApi(token, c.env.TELEGRAM_API);
+  const bot = await botUsername(api);
+  const month = MONTHS_NOM[Number(periodStart('month').slice(5, 7)) - 1].toLowerCase();
+  const r = await sendPhoto(
+    api,
+    link.chat_id,
+    new Blob([bytes], { type: 'image/jpeg' }),
+    `📊 <b>Мой ${month}</b> в СпендТрекере\n\nСохрани картинку и выложи в сторис 👀${bot ? `\nСчитаю траты тут: @${bot}` : ''}`,
+  );
+  return c.json({ ok: r.ok });
 });
 
 // ---------- сканер: товар по штрих-коду и магазины рядом ----------
