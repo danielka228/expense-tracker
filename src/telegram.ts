@@ -229,7 +229,8 @@ const appButton = (d: BotDeps, text: string, path = '/dashboard'): Button => ({
 // Кнопки под тратой. page — трата открыта из списка «Мои траты», тогда есть возврат к нему.
 const pg = (page?: number) => (page === undefined ? '' : `:p${page}`);
 
-function expenseKeyboard(id: number, page?: number): Keyboard {
+// promo — ссылка «Тоже хочу» под сообщением в чужом чате (см. promoUrl)
+function expenseKeyboard(id: number, page?: number, promo?: string): Keyboard {
   const rows: Button[][] = [
     [
       { text: '🏷 Категория', callback_data: `c:${id}${pg(page)}` },
@@ -237,7 +238,15 @@ function expenseKeyboard(id: number, page?: number): Keyboard {
     ],
   ];
   if (page !== undefined) rows.push(back(`m:ls:${page}`, '‹ К списку'));
+  if (promo) rows.push([{ text: '📲 Тоже хочу считать траты', url: promo }]);
   return { inline_keyboard: rows };
+}
+
+// Сообщения инлайн- и гостевого режима видят все в чужом чате: ссылка на бота с меткой chat — бесплатная реклама,
+// а метка в админке показывает, сколько людей пришло именно так
+async function promoUrl(d: BotDeps) {
+  const bot = await botUsername(d.api);
+  return bot ? `https://t.me/${bot}?start=chat` : undefined;
 }
 
 function categoryKeyboard(d: BotDeps, id: number, page?: number): Keyboard {
@@ -812,13 +821,16 @@ async function onGuestMessage(d: BotDeps, msg: TgMessage) {
     });
   const caller = msg.guest_bot_caller_user ?? msg.from;
   const user = caller ? await linkedUser(d, caller.id) : null;
-  if (!user) return reply('Чтобы записывать траты, подключи бота: на сайте <b>Профиль → «Подключить Telegram»</b>.');
+  const promo = await promoUrl(d);
+  if (!user) {
+    return reply('Чтобы записывать траты, начни со мной в личке — это пара секунд.', promo ? { inline_keyboard: [[{ text: '🚀 Начать', url: promo }]] } : undefined);
+  }
   // Убираем упоминания вида @бот, остальное — трата
   const text = (msg.text ?? '').replace(/@\w+/g, ' ').trim();
   const p = parseExpense(text, d.today, CATEGORY_RULES);
   if (!validAmount(p)) return reply('Не нашёл сумму. Напиши, например: <code>@бот сигареты 250</code>');
   const e = await insertExpense(d, user, p);
-  return reply(card(d, e, symOf(d, user)), expenseKeyboard(e.id));
+  return reply(card(d, e, symOf(d, user)), expenseKeyboard(e.id, undefined, promo));
 }
 
 async function onChosenInline(d: BotDeps, r: TgChosenInline) {
@@ -832,7 +844,7 @@ async function onChosenInline(d: BotDeps, r: TgChosenInline) {
       inline_message_id: r.inline_message_id,
       text: card(d, e, symOf(d, user)),
       parse_mode: 'HTML',
-      reply_markup: expenseKeyboard(e.id),
+      reply_markup: expenseKeyboard(e.id, undefined, await promoUrl(d)),
     });
   }
 }
@@ -909,9 +921,10 @@ async function onCallback(d: BotDeps, q: TgCallback) {
     .first<ExpenseRow>();
   if (!e) return answer('Этой записи нет — её удалили или она не твоя');
   const sym = symOf(d, user);
+  const promo = msg ? undefined : await promoUrl(d); // нет msg — кнопку нажали под сообщением в чужом чате
 
   if (m[1] === 'e') {
-    await show({ text: card(d, e, sym), kb: expenseKeyboard(id, page) });
+    await show({ text: card(d, e, sym), kb: expenseKeyboard(id, page, promo) });
     return answer();
   }
   if (m[1] === 'c') {
@@ -919,21 +932,21 @@ async function onCallback(d: BotDeps, q: TgCallback) {
     return answer();
   }
   if (m[1] === 'b') {
-    await tg(d.api, 'editMessageReplyMarkup', { ...edit, reply_markup: expenseKeyboard(id, page) });
+    await tg(d.api, 'editMessageReplyMarkup', { ...edit, reply_markup: expenseKeyboard(id, page, promo) });
     return answer();
   }
   if (m[1] === 's') {
     const cat = d.categories[Number(m[3])];
     if (!cat) return answer();
     await d.db.prepare('UPDATE expenses SET category = ? WHERE id = ? AND user_id = ?').bind(cat, id, user.id).run();
-    await show({ text: card(d, { ...e, category: cat }, sym), kb: expenseKeyboard(id, page) });
+    await show({ text: card(d, { ...e, category: cat }, sym), kb: expenseKeyboard(id, page, promo) });
     return answer(`${emoji(cat)} ${cat}`);
   }
   // d — удалить
   await d.db.prepare('DELETE FROM expenses WHERE id = ? AND user_id = ?').bind(id, user.id).run();
   await show({
     text: `🗑 <s>${fmt0(e.amount)} ${esc(sym)}${e.note ? ` · ${esc(e.note)}` : ''}</s> — удалено`,
-    kb: { inline_keyboard: page === undefined ? [] : [back(`m:ls:${page}`, '‹ К списку')] },
+    kb: { inline_keyboard: page !== undefined ? [back(`m:ls:${page}`, '‹ К списку')] : promo ? [[{ text: '📲 Тоже хочу считать траты', url: promo }]] : [] },
   });
   return answer('Удалено');
 }
