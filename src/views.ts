@@ -275,8 +275,55 @@ ${demo
   ? html`<form method="POST" action="/demo" class="reveal" style="--d:.2s; margin-top:10px"><button type="submit" class="btn-tinted">Войти в демо-аккаунт</button></form>`
   : ''}
 ${isLogin
-  ? html`<div class="footer-link reveal" style="--d:.25s">Нет аккаунта? <a href="/register">Зарегистрироваться</a></div>`
+  ? html`<div class="footer-link reveal" style="--d:.22s"><a href="/forgot">Забыли пароль?</a></div>
+<div class="footer-link reveal" style="--d:.25s">Нет аккаунта? <a href="/register">Зарегистрироваться</a></div>`
   : html`<div class="footer-link reveal" style="--d:.25s">Уже есть аккаунт? <a href="/login">Войти</a></div>`}`,
+  );
+}
+
+// «Забыли пароль?»: логин → бот присылает ссылку в привязанный Telegram (sent — ответ после отправки формы)
+export function forgotPage(flashes: Flash[], sent = false) {
+  return layout(
+    { title: 'Забыли пароль?', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS },
+    html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(sent ? 'wink' : 'worried', 104))}</div>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${sent ? 'Проверь Telegram' : 'Забыли пароль?'}</h1>
+${sent
+  ? html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">
+  Если к аккаунту привязан Telegram, бот уже прислал туда ссылку для нового пароля. Она действует 30 минут.
+</p>
+<p class="reveal" style="--d:.15s; text-align:center; color:var(--text-2); margin:0 0 26px">
+  Сообщения нет? Значит, Telegram к аккаунту не привязан — тогда восстановить вход нельзя: другого способа проверить, что аккаунт твой, у сайта нет.
+</p>`
+  : html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">
+  Напиши логин — бот пришлёт в Telegram ссылку, по которой можно задать новый пароль.
+</p>
+<form method="POST" class="reveal" style="--d:.15s">
+  <div class="form-rows">
+    <label class="form-row" style="margin:0"><span>Логин</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
+  </div>
+  <button type="submit">Прислать ссылку</button>
+</form>`}
+<div class="footer-link reveal" style="--d:.25s"><a href="/login">Вернуться ко входу</a></div>`,
+  );
+}
+
+// Страница из ссылки бота: новый пароль
+export function resetPage(flashes: Flash[], username: string) {
+  return layout(
+    { title: 'Новый пароль', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS },
+    html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104))}</div>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">Новый пароль</h1>
+<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">для аккаунта <b>${username}</b></p>
+<form method="POST" class="reveal" style="--d:.15s">
+  <input type="text" name="username" value="${username}" autocomplete="username" hidden>
+  <div class="form-rows">
+    <label class="form-row" style="margin:0"><span>Пароль</span><input type="password" name="password" required minlength="8" autocomplete="new-password" style="text-align:left"></label>
+  </div>
+  <button type="submit">Сохранить и войти</button>
+</form>
+<div class="footer-link reveal" style="--d:.25s">После смены пароля все остальные устройства выйдут из аккаунта.</div>`,
   );
 }
 
