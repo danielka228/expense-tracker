@@ -16,6 +16,7 @@ import {
   sendEveningDigests,
   sendPhoto,
   sendWeeklyDigests,
+  tg,
   verifyInitData,
   webhookSecret,
   type BotDeps,
@@ -23,7 +24,9 @@ import {
 } from './telegram';
 import {
   authPage,
+  forgotPage,
   landingPage,
+  resetPage,
   dashboardPage,
   friendsPage,
   tgAppPage,
@@ -337,6 +340,77 @@ app.post('/login', async (c) => {
 app.get('/logout', (c) => {
   logout(c);
   return c.redirect('/login');
+});
+
+// ---------- «Забыли пароль?»: ссылка приходит в привязанный Telegram ----------
+// Почты у аккаунтов нет, поэтому Telegram — единственный способ убедиться, что аккаунт твой.
+
+const RESET_TTL = 30 * 60;
+const sha256 = async (s: string) => Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))).toString('hex');
+
+async function resetUser(db: D1Database, token: string) {
+  return db
+    .prepare('SELECT u.id, u.username FROM password_resets r JOIN users u ON u.id = r.user_id WHERE r.token_hash = ? AND r.exp > ?')
+    .bind(await sha256(token), Math.floor(Date.now() / 1000))
+    .first<{ id: number; username: string }>();
+}
+
+app.get('/forgot', (c) => c.html(forgotPage(popFlashes(c))));
+app.post('/forgot', async (c) => {
+  const db = c.env.DB;
+  const username = formStr(await c.req.parseBody(), 'username').trim();
+  if (!(await hit(db, `forgot-ip:${clientIp(c)}`, 5, 3600)) || !(await hit(db, `forgot-user:${username.toLowerCase()}`, 3, 3600))) {
+    return c.html(forgotPage([['error', 'Слишком много запросов. Попробуй через час.']]));
+  }
+  const row = await db
+    .prepare('SELECT u.id, u.username, l.chat_id FROM users u JOIN telegram_links l ON l.user_id = u.id WHERE u.username = ?')
+    .bind(username)
+    .first<{ id: number; username: string; chat_id: number }>();
+  const token = c.env.TELEGRAM_BOT_TOKEN;
+  if (row && token) {
+    const secret = randomBytes(32).toString('base64url');
+    const now = Math.floor(Date.now() / 1000);
+    await db.batch([
+      db.prepare('DELETE FROM password_resets WHERE user_id = ? OR exp < ?').bind(row.id, now),
+      db.prepare('INSERT INTO password_resets (token_hash, user_id, exp) VALUES (?, ?, ?)').bind(await sha256(secret), row.id, now + RESET_TTL),
+    ]);
+    const name = row.username.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    await tg(botApi(token, c.env.TELEGRAM_API), 'sendMessage', {
+      chat_id: row.chat_id,
+      parse_mode: 'HTML',
+      text: `🔑 <b>Сброс пароля</b>\n\nКто-то попросил новый пароль для аккаунта <b>${name}</b> на сайте. Ссылка действует 30 минут.\n\nЕсли это был не ты — ничего не делай, пароль останется прежним.`,
+      reply_markup: { inline_keyboard: [[{ text: 'Задать новый пароль', url: `${canonicalOrigin(c) ?? new URL(c.req.url).origin}/reset/${secret}` }]] },
+    }).catch((e) => console.error('reset message failed', e));
+  }
+  // Ответ одинаковый для любого логина: по нему нельзя узнать, есть ли такой аккаунт
+  return c.html(forgotPage([], true));
+});
+
+app.get('/reset/:token', async (c) => {
+  const user = await resetUser(c.env.DB, c.req.param('token'));
+  if (!user) {
+    flash(c, 'Ссылка устарела или уже использована. Запроси новую.', 'error');
+    return c.redirect('/forgot');
+  }
+  return c.html(resetPage(popFlashes(c), user.username));
+});
+app.post('/reset/:token', async (c) => {
+  const db = c.env.DB;
+  const user = await resetUser(db, c.req.param('token'));
+  if (!user) {
+    flash(c, 'Ссылка устарела или уже использована. Запроси новую.', 'error');
+    return c.redirect('/forgot');
+  }
+  const password = formStr(await c.req.parseBody(), 'password');
+  if (password.length < MIN_PASSWORD) return c.html(resetPage([['error', `Пароль должен быть не короче ${MIN_PASSWORD} символов`]], user.username));
+  // Новый пароль, ссылка сгорает, все старые входы отзываются
+  await db.batch([
+    db.prepare('UPDATE users SET password_hash = ?, session_ver = session_ver + 1 WHERE id = ?').bind(hashPassword(password), user.id),
+    db.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(user.id),
+  ]);
+  await login(c, user.id);
+  flash(c, 'Пароль изменён — ты в аккаунте', 'success');
+  return c.redirect('/dashboard');
 });
 
 // Сводка трат пользователя: итоги за день/неделю/месяц, 7 дней, категории месяца и последние записи.
