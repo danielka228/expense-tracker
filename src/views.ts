@@ -4,6 +4,7 @@ import { COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, VOICE_JS } from './c
 import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS } from './styles';
 import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
 import { plural } from './trek';
+import { tr, categoryLabel, type Lang } from './i18n';
 
 type H = HtmlEscapedString | Promise<HtmlEscapedString>;
 export type Flash = [category: string, message: string];
@@ -30,12 +31,6 @@ const TAB_ICONS = {
   settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
 };
 type Tab = keyof typeof TAB_ICONS;
-const TAB_LABELS: Record<Tab, string> = {
-  dashboard: 'Траты',
-  friends: 'Друзья',
-  profile: 'Профиль',
-  settings: 'Настройки',
-};
 
 const WALLET_SVG = '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2z"/><circle cx="16.5" cy="14.5" r="1" fill="currentColor"/></svg>';
 const CHEV = raw('<svg class="chev" viewBox="0 0 8 13"><path d="M1.5 1.5 6.5 6.5 1.5 11.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>');
@@ -44,6 +39,7 @@ interface LayoutOpts {
   title: string;
   flashes: Flash[];
   loggedIn: boolean;
+  lang?: Lang;
   activeTab?: Tab;
   center?: boolean;
   bare?: boolean; // без общей обёртки (страница-презентация)
@@ -52,36 +48,35 @@ interface LayoutOpts {
   share?: string; // адрес сайта (https://…): публичной странице добавляем превью для чатов и соцсетей
 }
 
-const SHARE_TITLE = 'СпендТрекер — траты под контролем';
-const SHARE_TEXT = 'Записывай траты за пару касаний: на сайте, в Telegram-боте или голосом. Сканер штрихкодов, друзья и сводки от Трэка.';
-
 export function layout(o: LayoutOpts, content: H) {
+  const S = tr(o.lang ?? 'ru');
+  const tabLabels: Record<Tab, string> = S.nav;
   const tabs = (Object.keys(TAB_ICONS) as Tab[]).map(
     (t) => html`
     <a class="tab ${o.activeTab === t ? 'active' : ''}" href="/${t}">
-      <span class="icon">${raw(TAB_ICONS[t])}</span><span>${TAB_LABELS[t]}</span>
+      <span class="icon">${raw(TAB_ICONS[t])}</span><span>${tabLabels[t]}</span>
     </a>`,
   );
   return html`<!DOCTYPE html>
-<html lang="ru" class="no-js">
+<html lang="${S.htmlLang}" class="no-js">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="СпендТрекер">
+<meta name="apple-mobile-web-app-title" content="${S.brand}">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <title>${o.title}</title>
 ${o.share
-  ? html`<meta name="description" content="${SHARE_TEXT}">
+  ? html`<meta name="description" content="${S.shareText}">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="СпендТрекер">
-<meta property="og:locale" content="ru_RU">
-<meta property="og:title" content="${SHARE_TITLE}">
-<meta property="og:description" content="${SHARE_TEXT}">
+<meta property="og:site_name" content="${S.brand}">
+<meta property="og:locale" content="${S.ogLocale}">
+<meta property="og:title" content="${S.shareTitle}">
+<meta property="og:description" content="${S.shareText}">
 <meta property="og:url" content="${o.share}/">
 <meta property="og:image" content="${o.share}/og.png">
 <meta property="og:image:width" content="1200">
@@ -102,6 +97,13 @@ ${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
 </html>`;
 }
 
+// Переключатель языка RU/EN: ссылки на /lang/<код>?next=<откуда>, активный подсвечен
+function langToggle(lang: Lang, next: string) {
+  const link = (code: Lang, label: string) =>
+    html`<a class="lang-opt ${lang === code ? 'on' : ''}" href="/lang/${code}?next=${encodeURIComponent(next)}">${label}</a>`;
+  return html`<span class="lang-switch">${link('ru', 'RU')}${link('en', 'EN')}</span>`;
+}
+
 // Панель сверху + большой заголовок, который при прокрутке «уезжает» в панель (как в iOS)
 function header(title: string, right?: H | string, sub?: H | string) {
   return html`<header class="nav"><div class="nav-title">${title}</div>${right ? html`<div class="nav-side right">${right}</div>` : ''}</header>
@@ -116,8 +118,11 @@ function scrub(text: string, accentFrom?: number) {
   return text.split(' ').map((w, i) => html`<span class="${accentFrom !== undefined && i >= accentFrom ? 'g' : ''}">${w} </span>`);
 }
 
-export function landingPage(d: { demo: boolean; origin: string }) {
+export function landingPage(d: { demo: boolean; origin: string; lang: Lang }) {
+  const S = tr(d.lang);
+  const L = S.landing;
   const today = new Date().toISOString().slice(0, 10);
+  const monthName = S.months.in[Number(today.slice(5, 7)) - 1];
   const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(today) - (6 - i) * 86400000).toISOString().slice(0, 10));
   const sampleWeek = days.map((date, i) => ({ date, total: [1500, 640, 2300, 890, 4500, 1200, 350][i] }));
   const sampleCats = [
@@ -128,94 +133,91 @@ export function landingPage(d: { demo: boolean; origin: string }) {
     { category: 'Развлечения', total: 2800 },
   ];
   const cta = d.demo
-    ? html`<form method="POST" action="/demo" style="margin:0"><button type="submit" class="btn">Открыть демо</button></form>
-       <a class="btn btn-plain" href="/register">Создать аккаунт ›</a>`
-    : html`<a class="btn" href="/register">Начать бесплатно</a><a class="btn btn-plain" href="/login">Войти ›</a>`;
+    ? html`<form method="POST" action="/demo" style="margin:0"><button type="submit" class="btn">${L.ctaDemo}</button></form>
+       <a class="btn btn-plain" href="/register">${L.ctaCreate}</a>`
+    : html`<a class="btn" href="/register">${L.ctaStart}</a><a class="btn btn-plain" href="/login">${L.ctaLoginArrow}</a>`;
   const barcode = [3, 1, 2, 1, 1, 3, 1, 2, 2, 1, 1, 2, 3, 1, 1, 2, 1, 3, 2, 1, 1, 2, 1, 1, 3, 1, 2, 1];
+  const sampleRows = L.sampleRows.map((r, i) => [...r, [89, 1200, 4500][i], ['Еда', 'Транспорт', 'Одежда'][i]] as const);
 
   return layout(
-    { title: 'СпендТрекер — траты под контролем', flashes: [], loggedIn: false, bare: true, extraCss: DASHBOARD_CSS + FRIENDS_CSS + LANDING_CSS, scripts: LANDING_JS, share: d.origin },
+    { title: S.shareTitle, flashes: [], loggedIn: false, lang: d.lang, bare: true, extraCss: DASHBOARD_CSS + FRIENDS_CSS + LANDING_CSS, scripts: LANDING_JS, share: d.origin },
     html`<header class="l-nav">
-  <a class="l-logo" href="/"><i>${raw(WALLET_SVG)}</i>СпендТрекер</a>
-  <a class="pill" href="/login">Войти</a>
+  <a class="l-logo" href="/"><i>${raw(WALLET_SVG)}</i>${S.brand}</a>
+  <span style="display:flex; gap:10px; align-items:center">${langToggle(d.lang, '/')}<a class="pill" href="/login">${L.login}</a></span>
 </header>
 <main class="l-wrap">
   <section class="l-hero">
     <div class="reveal" style="margin-bottom:14px">${raw(mascot('wave', 112))}</div>
-    <div class="eyebrow reveal">Новый СпендТрекер</div>
-    <h1 class="l-h1 reveal" style="--d:.08s">Деньги.<br><span class="g">Под контролем.</span></h1>
-    <p class="l-lead reveal" style="--d:.16s">Записывай траты голосом, сканируй покупки и смотри, куда уходят деньги. Красиво и без лишних шагов.</p>
+    <div class="eyebrow reveal">${L.eyebrow}</div>
+    <h1 class="l-h1 reveal" style="--d:.08s">${L.h1a}<br><span class="g">${L.h1b}</span></h1>
+    <p class="l-lead reveal" style="--d:.16s">${L.lead}</p>
     <div class="l-ctas reveal" style="--d:.24s">${cta}</div>
     <div class="device reveal" style="--d:.32s">
       <div class="card hero" style="margin-bottom:10px">
-        <div class="label">Потрачено в октябре</div>
+        <div class="label">${L.spentInMonth.replace('%s', monthName)}</div>
         <div class="big">${countUp(36400)}<span class="cur">₽</span></div>
         <div class="chips">
-          <div class="chip"><div class="k">Сегодня</div><div class="v">439 ₽</div></div>
-          <div class="chip"><div class="k">Эта неделя</div><div class="v">11 380 ₽</div></div>
+          <div class="chip"><div class="k">${L.today}</div><div class="v">439 ₽</div></div>
+          <div class="chip"><div class="k">${L.thisWeek}</div><div class="v">11 380 ₽</div></div>
         </div>
       </div>
-      ${[
-        ['Coca-Cola 0,5 л', 'Еда · Пятёрочка', 89, 'Еда'],
-        ['Такси до работы', 'Транспорт', 1200, 'Транспорт'],
-        ['Кроссовки', 'Одежда', 4500, 'Одежда'],
-      ].map(
+      ${sampleRows.map(
         ([n, c, a, cat]) => html`<div class="expense-row"><div class="main">${ico(String(cat))}<div style="min-width:0"><div class="info">${n}</div><div class="cat">${c}</div></div></div><div class="amt">${fmt0(Number(a))} ₽</div></div>`,
       )}
     </div>
   </section>
 
-  <section class="l-sec"><p class="scrub">${scrub('Каждая трата — в два касания. Скажи её, отсканируй или впиши. СпендТрекер сам поймёт сумму, категорию и даже магазин.', 17)}</p></section>
+  <section class="l-sec"><p class="scrub">${scrub(L.scrub1, d.lang === 'en' ? 15 : 17)}</p></section>
 
   <section class="l-sec">
-    <h2 class="l-h2 reveal">Скажи — <span class="g">и готово.</span></h2>
-    <p class="l-p reveal">«Вчера такси 1 200» — и сумма, категория и дата заполнятся сами. Эквалайзер слышит твой голос.</p>
+    <h2 class="l-h2 reveal">${L.voiceH2a} <span class="g">${L.voiceH2b}</span></h2>
+    <p class="l-p reveal">${L.voiceP}</p>
     <div class="showcase two">
       <div class="tile reveal">
         <div class="mini-eq">${Array.from({ length: 23 }, (_, k) => html`<i style="--k:${k}; --a:${Math.round(30 + 60 * Math.sin((k / 22) * Math.PI))}"></i>`)}</div>
-        <div style="text-align:right"><span class="bubble">кофе с другом 350</span></div>
-        <h4>Голосом</h4><p>Понимает «тысячи», «полторы», «вчера» и сам подбирает категорию.</p>
+        <div style="text-align:right"><span class="bubble">${L.voiceBubble}</span></div>
+        <h4>${L.byVoice}</h4><p>${L.byVoiceP}</p>
       </div>
       <div class="tile reveal" style="--d:.1s">
-        <div class="expense-row" style="margin:6px 0 18px"><div class="main">${ico('Еда')}<div style="min-width:0"><div class="info">Кофе с другом</div><div class="cat">Еда</div></div></div><div class="amt">350 ₽</div></div>
-        <h4>Сразу в списке</h4><p>Без форм и лишних касаний. Проверил — нажал «Добавить».</p>
+        <div class="expense-row" style="margin:6px 0 18px"><div class="main">${ico('Еда')}<div style="min-width:0"><div class="info">${L.voiceRowNote}</div><div class="cat">${categoryLabel('Еда', d.lang)}</div></div></div><div class="amt">350 ₽</div></div>
+        <h4>${L.inListH}</h4><p>${L.inListP}</p>
       </div>
     </div>
   </section>
 
   <section class="l-sec">
-    <h2 class="l-h2 reveal">Наведи камеру.<br><span class="g">Остальное — наше.</span></h2>
-    <p class="l-p reveal">Отсканируй штрих-код — СпендТрекер найдёт товар, поймёт, в каком ты магазине, и подскажет цену.</p>
+    <h2 class="l-h2 reveal">${L.scanH2a}<br><span class="g">${L.scanH2b}</span></h2>
+    <p class="l-p reveal">${L.scanP}</p>
     <div class="showcase two">
       <div class="tile reveal">
         <div class="mock-vf"><div class="bars">${barcode.map((w) => html`<i style="--w:${w * 2}px"></i>`)}</div><div class="frame"></div><div class="line"></div></div>
-        <h4>Штрих-код</h4><p>Миллионы товаров из открытой базы Open Food Facts.</p>
+        <h4>${L.barcodeH}</h4><p>${L.barcodeP}</p>
       </div>
       <div class="tile reveal" style="--d:.1s">
         <div class="product" style="margin-top:6px"><div class="pic none">${raw('<svg viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>')}</div><div><div class="pn">Coca-Cola 0,5 л</div><div class="pb">Coca-Cola · 500 мл</div></div></div>
         <div class="store-chips">
-          <span class="schip on"><span class="logo" style="background:#e3262f">П</span>Пятёрочка <small>40 м</small></span>
-          <span class="schip"><span class="logo" style="background:#e4003a">М</span>Магнит <small>120 м</small></span>
+          <span class="schip on"><span class="logo" style="background:#e3262f">П</span>Пятёрочка <small>40 ${d.lang === 'en' ? 'm' : 'м'}</small></span>
+          <span class="schip"><span class="logo" style="background:#e4003a">М</span>Магнит <small>120 ${d.lang === 'en' ? 'm' : 'м'}</small></span>
         </div>
-        <div class="prices">В «Пятёрочке» обычно <b>87 ₽</b> · Магнит <b>95 ₽</b></div>
-        <h4>Магазин рядом</h4><p>По геопозиции — только в момент сканирования. Цены — из настоящих покупок.</p>
+        <div class="prices">${raw(L.pricesLine)}</div>
+        <h4>${L.storeH}</h4><p>${L.storeP}</p>
       </div>
     </div>
   </section>
 
   <section class="l-sec">
-    <h2 class="l-h2 reveal">Весь месяц.<br><span class="g">Одним взглядом.</span></h2>
+    <h2 class="l-h2 reveal">${L.monthH2a}<br><span class="g">${L.monthH2b}</span></h2>
     <div class="showcase two">
-      <div class="reveal">${weekWidget(sampleWeek, today, '₽')}</div>
-      <div class="reveal" style="--d:.1s">${categoriesWidget(sampleCats, today, '₽', false)}</div>
+      <div class="reveal">${weekWidget(sampleWeek, today, '₽', d.lang)}</div>
+      <div class="reveal" style="--d:.1s">${categoriesWidget(sampleCats, today, '₽', d.lang, false)}</div>
     </div>
   </section>
 
   <section class="l-sec">
-    <p class="scrub">${scrub('С друзьями — веселее. Добавь их и смотри, кто в этом месяце потратил больше всех.', 0)}</p>
+    <p class="scrub">${scrub(L.friendsScrub, 0)}</p>
     <div class="showcase" style="max-width:520px">
       <div class="card reveal" style="margin:0">
-        ${[['Аня', 9445, false], ['Ты', 7889, true], ['Макс', 3595, false]].map(
+        ${[[L.friendA, 9445, false], [L.you, 7889, true], [L.friendB, 3595, false]].map(
           ([n, t, me], i) => html`<div class="board-row ${i === 0 ? 'rank-1' : ''} ${me ? 'me' : ''}"><div class="rank">${i + 1}</div><div class="av">${String(n)[0]}</div><div class="name">${n}</div><div class="amount">${fmt0(Number(t))} ₽</div></div>`,
         )}
       </div>
@@ -224,11 +226,11 @@ export function landingPage(d: { demo: boolean; origin: string }) {
 
   <section class="l-cta">
     <div class="reveal" style="margin-bottom:10px">${raw(mascot('happy', 96))}</div>
-    <h2 class="l-h2 reveal">Начни сегодня.</h2>
-    <p class="l-p reveal" style="margin:0 auto 28px">Бесплатно. Без рекламы. Прямо в браузере — и на главном экране iPhone.</p>
+    <h2 class="l-h2 reveal">${L.ctaSecH}</h2>
+    <p class="l-p reveal" style="margin:0 auto 28px">${L.ctaSecP}</p>
     <div class="l-ctas reveal">${cta}</div>
   </section>
-  <footer class="l-foot">СпендТрекер · ${today.slice(0, 4)}</footer>
+  <footer class="l-foot">${S.brand} · ${today.slice(0, 4)}</footer>
 </main>`,
   );
 }
@@ -248,111 +250,112 @@ const TG_CSS = `
 export function authPage(
   kind: 'login' | 'register',
   flashes: Flash[],
-  opts: { demo?: boolean; tgLogin?: boolean; tgPending?: boolean; origin?: string } = {},
+  opts: { demo?: boolean; tgLogin?: boolean; tgPending?: boolean; origin?: string; lang?: Lang } = {},
 ) {
   const isLogin = kind === 'login';
   const demo = !!opts.demo;
+  const lang = opts.lang ?? 'ru';
+  const A = tr(lang).auth;
   return layout(
-    { title: isLogin ? 'Вход' : 'Регистрация', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS + TG_CSS, share: opts.origin },
-    html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
+    { title: isLogin ? A.titleLogin : A.titleRegister, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS + TG_CSS, share: opts.origin },
+    html`<div style="position:absolute; top:max(14px, env(safe-area-inset-top)); right:16px">${langToggle(lang, isLogin ? '/login' : '/register')}</div>
+<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
 <div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(isLogin ? 'wave' : 'happy', 104))}</div>
-<h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? 'С возвращением' : 'Новый аккаунт'}</h1>
-<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${isLogin ? 'Войди, чтобы продолжить' : 'Пара секунд — и можно считать траты'}</p>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? A.headLogin : A.headRegister}</h1>
+<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${isLogin ? A.subLogin : A.subRegister}</p>
 ${opts.tgPending
-  ? html`<p class="tg-note reveal" style="--d:.12s">${isLogin ? 'Войди в свой аккаунт' : 'Создай аккаунт'} — и Telegram сразу к нему привяжется</p>`
+  ? html`<p class="tg-note reveal" style="--d:.12s">${isLogin ? A.pendingLogin : A.pendingRegister}</p>`
   : opts.tgLogin
-    ? html`<a class="btn btn-tg reveal" style="--d:.12s" href="/auth/telegram">${raw(TG_ICON)}${isLogin ? 'Войти через Telegram' : 'Продолжить с Telegram'}</a>
-<div class="auth-or reveal" style="--d:.14s">или по логину</div>`
+    ? html`<a class="btn btn-tg reveal" style="--d:.12s" href="/auth/telegram">${raw(TG_ICON)}${isLogin ? A.tgLogin : A.tgContinue}</a>
+<div class="auth-or reveal" style="--d:.14s">${A.orLogin}</div>`
     : ''}
 <form method="POST" class="reveal" style="--d:.15s">
   <div class="form-rows">
-    <label class="form-row" style="margin:0"><span>Логин</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
-    <label class="form-row" style="margin:0"><span>Пароль</span><input type="password" name="password" required autocomplete="${isLogin ? 'current-password' : 'new-password'}" style="text-align:left"></label>
+    <label class="form-row" style="margin:0"><span>${A.login}</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
+    <label class="form-row" style="margin:0"><span>${A.password}</span><input type="password" name="password" required autocomplete="${isLogin ? 'current-password' : 'new-password'}" style="text-align:left"></label>
   </div>
-  <button type="submit">${isLogin ? 'Войти' : 'Создать аккаунт'}</button>
+  <button type="submit">${isLogin ? A.btnLogin : A.btnRegister}</button>
 </form>
 ${demo
-  ? html`<form method="POST" action="/demo" class="reveal" style="--d:.2s; margin-top:10px"><button type="submit" class="btn-tinted">Войти в демо-аккаунт</button></form>`
+  ? html`<form method="POST" action="/demo" class="reveal" style="--d:.2s; margin-top:10px"><button type="submit" class="btn-tinted">${A.demoBtn}</button></form>`
   : ''}
 ${isLogin
-  ? html`<div class="footer-link reveal" style="--d:.22s"><a href="/forgot">Забыли пароль?</a></div>
-<div class="footer-link reveal" style="--d:.25s">Нет аккаунта? <a href="/register">Зарегистрироваться</a></div>`
-  : html`<div class="footer-link reveal" style="--d:.25s">Уже есть аккаунт? <a href="/login">Войти</a></div>`}`,
+  ? html`<div class="footer-link reveal" style="--d:.22s"><a href="/forgot">${A.forgot}</a></div>
+<div class="footer-link reveal" style="--d:.25s">${A.noAccount} <a href="/register">${A.registerLink}</a></div>`
+  : html`<div class="footer-link reveal" style="--d:.25s">${A.haveAccount} <a href="/login">${A.loginLink}</a></div>`}`,
   );
 }
 
 // «Забыли пароль?»: логин → бот присылает ссылку в привязанный Telegram (sent — ответ после отправки формы)
-export function forgotPage(flashes: Flash[], sent = false) {
+export function forgotPage(flashes: Flash[], sent = false, lang: Lang = 'ru') {
+  const F = tr(lang).forgot;
   return layout(
-    { title: 'Забыли пароль?', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS },
+    { title: F.title, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
 <div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(sent ? 'wink' : 'worried', 104))}</div>
-<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${sent ? 'Проверь Telegram' : 'Забыли пароль?'}</h1>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${sent ? F.headSent : F.headAsk}</h1>
 ${sent
-  ? html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">
-  Если к аккаунту привязан Telegram, бот уже прислал туда ссылку для нового пароля. Она действует 30 минут.
-</p>
-<p class="reveal" style="--d:.15s; text-align:center; color:var(--text-2); margin:0 0 26px">
-  Сообщения нет? Значит, Telegram к аккаунту не привязан — тогда восстановить вход нельзя: другого способа проверить, что аккаунт твой, у сайта нет.
-</p>`
-  : html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">
-  Напиши логин — бот пришлёт в Telegram ссылку, по которой можно задать новый пароль.
-</p>
+  ? html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${F.sent1}</p>
+<p class="reveal" style="--d:.15s; text-align:center; color:var(--text-2); margin:0 0 26px">${F.sent2}</p>`
+  : html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${F.ask}</p>
 <form method="POST" class="reveal" style="--d:.15s">
   <div class="form-rows">
-    <label class="form-row" style="margin:0"><span>Логин</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
+    <label class="form-row" style="margin:0"><span>${F.login}</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
   </div>
-  <button type="submit">Прислать ссылку</button>
+  <button type="submit">${F.send}</button>
 </form>`}
-<div class="footer-link reveal" style="--d:.25s"><a href="/login">Вернуться ко входу</a></div>`,
+<div class="footer-link reveal" style="--d:.25s"><a href="/login">${F.back}</a></div>`,
   );
 }
 
 // Страница из ссылки бота: новый пароль
-export function resetPage(flashes: Flash[], username: string) {
+export function resetPage(flashes: Flash[], username: string, lang: Lang = 'ru') {
+  const R = tr(lang).reset;
   return layout(
-    { title: 'Новый пароль', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS },
+    { title: R.title, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
 <div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104))}</div>
-<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">Новый пароль</h1>
-<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">для аккаунта <b>${username}</b></p>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${R.head}</h1>
+<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${R.forAccount} <b>${username}</b></p>
 <form method="POST" class="reveal" style="--d:.15s">
   <input type="text" name="username" value="${username}" autocomplete="username" hidden>
   <div class="form-rows">
-    <label class="form-row" style="margin:0"><span>Пароль</span><input type="password" name="password" required minlength="8" autocomplete="new-password" style="text-align:left"></label>
+    <label class="form-row" style="margin:0"><span>${R.password}</span><input type="password" name="password" required minlength="8" autocomplete="new-password" style="text-align:left"></label>
   </div>
-  <button type="submit">Сохранить и войти</button>
+  <button type="submit">${R.save}</button>
 </form>
-<div class="footer-link reveal" style="--d:.25s">После смены пароля все остальные устройства выйдут из аккаунта.</div>`,
+<div class="footer-link reveal" style="--d:.25s">${R.note}</div>`,
   );
 }
 
 // Вошли через Telegram, а аккаунта с ним ещё нет: создать новый или привязать к существующему
-export function tgNewAccountPage(flashes: Flash[], name: string) {
+export function tgNewAccountPage(flashes: Flash[], name: string, lang: Lang = 'ru') {
+  const T = tr(lang).tgNew;
   return layout(
-    { title: 'Вход через Telegram', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS + TG_CSS },
+    { title: T.title, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS + TG_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
 <div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('wave', 104))}</div>
-<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">Привет, ${name}!</h1>
-<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">
-  Telegram подтвердил вход. Этот Telegram пока не привязан ни к одному аккаунту СпендТрекера.
-</p>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${T.hi}, ${name}!</h1>
+<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${T.text}</p>
 <form method="POST" action="/auth/telegram/new" class="reveal" style="--d:.15s; margin:0">
-  <button type="submit" class="btn-tg">${raw(TG_ICON)}Создать аккаунт через Telegram</button>
+  <button type="submit" class="btn-tg">${raw(TG_ICON)}${T.create}</button>
 </form>
-<a class="btn btn-tinted reveal" href="/login" style="--d:.2s; margin-top:10px">У меня уже есть аккаунт</a>
-<div class="footer-link reveal" style="--d:.25s">Войдёшь по логину и паролю — и Telegram привяжется к нему.</div>`,
+<a class="btn btn-tinted reveal" href="/login" style="--d:.2s; margin-top:10px">${T.have}</a>
+<div class="footer-link reveal" style="--d:.25s">${T.note}</div>`,
   );
 }
 
 // ---------- сайт внутри Telegram (Mini App) ----------
 
-export function tgAppPage(next: string) {
+export function tgAppPage(next: string, lang: Lang = 'ru') {
+  const S = tr(lang);
+  const T = S.tgApp;
   return layout(
     {
-      title: 'СпендТрекер',
+      title: S.brand,
       flashes: [],
       loggedIn: false,
+      lang,
       center: true,
       extraCss: `${DASHBOARD_CSS}
   .tg-spin { width: 26px; height: 26px; margin: 22px auto 0; border-radius: 50%; border: 2.5px solid var(--fill); border-top-color: var(--accent); animation: tg-spin .8s linear infinite; }
@@ -360,10 +363,10 @@ export function tgAppPage(next: string) {
     },
     html`<div style="height: max(18vh, calc(24px + env(safe-area-inset-top)))"></div>
 <div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104))}</div>
-<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">СпендТрекер</h1>
-<p class="reveal" id="tg-status" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 0">Входим в аккаунт…</p>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${S.brand}</h1>
+<p class="reveal" id="tg-status" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 0">${T.signingIn}</p>
 <div class="tg-spin" id="tg-spin"></div>
-<a class="btn reveal" id="tg-login" href="/login" style="--d:.15s; margin-top:26px" hidden>Войти по логину и паролю</a>
+<a class="btn reveal" id="tg-login" href="/login" style="--d:.15s; margin-top:26px" hidden>${T.loginBtn}</a>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
 (function () {
@@ -374,7 +377,7 @@ export function tgAppPage(next: string) {
     document.getElementById('tg-spin').hidden = true;
     document.getElementById('tg-login').hidden = false;
   }
-  if (!tg || !tg.initData) return fail('Эта страница открывается из Telegram-бота.');
+  if (!tg || !tg.initData) return fail(${raw(JSON.stringify(T.fromBot))});
   tg.ready();
   tg.expand();
   try { tg.setHeaderColor('#000000'); tg.setBackgroundColor('#000000'); } catch (e) {}
@@ -383,10 +386,10 @@ export function tgAppPage(next: string) {
     .then(function (j) {
       if (j.ok) return location.replace(next);
       fail(j.error === 'not_linked'
-        ? 'Этот Telegram ещё не подключён к аккаунту. Войди и нажми в профиле «Подключить Telegram».'
-        : 'Не получилось войти автоматически.');
+        ? ${raw(JSON.stringify(T.notLinked))}
+        : ${raw(JSON.stringify(T.failed))});
     })
-    .catch(function () { fail('Нет связи с сервером. Попробуй ещё раз.'); });
+    .catch(function () { fail(${raw(JSON.stringify(T.noServer))}); });
 })();
 </script>`,
   );
@@ -473,7 +476,7 @@ function shortNum(n: number) {
   return fmt0(n);
 }
 
-function donut(byCategory: { category: string; total: number }[], sum: number, sym: string) {
+function donut(byCategory: { category: string; total: number }[], sum: number, sym: string, lang: Lang = 'ru') {
   const R = 54;
   const C = 2 * Math.PI * R;
   const gapLen = byCategory.length > 1 ? 3 : 0;
@@ -489,7 +492,7 @@ function donut(byCategory: { category: string; total: number }[], sum: number, s
   });
   return html`<div class="donut">
     <svg viewBox="0 0 128 128"><circle cx="64" cy="64" r="${R}" stroke="rgba(255,255,255,.05)"/>${segs}</svg>
-    <div class="center"><div class="v">${shortNum(sum)}</div><div class="k">${sym} за месяц</div></div>
+    <div class="center"><div class="v">${shortNum(sum)}</div><div class="k">${sym} ${lang === 'en' ? 'this month' : 'за месяц'}</div></div>
   </div>`;
 }
 
@@ -502,14 +505,15 @@ const X_SVG = '<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 1
 
 // ---------- виджеты (используются и на главной, и на странице-презентации) ----------
 
-function weekWidget(week: { date: string; total: number }[], today: string, sym: string) {
+function weekWidget(week: { date: string; total: number }[], today: string, sym: string, lang: Lang = 'ru') {
+  const S = tr(lang);
   const maxDay = Math.max(...week.map((r) => r.total), 0);
   return html`<div class="card" style="margin:0 0 14px">
-  <div class="card-head"><h3>Последние 7 дней</h3><span class="hint">${fmt0(week.reduce((s, r) => s + r.total, 0))} ${sym}</span></div>
+  <div class="card-head"><h3>${lang === 'en' ? 'Last 7 days' : 'Последние 7 дней'}</h3><span class="hint">${fmt0(week.reduce((s, r) => s + r.total, 0))} ${sym}</span></div>
   <div class="week">
     ${week.map((r, k) => {
       const h = maxDay ? Math.max(6, Math.round((r.total / maxDay) * 100)) : 6;
-      const dow = WEEKDAYS[new Date(r.date + 'T00:00:00Z').getUTCDay()];
+      const dow = S.weekdays[new Date(r.date + 'T00:00:00Z').getUTCDay()];
       return html`<div class="col ${r.date === today ? 'today' : ''}" style="--k:${k}">
         <div class="bar-wrap" style="--h: ${h}%">
           ${r.total ? html`<span class="val">${shortNum(r.total)}</span>` : ''}
@@ -522,16 +526,17 @@ function weekWidget(week: { date: string; total: number }[], today: string, sym:
 </div>`;
 }
 
-function categoriesWidget(byCategory: { category: string; total: number }[], today: string, sym: string, list = true) {
+function categoriesWidget(byCategory: { category: string; total: number }[], today: string, sym: string, lang: Lang = 'ru', list = true) {
+  const S = tr(lang);
   const sum = byCategory.reduce((s, r) => s + r.total, 0);
   const maxCat = Math.max(...byCategory.map((r) => r.total), 0);
   return html`<div class="card" style="margin:0 0 14px">
-  <div class="card-head"><h3>Категории</h3><span class="hint">${MONTHS_NOM[Number(today.slice(5, 7)) - 1]}</span></div>
+  <div class="card-head"><h3>${lang === 'en' ? 'Categories' : 'Категории'}</h3><span class="hint">${S.months.nom[Number(today.slice(5, 7)) - 1]}</span></div>
   <div class="donut-wrap"${list ? '' : raw(' style="margin:0"')}>
-    ${donut(byCategory, sum, sym)}
+    ${donut(byCategory, sum, sym, lang)}
     <div class="legend">
       ${byCategory.slice(0, 5).map(
-        (r) => html`<div class="row"><span class="dot" style="background:${COLORS[catStyle(r.category).color]}"></span><span class="name">${r.category}</span><span class="pct">${Math.round((r.total / sum) * 100)}%</span></div>`,
+        (r) => html`<div class="row"><span class="dot" style="background:${COLORS[catStyle(r.category).color]}"></span><span class="name">${categoryLabel(r.category, lang)}</span><span class="pct">${Math.round((r.total / sum) * 100)}%</span></div>`,
       )}
     </div>
   </div>
@@ -540,7 +545,7 @@ function categoriesWidget(byCategory: { category: string; total: number }[], tod
         (r) => html`<div class="cat-item">
       ${ico(r.category)}
       <div style="flex:1; min-width:0;">
-        <div class="top"><span>${r.category}</span><span>${fmt0(r.total)} ${sym}</span></div>
+        <div class="top"><span>${categoryLabel(r.category, lang)}</span><span>${fmt0(r.total)} ${sym}</span></div>
         <div class="cat-bar"><div class="track"><div class="fill" style="width: ${maxCat ? Math.round((r.total / maxCat) * 100) : 0}%;"></div></div></div>
       </div>
     </div>`,
@@ -870,7 +875,7 @@ export function friendProfilePage(d: {
 
 <div class="reveal">${weekWidget(d.week, d.today, d.sym)}</div>
 
-${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory, d.today, d.sym, false)}</div>` : ''}
+${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory, d.today, d.sym, 'ru', false)}</div>` : ''}
 
 <div class="card reveal">
   <h3 style="margin-bottom:2px;">Последние траты</h3>

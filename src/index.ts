@@ -6,6 +6,7 @@ import { recognizeProduct, takeAiQuota } from './vision';
 import { cleanupLimits, hit } from './limits';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
+import { tr, langOf, type Lang } from './i18n';
 import { authorizeUrl, finishLogin, newLoginState, type TgIdentity, type TgLoginConfig, type TgLoginState } from './tglogin';
 import {
   botApi,
@@ -293,12 +294,23 @@ for (const p of ['/dashboard', '/month', '/month/*', '/delete/*', '/friends', '/
 
 // ---------- маршруты ----------
 
-app.get('/', async (c) => {
-  if (await getSessionUserId(c)) return c.redirect('/dashboard');
-  return c.html(landingPage({ demo: c.env.DEMO === '1', origin: new URL(c.req.url).origin }));
+// Язык страниц до входа берём из cookie (переключатель RU/EN ставит её); по умолчанию русский.
+const pageLang = (c: C): Lang => langOf(getCookie(c, 'lang'));
+
+app.get('/lang/:code', (c) => {
+  const code = langOf(c.req.param('code'));
+  setCookie(c, 'lang', code, { path: '/', maxAge: 400 * 24 * 3600, sameSite: 'Lax' });
+  const next = c.req.query('next') || '/';
+  const safe = /^\/[a-z0-9_/?=&.-]*$/i.test(next) && !next.startsWith('//') ? next : '/';
+  return c.redirect(safe);
 });
 
-const authOpts = async (c: C) => ({ origin: new URL(c.req.url).origin, demo: c.env.DEMO === '1', tgLogin: !!tgLoginConfig(c), tgPending: !!(await readTgPending(c)) });
+app.get('/', async (c) => {
+  if (await getSessionUserId(c)) return c.redirect('/dashboard');
+  return c.html(landingPage({ demo: c.env.DEMO === '1', origin: new URL(c.req.url).origin, lang: pageLang(c) }));
+});
+
+const authOpts = async (c: C) => ({ origin: new URL(c.req.url).origin, demo: c.env.DEMO === '1', tgLogin: !!tgLoginConfig(c), tgPending: !!(await readTgPending(c)), lang: pageLang(c) });
 app.get('/register', async (c) => c.html(authPage('register', popFlashes(c), await authOpts(c))));
 app.post('/register', async (c) => {
   const form = await c.req.parseBody();
@@ -306,11 +318,12 @@ app.post('/register', async (c) => {
   const password = formStr(form, 'password');
   const fail = async (msg: string) => c.html(authPage('register', [...popFlashes(c), ['error', msg]], await authOpts(c)));
 
-  if (!username || !password) return fail('Заполните все поля');
-  if (password.length < MIN_PASSWORD) return fail(`Пароль должен быть не короче ${MIN_PASSWORD} символов`);
-  if (!(await hit(c.env.DB, `register:${clientIp(c)}`, 5, 3600))) return fail('Слишком много регистраций с этого адреса. Попробуй через час.');
+  const fe = tr(pageLang(c)).fe;
+  if (!username || !password) return fail(fe.fillAll);
+  if (password.length < MIN_PASSWORD) return fail(fe.pwShort.replace('%d', String(MIN_PASSWORD)));
+  if (!(await hit(c.env.DB, `register:${clientIp(c)}`, 5, 3600))) return fail(fe.tooManyReg);
   if (await c.env.DB.prepare('SELECT 1 FROM users WHERE username = ?').bind(username).first()) {
-    return fail('Такой пользователь уже существует');
+    return fail(fe.userExists);
   }
 
   const row = await c.env.DB.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?) RETURNING id')
@@ -318,7 +331,7 @@ app.post('/register', async (c) => {
     .first<{ id: number }>();
   await login(c, row!.id);
   await linkPendingTelegram(c, row!.id);
-  flash(c, 'Регистрация прошла успешно!', 'success');
+  flash(c, tr(pageLang(c)).fe.regSuccess, 'success');
   return c.redirect('/dashboard');
 });
 
@@ -330,7 +343,7 @@ app.post('/login', async (c) => {
   // Перебор паролей: не больше 20 попыток за 10 минут с одного адреса и 10 — к одному логину
   const db = c.env.DB;
   if (!(await hit(db, `login-ip:${clientIp(c)}`, 20, 600)) || !(await hit(db, `login-user:${username.toLowerCase()}`, 10, 600))) {
-    return c.html(authPage('login', [...popFlashes(c), ['error', 'Слишком много попыток входа. Подожди 10 минут.']], await authOpts(c)));
+    return c.html(authPage('login', [...popFlashes(c), ['error', tr(pageLang(c)).fe.tooManyLogin]], await authOpts(c)));
   }
 
   const user = await db.prepare('SELECT * FROM users WHERE username = ?').bind(username).first<User>();
@@ -342,7 +355,7 @@ app.post('/login', async (c) => {
     await linkPendingTelegram(c, user.id);
     return c.redirect('/dashboard');
   }
-  return c.html(authPage('login', [...popFlashes(c), ['error', 'Неверный логин или пароль']], await authOpts(c)));
+  return c.html(authPage('login', [...popFlashes(c), ['error', tr(pageLang(c)).fe.badCreds]], await authOpts(c)));
 });
 
 app.get('/logout', (c) => {
@@ -363,12 +376,12 @@ async function resetUser(db: D1Database, token: string) {
     .first<{ id: number; username: string }>();
 }
 
-app.get('/forgot', (c) => c.html(forgotPage(popFlashes(c))));
+app.get('/forgot', (c) => c.html(forgotPage(popFlashes(c), false, pageLang(c))));
 app.post('/forgot', async (c) => {
   const db = c.env.DB;
   const username = formStr(await c.req.parseBody(), 'username').trim();
   if (!(await hit(db, `forgot-ip:${clientIp(c)}`, 5, 3600)) || !(await hit(db, `forgot-user:${username.toLowerCase()}`, 3, 3600))) {
-    return c.html(forgotPage([['error', 'Слишком много запросов. Попробуй через час.']]));
+    return c.html(forgotPage([['error', tr(pageLang(c)).fe.forgotTooMany]], false, pageLang(c)));
   }
   const row = await db
     .prepare('SELECT u.id, u.username, l.chat_id FROM users u JOIN telegram_links l ON l.user_id = u.id WHERE u.username = ?')
@@ -391,33 +404,33 @@ app.post('/forgot', async (c) => {
     }).catch((e) => console.error('reset message failed', e));
   }
   // Ответ одинаковый для любого логина: по нему нельзя узнать, есть ли такой аккаунт
-  return c.html(forgotPage([], true));
+  return c.html(forgotPage([], true, pageLang(c)));
 });
 
 app.get('/reset/:token', async (c) => {
   const user = await resetUser(c.env.DB, c.req.param('token'));
   if (!user) {
-    flash(c, 'Ссылка устарела или уже использована. Запроси новую.', 'error');
+    flash(c, tr(pageLang(c)).fe.resetExpired, 'error');
     return c.redirect('/forgot');
   }
-  return c.html(resetPage(popFlashes(c), user.username));
+  return c.html(resetPage(popFlashes(c), user.username, pageLang(c)));
 });
 app.post('/reset/:token', async (c) => {
   const db = c.env.DB;
   const user = await resetUser(db, c.req.param('token'));
   if (!user) {
-    flash(c, 'Ссылка устарела или уже использована. Запроси новую.', 'error');
+    flash(c, tr(pageLang(c)).fe.resetExpired, 'error');
     return c.redirect('/forgot');
   }
   const password = formStr(await c.req.parseBody(), 'password');
-  if (password.length < MIN_PASSWORD) return c.html(resetPage([['error', `Пароль должен быть не короче ${MIN_PASSWORD} символов`]], user.username));
+  if (password.length < MIN_PASSWORD) return c.html(resetPage([['error', tr(pageLang(c)).fe.pwShort.replace('%d', String(MIN_PASSWORD))]], user.username, pageLang(c)));
   // Новый пароль, ссылка сгорает, все старые входы отзываются
   await db.batch([
     db.prepare('UPDATE users SET password_hash = ?, session_ver = session_ver + 1 WHERE id = ?').bind(hashPassword(password), user.id),
     db.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(user.id),
   ]);
   await login(c, user.id);
-  flash(c, 'Пароль изменён — ты в аккаунте', 'success');
+  flash(c, tr(pageLang(c)).fe.resetDone, 'success');
   return c.redirect('/dashboard');
 });
 
@@ -1049,7 +1062,7 @@ app.get('/auth/telegram/callback', async (c) => {
 app.get('/auth/telegram/new', async (c) => {
   const tg = await readTgPending(c);
   if (!tg) return c.redirect('/login');
-  return c.html(tgNewAccountPage(popFlashes(c), tg.name ?? (tg.username ? `@${tg.username}` : 'друг')));
+  return c.html(tgNewAccountPage(popFlashes(c), tg.name ?? (tg.username ? `@${tg.username}` : (pageLang(c) === 'en' ? 'friend' : 'друг')), pageLang(c)));
 });
 
 app.post('/auth/telegram/new', async (c) => {
@@ -1080,7 +1093,7 @@ app.post('/auth/telegram/new', async (c) => {
 // мы проверяем подпись Telegram и входим в привязанный аккаунт без пароля.
 app.get('/tg/app', (c) => {
   const next = c.req.query('next') ?? '';
-  return c.html(tgAppPage(/^\/[a-z0-9_/-]*$/i.test(next) && !next.startsWith('//') ? next : '/dashboard'));
+  return c.html(tgAppPage(/^\/[a-z0-9_/-]*$/i.test(next) && !next.startsWith('//') ? next : '/dashboard', pageLang(c)));
 });
 
 app.post('/tg/auth', async (c) => {
