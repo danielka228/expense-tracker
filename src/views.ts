@@ -833,6 +833,7 @@ export function friendProfilePage(d: {
   sym: string;
   id: number;
   username: string;
+  bio: string | null;
   friendsSince: string;
   avatarV: string | null;
   today: string;
@@ -856,6 +857,7 @@ export function friendProfilePage(d: {
   </div>
   <h1 class="large-title" style="font-size:28px; line-height:34px; margin:0">${d.username}</h1>
   <div class="since">В друзьях с ${sinceText}</div>
+  ${d.bio ? html`<p class="profile-bio">${d.bio}</p>` : ''}
 </div>
 
 <div class="card reveal" style="--d:.05s; padding:10px 6px">
@@ -893,6 +895,7 @@ export function profilePage(d: {
   username: string;
   userId: number;
   createdAt: string | null;
+  bio: string | null;
   totalAllTime: number;
   expenseCount: number;
   friendCount: number;
@@ -920,6 +923,7 @@ export function profilePage(d: {
   </form>
   <h1 class="large-title" style="font-size:28px; line-height:34px; margin:0">${d.username || 'Пользователь'}</h1>
   <div class="since">На борту с ${created}</div>
+  ${d.bio ? html`<p class="profile-bio">${d.bio}</p>` : ''}
   ${d.avatarV !== null
     ? html`<form method="POST" action="/profile/avatar/delete"><button type="submit" class="avatar-remove">Удалить фото</button></form>`
     : ''}
@@ -931,6 +935,15 @@ export function profilePage(d: {
     <div><div class="value">${countUp(d.expenseCount)}</div><div class="label">Записей</div></div>
     <div><div class="value">${countUp(d.friendCount)}</div><div class="label">Друзей</div></div>
   </div>
+</div>
+
+<div class="section-h">О себе</div>
+<div class="card reveal">
+  <form method="POST" action="/profile/bio" style="margin:0">
+    <textarea name="bio" rows="3" maxlength="200" placeholder="Пара слов о себе — их увидят друзья"
+      style="width:100%; resize:none; box-sizing:border-box; background:var(--fill); color:var(--text); border:none; border-radius:12px; padding:12px 14px; font:inherit; font-size:15px; line-height:1.4">${d.bio ?? ''}</textarea>
+    <button type="submit" style="margin-top:10px">Сохранить</button>
+  </form>
 </div>
 
 ${d.telegram

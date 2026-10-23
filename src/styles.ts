@@ -511,6 +511,7 @@ export const FRIENDS_CSS = `
 `;
 
 export const PROFILE_CSS = `
+  .profile-bio { margin: 8px 20px 0; text-align: center; font-size: 15px; line-height: 1.4; color: var(--text-2); max-width: 320px; overflow-wrap: anywhere; }
   .profile-head { text-align: center; padding: 8px 0 18px; }
   .avatar-wrap { position: relative; width: 108px; height: 108px; margin: 0 auto 14px; }
   .avatar-wrap .profile-avatar, .avatar-wrap img.avatar-img {

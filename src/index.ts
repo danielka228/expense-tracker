@@ -64,6 +64,7 @@ interface User {
   currency: string;
   created_at: string | null;
   session_ver: number;
+  bio: string | null;
 }
 
 type App = { Bindings: Env; Variables: { user: User } };
@@ -762,6 +763,7 @@ app.get('/friends/:id{[0-9]+}', async (c) => {
       sym: symbol(friend),
       id: fid,
       username: friend.username,
+      bio: friend.bio,
       friendsSince: fs.created_at,
       avatarV: av ? String(Date.parse(av.updated_at.replace(' ', 'T') + 'Z') / 1000 || 0) : null,
       ...o,
@@ -850,6 +852,7 @@ app.get('/profile', async (c) => {
       username: user.username,
       userId: user.id,
       createdAt: user.created_at,
+      bio: user.bio,
       totalAllTime: total,
       expenseCount: count?.n ?? 0,
       friendCount: friendIds.length,
@@ -875,6 +878,14 @@ app.post('/profile/telegram', async (c) => {
     db.prepare('INSERT INTO telegram_codes (code, user_id) VALUES (?, ?)').bind(code, c.get('user').id),
   ]);
   return c.redirect(`https://t.me/${bot}?start=${code}`);
+});
+
+const MAX_BIO = 200;
+app.post('/profile/bio', async (c) => {
+  const bio = formStr(await c.req.parseBody(), 'bio').replace(/\s+/g, ' ').trim().slice(0, MAX_BIO);
+  await c.env.DB.prepare('UPDATE users SET bio = ? WHERE id = ?').bind(bio || null, c.get('user').id).run();
+  flash(c, bio ? 'Описание сохранено' : 'Описание убрано', 'success');
+  return c.redirect('/profile');
 });
 
 app.post('/profile/telegram/unlink', async (c) => {
