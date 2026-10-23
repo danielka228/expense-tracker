@@ -768,16 +768,27 @@ app.get('/friends/:id{[0-9]+}', async (c) => {
     spendingOverview(db, fid, 10),
     db.prepare('SELECT updated_at FROM avatars WHERE user_id = ?').bind(fid).first<{ updated_at: string }>(),
   ]);
+  // Показываем траты друга в валюте того, кто смотрит, по общему курсу
+  const k = convert(1, friend.currency, user.currency);
+  const conv = {
+    today: o.today,
+    todayTotal: o.todayTotal * k,
+    weekTotal: o.weekTotal * k,
+    monthTotal: o.monthTotal * k,
+    week: o.week.map((d) => ({ ...d, total: d.total * k })),
+    byCategory: o.byCategory.map((r) => ({ ...r, total: r.total * k })),
+    recent: o.recent.map((r) => ({ ...r, amount: r.amount * k })),
+  };
   return c.html(
     friendProfilePage({
       flashes: popFlashes(c),
-      sym: symbol(friend),
+      sym: symbol(user),
       id: fid,
       username: friend.username,
       bio: friend.bio,
       friendsSince: fs.created_at,
       avatarV: av ? String(Date.parse(av.updated_at.replace(' ', 'T') + 'Z') / 1000 || 0) : null,
-      ...o,
+      ...conv,
     }),
   );
 });
