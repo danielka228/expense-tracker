@@ -130,6 +130,180 @@ export interface Dict {
     resetExpired: string;
     resetDone: string;
   };
+  fl: {
+    sessionExpired: string;
+    badAmount: string;
+    expenseAdded: string;
+    expenseDeleted: string;
+    friendsOnly: string;
+    friendRemoved: string;
+    selfAdd: string;
+    userNotFound: string;
+    reqExists: string;
+    reqSentTo: string; // %s
+    reqAccepted: string;
+    reqDeclined: string;
+    botUnavailable: string;
+    tgDisconnected: string;
+    tgOtherAccount: string;
+    tgConnected: string;
+    tgLoginOff: string;
+    tgNotConfirmed: string;
+    tgLinked: string;
+    choosePhoto: string;
+    photoFail: string;
+    photoUpdated: string;
+    photoDeleted: string;
+    tokenCreated: string;
+    pwWrong: string;
+    pwShort: string; // %d
+    pwChanged: string;
+    pwSet: string;
+    loggedOutAll: string;
+    currencyUpdated: string;
+    langUpdated: string;
+    accountDeleted: string;
+    bioSaved: string;
+    bioRemoved: string;
+  };
+  app: {
+    demo: string;
+    greeting: string; // «Привет, %s»
+    spentIn: string; // «Потрачено в %s»
+    today: string;
+    thisWeek: string;
+    voiceBtn: string;
+    scanBtn: string;
+    manualBtn: string;
+    category: string;
+    date: string;
+    store: string;
+    optional: string;
+    note: string;
+    noteEg: string;
+    addBtn: string;
+    recentH: string;
+    emptyDash: string;
+    listening: string;
+    cancel: string;
+    done: string;
+    torch: string;
+    enterCode: string;
+    find: string;
+    byPhoto: string;
+    whatBought: string;
+    writeOwn: string;
+    name: string;
+    storeNotFound: string;
+    again: string;
+    addExpense: string;
+    friendsSub: string;
+    pDay: string;
+    pWeek: string;
+    pMonth: string;
+    you: string;
+    noFriends: string;
+    requestsH: string;
+    accept: string;
+    decline: string;
+    addFriendH: string;
+    friendNick: string;
+    invite: string;
+    friendsFoot: string;
+    friendsBack: string;
+    friendsSince: string; // «В друзьях с %s»
+    stToday: string;
+    stWeek: string;
+    stMonth: string;
+    recentExp: string;
+    nothingYet: string;
+    removeFriendQ: string;
+    removeFriend: string;
+    profileFallback: string;
+    userFallback: string;
+    changePhoto: string;
+    profilePhoto: string;
+    removePhoto: string;
+    onboardSince: string; // «На борту с %s»
+    spent: string;
+    records: string;
+    friendsLabel: string;
+    aboutH: string;
+    aboutPlaceholder: string;
+    save: string;
+    tgBotH: string;
+    tgLinkedText: string;
+    tgLinkedTo: string; // «Подключён к @%s»
+    openBot: string; // «Открыть @%s»
+    disconnect: string;
+    disconnectQ: string;
+    tgUnlinkedText: string;
+    connectTg: string;
+    quickH: string;
+    tokenHint: string;
+    copy: string;
+    copied: string;
+    addCmd: string;
+    howWorks: string;
+    newTokenBtn: string;
+    newTokenQ: string;
+    createToken: string;
+    settingsRow: string;
+    logoutRow: string;
+    helpH: string;
+    helpSub: string;
+    steps: [string, string][];
+    tip: string;
+    gotIt: string;
+    avatarErr: string;
+    setLoginLabel: string; // «Логин: %s»
+    currency: string;
+    password: string;
+    currentPw: string;
+    newPwPlaceholder: string;
+    pwPlaceholder: string;
+    pwHintNoTg: string; // с %s = логин
+    quickRow: string;
+    logout: string;
+    logoutAllQ: string;
+    logoutAll: string;
+    deleteAccQ: string;
+    deleteAcc: string;
+    deleteFoot: string;
+    language: string;
+    tgSection: string;
+    linkTg: string;
+    linkFootLogin: string;
+    linkFootBot: string;
+    linked: string;
+    allowBot: string;
+    unlinkTg: string;
+    unlinkQ: string;
+    saved: string;
+    monthTitle: string;
+    monthEmpty: string;
+    addExpenseBtn: string;
+    monthSub: string;
+    share: string;
+    sendTg: string;
+    prepImg: string;
+    holdSave: string;
+    imgFail: string;
+    sending: string;
+    sentChat: string;
+    sendFail: string;
+    noConn: string;
+    cardMy: string; // «Мой %s»
+    cardForN: string; // «за %s» (готовая строка со словом «трат»)
+    cardAllControl: string;
+    cardSameAs: string; // «Как за те же дни %s»
+    cardDiff: string; // «На %d%% %s, чем за те же дни %s»
+    cardLess: string;
+    cardMore: string;
+    cardMostOften: string; // «Чаще всего: %s × %d»
+    cardInTg: string; // «Считаю траты в Telegram · @%s»
+    cardInApp: string;
+  };
 }
 
 const ru: Dict = {
@@ -264,6 +438,186 @@ const ru: Dict = {
     resetExpired: 'Ссылка устарела или уже использована. Запроси новую.',
     resetDone: 'Пароль изменён — ты в аккаунте',
   },
+  fl: {
+    sessionExpired: 'Сессия устарела, войдите заново',
+    badAmount: 'Введите корректную сумму',
+    expenseAdded: 'Трата добавлена',
+    expenseDeleted: 'Запись удалена',
+    friendsOnly: 'Профиль виден только друзьям',
+    friendRemoved: 'Удалён из друзей',
+    selfAdd: 'Нельзя добавить самого себя',
+    userNotFound: 'Пользователь с таким ником не найден',
+    reqExists: 'Заявка уже отправлена или вы уже друзья',
+    reqSentTo: 'Заявка отправлена пользователю %s',
+    reqAccepted: 'Заявка принята',
+    reqDeclined: 'Заявка отклонена',
+    botUnavailable: 'Telegram-бот сейчас недоступен',
+    tgDisconnected: 'Telegram отключён',
+    tgOtherAccount: 'Этот Telegram уже подключён к другому аккаунту',
+    tgConnected: 'Telegram подключён — теперь можно входить в один тап',
+    tgLoginOff: 'Вход через Telegram пока не настроен',
+    tgNotConfirmed: 'Telegram не подтвердил вход, попробуй ещё раз',
+    tgLinked: 'Telegram привязан — теперь можно входить на сайт через Telegram',
+    choosePhoto: 'Выберите фото',
+    photoFail: 'Не удалось обработать фото, попробуйте другое',
+    photoUpdated: 'Фото обновлено',
+    photoDeleted: 'Фото удалено',
+    tokenCreated: 'Токен создан',
+    pwWrong: 'Текущий пароль неверен',
+    pwShort: 'Новый пароль должен быть не короче %d символов',
+    pwChanged: 'Пароль изменён, другие устройства вышли из аккаунта',
+    pwSet: 'Пароль задан — теперь можно входить и по логину',
+    loggedOutAll: 'Готово: вышли на всех устройствах, кроме этого',
+    currencyUpdated: 'Валюта обновлена',
+    langUpdated: 'Язык обновлён',
+    accountDeleted: 'Аккаунт удалён',
+    bioSaved: 'Описание сохранено',
+    bioRemoved: 'Описание убрано',
+  },
+  app: {
+    demo: 'Демо',
+    greeting: 'Привет, %s',
+    spentIn: 'Потрачено в %s',
+    today: 'Сегодня',
+    thisWeek: 'Эта неделя',
+    voiceBtn: 'Голосом',
+    scanBtn: 'Сканировать',
+    manualBtn: 'Вручную',
+    category: 'Категория',
+    date: 'Дата',
+    store: 'Магазин',
+    optional: 'Необязательно',
+    note: 'Заметка',
+    noteEg: 'Кофе с другом',
+    addBtn: 'Добавить',
+    recentH: 'Последние записи',
+    emptyDash: 'Пока нет записей — скажи трату голосом или отсканируй покупку.',
+    listening: 'Слушаю…',
+    cancel: 'Отмена',
+    done: 'Готово',
+    torch: 'Вспышка',
+    enterCode: 'Ввести код вручную',
+    find: 'Найти',
+    byPhoto: 'Определить по фото',
+    whatBought: 'Что купил',
+    writeOwn: 'Вписать свой',
+    name: 'Название',
+    storeNotFound: 'Нет нужного магазина или товара? Впиши название — сайт запомнит его здесь, и в следующий раз он найдётся сам.',
+    again: 'Ещё раз',
+    addExpense: 'Добавить трату',
+    friendsSub: 'Кто сколько потратил',
+    pDay: 'День',
+    pWeek: 'Неделя',
+    pMonth: 'Месяц',
+    you: 'Ты',
+    noFriends: 'Пока никого нет в списке.',
+    requestsH: 'Заявки в друзья',
+    accept: 'Принять',
+    decline: 'Отклонить',
+    addFriendH: 'Добавить друга',
+    friendNick: 'Ник друга',
+    invite: 'Позвать',
+    friendsFoot: 'Друг получит заявку и появится в рейтинге, когда примет её.',
+    friendsBack: 'Друзья',
+    friendsSince: 'В друзьях с %s',
+    stToday: 'Сегодня',
+    stWeek: 'Неделя',
+    stMonth: 'Месяц',
+    recentExp: 'Последние траты',
+    nothingYet: 'Пока ничего не записано.',
+    removeFriendQ: 'Удалить из друзей?',
+    removeFriend: 'Удалить из друзей',
+    profileFallback: 'Профиль',
+    userFallback: 'Пользователь',
+    changePhoto: 'Сменить фото',
+    profilePhoto: 'Фото профиля',
+    removePhoto: 'Удалить фото',
+    onboardSince: 'На борту с %s',
+    spent: 'Потрачено',
+    records: 'Записей',
+    friendsLabel: 'Друзей',
+    aboutH: 'О себе',
+    aboutPlaceholder: 'Пара слов о себе — их увидят друзья',
+    save: 'Сохранить',
+    tgBotH: 'Telegram-бот',
+    tgLinkedText: 'Пиши или надиктуй боту траты, например кофе 250, и они сразу появятся здесь.',
+    tgLinkedTo: 'Подключён к @%s.',
+    openBot: 'Открыть @%s',
+    disconnect: 'Отключить',
+    disconnectQ: 'Отключить Telegram-бота?',
+    tgUnlinkedText: 'Записывай траты сообщением или голосовым в Telegram: кофе 250, вчера такси 540. Бот сам угадает категорию и пришлёт сводку по команде /stats.',
+    connectTg: 'Подключить Telegram',
+    quickH: 'Быстрая трата с iPhone',
+    tokenHint: 'Добавляй траты в два касания через приложение «Команды». Токен никому не показывай: с ним можно добавлять траты от твоего имени.',
+    copy: 'Скопировать',
+    copied: 'Скопировано ✓',
+    addCmd: 'Добавить команду',
+    howWorks: 'Как это работает',
+    newTokenBtn: 'Создать новый токен',
+    newTokenQ: 'Старый токен перестанет работать, и команду придётся обновить. Продолжить?',
+    createToken: 'Создать токен',
+    settingsRow: 'Настройки',
+    logoutRow: 'Выйти из аккаунта',
+    helpH: 'Как добавить команду',
+    helpSub: 'Это нужно сделать один раз, займёт минуту.',
+    steps: [
+      ['Создай токен', 'Нажми «Создать токен» в карточке «Быстрая трата». Если токен уже есть, переходи к шагу 2.'],
+      ['Скопируй токен', 'Нажми «Скопировать». Кнопка на секунду покажет «Скопировано».'],
+      ['Открой команду', 'Нажми «Добавить команду». Откроется приложение «Команды» с командой «Трата».'],
+      ['Вставь токен', 'Телефон спросит токен. Нажми на поле, выбери «Вставить» и нажми «Добавить команду».'],
+      ['Готово, пользуйся', 'Запусти команду «Трата»: выбери категорию, напиши заметку и введи сумму. Трата сразу появится в приложении.'],
+    ],
+    tip: 'Совет: чтобы запускать команду с главного экрана, открой её в «Командах», нажми «Поделиться» и выбери «На экран Домой».',
+    gotIt: 'Понятно',
+    avatarErr: 'Не удалось обработать фото, попробуйте другое',
+    setLoginLabel: 'Логин: %s',
+    currency: 'Валюта',
+    password: 'Пароль',
+    currentPw: 'Текущий пароль',
+    newPwPlaceholder: 'Новый пароль',
+    pwPlaceholder: 'Пароль',
+    pwHintNoTg: 'Ты входишь через Telegram. Задай пароль, чтобы входить и по логину %s.',
+    quickRow: 'Быстрая трата с iPhone',
+    logout: 'Выйти',
+    logoutAllQ: 'Выйти из аккаунта на всех других устройствах?',
+    logoutAll: 'Выйти на всех устройствах',
+    deleteAccQ: 'Точно удалить аккаунт? Это необратимо.',
+    deleteAcc: 'Удалить аккаунт',
+    deleteFoot: 'Удаление сотрёт все траты, друзей и фото без возможности восстановления.',
+    language: 'Язык',
+    tgSection: 'Telegram',
+    linkTg: 'Привязать Telegram',
+    linkFootLogin: 'После привязки можно входить на сайт кнопкой «Войти через Telegram». Бот писать не будет, пока сам не разрешишь.',
+    linkFootBot: 'Откроется бот: нажми «Старт», и он привяжется к аккаунту.',
+    linked: 'привязан',
+    allowBot: 'Разрешить боту писать',
+    unlinkTg: 'Отвязать Telegram',
+    unlinkQ: 'Отвязать Telegram? Входить через Telegram и получать сообщения от бота больше не получится.',
+    saved: 'Сохранить',
+    monthTitle: 'Мой месяц',
+    monthEmpty: 'В этом месяце трат пока нет. Запиши первую — и здесь появится картинка для сторис.',
+    addExpenseBtn: 'Добавить трату',
+    monthSub: 'Картинка для сторис',
+    share: '📤 Поделиться',
+    sendTg: '📩 Прислать картинку в Telegram',
+    prepImg: 'Готовлю картинку…',
+    holdSave: 'Нажми и удерживай картинку, чтобы сохранить, — и выложи в сторис.',
+    imgFail: 'Не получилось сделать картинку — сделай скриншот карточки.',
+    sending: 'Отправляю…',
+    sentChat: 'Отправил в чат с ботом — оттуда легко переслать или выложить в сторис.',
+    sendFail: 'Не получилось отправить. Сохрани картинку вручную.',
+    noConn: 'Нет связи. Сохрани картинку вручную.',
+    cardMy: 'Мой %s',
+    cardForN: 'за %s',
+    cardAllControl: 'Все траты под контролем',
+    cardSameAs: 'Как за те же дни %s',
+    cardDiff: 'На %d%% %s, чем за те же дни %s',
+    cardLess: 'меньше',
+    cardMore: 'больше',
+    cardMostOften: 'Чаще всего: %s × %d',
+    cardInTg: 'Считаю траты в Telegram · @%s',
+    cardInApp: 'Считаю траты в СпендТрекере',
+  },
 };
 
 const en: Dict = {
@@ -397,6 +751,186 @@ const en: Dict = {
     forgotTooMany: 'Too many requests. Try again in an hour.',
     resetExpired: 'The link has expired or was already used. Request a new one.',
     resetDone: "Password changed — you're in",
+  },
+  fl: {
+    sessionExpired: 'Session expired, please log in again',
+    badAmount: 'Enter a valid amount',
+    expenseAdded: 'Expense added',
+    expenseDeleted: 'Entry deleted',
+    friendsOnly: 'The profile is visible to friends only',
+    friendRemoved: 'Removed from friends',
+    selfAdd: "You can't add yourself",
+    userNotFound: 'No user with that username',
+    reqExists: 'A request is already sent or you are already friends',
+    reqSentTo: 'Request sent to %s',
+    reqAccepted: 'Request accepted',
+    reqDeclined: 'Request declined',
+    botUnavailable: 'The Telegram bot is unavailable right now',
+    tgDisconnected: 'Telegram disconnected',
+    tgOtherAccount: 'This Telegram is already connected to another account',
+    tgConnected: 'Telegram connected — now you can log in in one tap',
+    tgLoginOff: 'Telegram login is not set up yet',
+    tgNotConfirmed: "Telegram didn't confirm the login, try again",
+    tgLinked: 'Telegram linked — now you can sign in with Telegram',
+    choosePhoto: 'Choose a photo',
+    photoFail: 'Could not process the photo, try another one',
+    photoUpdated: 'Photo updated',
+    photoDeleted: 'Photo deleted',
+    tokenCreated: 'Token created',
+    pwWrong: 'Current password is wrong',
+    pwShort: 'New password must be at least %d characters',
+    pwChanged: 'Password changed, other devices were logged out',
+    pwSet: 'Password set — now you can log in with your username too',
+    loggedOutAll: 'Done: logged out everywhere except this device',
+    currencyUpdated: 'Currency updated',
+    langUpdated: 'Language updated',
+    accountDeleted: 'Account deleted',
+    bioSaved: 'About saved',
+    bioRemoved: 'About cleared',
+  },
+  app: {
+    demo: 'Demo',
+    greeting: 'Hi, %s',
+    spentIn: 'Spent in %s',
+    today: 'Today',
+    thisWeek: 'This week',
+    voiceBtn: 'Voice',
+    scanBtn: 'Scan',
+    manualBtn: 'Manual',
+    category: 'Category',
+    date: 'Date',
+    store: 'Store',
+    optional: 'Optional',
+    note: 'Note',
+    noteEg: 'Coffee with a friend',
+    addBtn: 'Add',
+    recentH: 'Recent entries',
+    emptyDash: 'No entries yet — say an expense by voice or scan a purchase.',
+    listening: 'Listening…',
+    cancel: 'Cancel',
+    done: 'Done',
+    torch: 'Flash',
+    enterCode: 'Enter the code manually',
+    find: 'Find',
+    byPhoto: 'Recognize from a photo',
+    whatBought: 'What you bought',
+    writeOwn: 'Enter your own',
+    name: 'Name',
+    storeNotFound: "Can't find the store or product? Type a name — the site remembers it here, and next time it will be found automatically.",
+    again: 'Again',
+    addExpense: 'Add expense',
+    friendsSub: 'Who spent how much',
+    pDay: 'Day',
+    pWeek: 'Week',
+    pMonth: 'Month',
+    you: 'You',
+    noFriends: 'No one on the list yet.',
+    requestsH: 'Friend requests',
+    accept: 'Accept',
+    decline: 'Decline',
+    addFriendH: 'Add a friend',
+    friendNick: "Friend's username",
+    invite: 'Invite',
+    friendsFoot: 'Your friend gets a request and shows up in the ranking once they accept it.',
+    friendsBack: 'Friends',
+    friendsSince: 'Friends since %s',
+    stToday: 'Today',
+    stWeek: 'Week',
+    stMonth: 'Month',
+    recentExp: 'Recent expenses',
+    nothingYet: 'Nothing recorded yet.',
+    removeFriendQ: 'Remove from friends?',
+    removeFriend: 'Remove from friends',
+    profileFallback: 'Profile',
+    userFallback: 'User',
+    changePhoto: 'Change photo',
+    profilePhoto: 'Profile photo',
+    removePhoto: 'Remove photo',
+    onboardSince: 'On board since %s',
+    spent: 'Spent',
+    records: 'Entries',
+    friendsLabel: 'Friends',
+    aboutH: 'About',
+    aboutPlaceholder: 'A few words about you — your friends will see them',
+    save: 'Save',
+    tgBotH: 'Telegram bot',
+    tgLinkedText: 'Message or dictate expenses to the bot, like coffee 250, and they show up here right away.',
+    tgLinkedTo: 'Connected to @%s.',
+    openBot: 'Open @%s',
+    disconnect: 'Disconnect',
+    disconnectQ: 'Disconnect the Telegram bot?',
+    tgUnlinkedText: 'Log expenses by message or voice in Telegram: coffee 250, taxi 540 yesterday. The bot guesses the category and sends a recap with /stats.',
+    connectTg: 'Connect Telegram',
+    quickH: 'Quick expense from iPhone',
+    tokenHint: "Add expenses in two taps via the Shortcuts app. Don't show the token to anyone: it can add expenses on your behalf.",
+    copy: 'Copy',
+    copied: 'Copied ✓',
+    addCmd: 'Add the shortcut',
+    howWorks: 'How it works',
+    newTokenBtn: 'Create a new token',
+    newTokenQ: 'The old token will stop working and the shortcut will need updating. Continue?',
+    createToken: 'Create a token',
+    settingsRow: 'Settings',
+    logoutRow: 'Log out',
+    helpH: 'How to add the shortcut',
+    helpSub: 'You only do this once, it takes a minute.',
+    steps: [
+      ['Create a token', 'Tap "Create a token" in the "Quick expense" card. If you already have a token, go to step 2.'],
+      ['Copy the token', 'Tap "Copy". The button briefly shows "Copied".'],
+      ['Open the shortcut', 'Tap "Add the shortcut". The Shortcuts app opens with the "Expense" shortcut.'],
+      ['Paste the token', 'The phone asks for the token. Tap the field, choose "Paste" and tap "Add Shortcut".'],
+      ['Done, go ahead', 'Run the "Expense" shortcut: pick a category, write a note and enter the amount. The expense shows up in the app right away.'],
+    ],
+    tip: 'Tip: to run the shortcut from the home screen, open it in Shortcuts, tap "Share" and choose "Add to Home Screen".',
+    gotIt: 'Got it',
+    avatarErr: 'Could not process the photo, try another one',
+    setLoginLabel: 'Username: %s',
+    currency: 'Currency',
+    password: 'Password',
+    currentPw: 'Current password',
+    newPwPlaceholder: 'New password',
+    pwPlaceholder: 'Password',
+    pwHintNoTg: 'You log in with Telegram. Set a password to also log in with the username %s.',
+    quickRow: 'Quick expense from iPhone',
+    logout: 'Log out',
+    logoutAllQ: 'Log out of the account on all other devices?',
+    logoutAll: 'Log out everywhere',
+    deleteAccQ: 'Really delete the account? This cannot be undone.',
+    deleteAcc: 'Delete account',
+    deleteFoot: 'Deleting erases all expenses, friends and photos with no way to recover them.',
+    language: 'Language',
+    tgSection: 'Telegram',
+    linkTg: 'Link Telegram',
+    linkFootLogin: 'Once linked, you can sign in with the "Log in with Telegram" button. The bot stays silent until you allow it.',
+    linkFootBot: 'The bot opens: tap "Start", and it links to your account.',
+    linked: 'linked',
+    allowBot: 'Allow the bot to message',
+    unlinkTg: 'Unlink Telegram',
+    unlinkQ: "Unlink Telegram? You won't be able to log in with Telegram or get bot messages anymore.",
+    saved: 'Save',
+    monthTitle: 'My month',
+    monthEmpty: 'No expenses this month yet. Record the first one — and a story image appears here.',
+    addExpenseBtn: 'Add expense',
+    monthSub: 'A story image',
+    share: '📤 Share',
+    sendTg: '📩 Send the image to Telegram',
+    prepImg: 'Preparing the image…',
+    holdSave: 'Press and hold the image to save it — and post it to your story.',
+    imgFail: 'Could not make the image — take a screenshot of the card.',
+    sending: 'Sending…',
+    sentChat: 'Sent to the bot chat — easy to forward or post to your story from there.',
+    sendFail: 'Could not send it. Save the image manually.',
+    noConn: 'No connection. Save the image manually.',
+    cardMy: 'My %s',
+    cardForN: 'across %s',
+    cardAllControl: 'Everything under control',
+    cardSameAs: 'Same as the same days in %s',
+    cardDiff: '%d%% %s than the same days in %s',
+    cardLess: 'less',
+    cardMore: 'more',
+    cardMostOften: 'Most often: %s × %d',
+    cardInTg: 'I track expenses in Telegram · @%s',
+    cardInApp: 'I track expenses in SpendTracker',
   },
 };
 

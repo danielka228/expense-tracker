@@ -66,6 +66,7 @@ interface User {
   created_at: string | null;
   session_ver: number;
   bio: string | null;
+  lang: string;
 }
 
 type App = { Bindings: Env; Variables: { user: User } };
@@ -157,7 +158,7 @@ async function getSessionUserId(c: C): Promise<number | null> {
 }
 
 async function login(c: C, userId: number) {
-  const row = await c.env.DB.prepare('SELECT session_ver FROM users WHERE id = ?').bind(userId).first<{ session_ver: number }>();
+  const row = await c.env.DB.prepare('SELECT session_ver, lang FROM users WHERE id = ?').bind(userId).first<{ session_ver: number; lang: string }>();
   await setSignedCookie(c, SESSION_COOKIE, `${userId}.${row?.session_ver ?? 0}`, c.env.SECRET_KEY, {
     path: '/',
     httpOnly: true,
@@ -165,6 +166,8 @@ async function login(c: C, userId: number) {
     sameSite: 'Lax',
     maxAge: SESSION_MAX_AGE,
   });
+  // Язык страниц до входа читается из cookie — ставим её под язык аккаунта, чтобы было единообразно
+  setCookie(c, 'lang', langOf(row?.lang), { path: '/', maxAge: 400 * 24 * 3600, sameSite: 'Lax' });
 }
 
 // Отзывает все входы человека; текущее устройство остаётся в аккаунте
@@ -281,7 +284,7 @@ const loginRequired = async (c: C, next: () => Promise<void>) => {
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(uid).first<User>();
   if (!user) {
     logout(c);
-    flash(c, 'Сессия устарела, войдите заново', 'error');
+    flash(c, flashT(c).sessionExpired, 'error');
     return c.redirect('/login');
   }
   c.set('user', user);
@@ -296,6 +299,9 @@ for (const p of ['/dashboard', '/month', '/month/*', '/delete/*', '/friends', '/
 
 // Язык страниц до входа берём из cookie (переключатель RU/EN ставит её); по умолчанию русский.
 const pageLang = (c: C): Lang => langOf(getCookie(c, 'lang'));
+// Язык для залогиненных: предпочитаем язык аккаунта, иначе cookie.
+const uiLang = (c: C): Lang => langOf((c.get('user') as User | undefined)?.lang ?? getCookie(c, 'lang'));
+const flashT = (c: C) => tr(uiLang(c)).fl;
 
 app.get('/lang/:code', (c) => {
   const code = langOf(c.req.param('code'));
@@ -491,6 +497,7 @@ app.get('/dashboard', async (c) => {
   return c.html(
     dashboardPage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       sym: symbol(user),
       username: user.username,
       demo: c.env.DEMO === '1',
@@ -506,7 +513,7 @@ app.post('/dashboard', async (c) => {
   const rawAmount = formStr(form, 'amount').replace(/,/g, '.').trim();
   const amount = rawAmount === '' ? NaN : Number(rawAmount);
   if (!Number.isFinite(amount)) {
-    flash(c, 'Введите корректную сумму', 'error');
+    flash(c, flashT(c).badAmount, 'error');
     return c.redirect('/dashboard');
   }
 
@@ -529,7 +536,7 @@ app.post('/dashboard', async (c) => {
     barcode && note ? rememberProduct(c.env.DB, barcode, note, category) : null,
     store && hasPos && formStr(form, 'store_src') === 'typed' ? rememberPlace(c.env.DB, store, category, lat, lon, user.id) : null,
   ]);
-  flash(c, 'Трата добавлена', 'success');
+  flash(c, flashT(c).expenseAdded, 'success');
   return c.redirect('/dashboard');
 });
 
@@ -563,6 +570,7 @@ app.get('/month', async (c) => {
   return c.html(
     monthPage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       canSend: !!token && link.results.length > 0,
       card: s.n
         ? {
@@ -708,7 +716,7 @@ app.post('/delete/:id{[0-9]+}', async (c) => {
   const res = await c.env.DB.prepare('DELETE FROM expenses WHERE id = ? AND user_id = ?')
     .bind(Number(c.req.param('id')), c.get('user').id)
     .run();
-  if (res.meta.changes) flash(c, 'Запись удалена', 'success');
+  if (res.meta.changes) flash(c, flashT(c).expenseDeleted, 'success');
   return c.redirect('/dashboard');
 });
 
@@ -753,6 +761,7 @@ app.get('/friends', async (c) => {
   return c.html(
     friendsPage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       sym: symbol(user),
       period,
       board,
@@ -774,7 +783,7 @@ app.get('/friends/:id{[0-9]+}', async (c) => {
   const fs = await db.prepare(FRIENDSHIP_SQL).bind(user.id, fid).first<{ id: number; created_at: string }>();
   const friend = fs ? await db.prepare('SELECT * FROM users WHERE id = ?').bind(fid).first<User>() : null;
   if (!fs || !friend) {
-    flash(c, 'Профиль виден только друзьям', 'error');
+    flash(c, flashT(c).friendsOnly, 'error');
     return c.redirect('/friends');
   }
   const [o, av] = await Promise.all([
@@ -795,6 +804,7 @@ app.get('/friends/:id{[0-9]+}', async (c) => {
   return c.html(
     friendProfilePage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       sym: symbol(user),
       id: fid,
       username: friend.username,
@@ -813,7 +823,7 @@ app.post('/friends/remove/:id{[0-9]+}', async (c) => {
   )
     .bind(c.get('user').id, Number(c.req.param('id')))
     .run();
-  if (res.meta.changes) flash(c, 'Удалён из друзей', 'success');
+  if (res.meta.changes) flash(c, flashT(c).friendRemoved, 'success');
   return c.redirect('/friends');
 });
 
@@ -824,12 +834,12 @@ app.post('/friends/add', async (c) => {
   const targetUsername = formStr(form, 'friend_login').trim().replace(/^@/, '');
 
   if (targetUsername === user.username) {
-    flash(c, 'Нельзя добавить самого себя', 'error');
+    flash(c, flashT(c).selfAdd, 'error');
     return c.redirect('/friends');
   }
   const target = await db.prepare('SELECT id, username FROM users WHERE username = ?').bind(targetUsername).first<{ id: number; username: string }>();
   if (!target) {
-    flash(c, 'Пользователь с таким ником не найден', 'error');
+    flash(c, flashT(c).userNotFound, 'error');
     return c.redirect('/friends');
   }
   const existing = await db
@@ -840,12 +850,12 @@ app.post('/friends/add', async (c) => {
     .bind(user.id, target.id)
     .first();
   if (existing) {
-    flash(c, 'Заявка уже отправлена или вы уже друзья', 'error');
+    flash(c, flashT(c).reqExists, 'error');
     return c.redirect('/friends');
   }
 
   await db.prepare("INSERT INTO friendships (from_user_id, to_user_id, status) VALUES (?, ?, 'pending')").bind(user.id, target.id).run();
-  flash(c, `Заявка отправлена пользователю ${target.username}`, 'success');
+  flash(c, flashT(c).reqSentTo.replace('%s', target.username), 'success');
   return c.redirect('/friends');
 });
 
@@ -853,7 +863,7 @@ app.post('/friends/accept/:id{[0-9]+}', async (c) => {
   const res = await c.env.DB.prepare("UPDATE friendships SET status = 'accepted' WHERE id = ? AND to_user_id = ? AND status = 'pending'")
     .bind(Number(c.req.param('id')), c.get('user').id)
     .run();
-  if (res.meta.changes) flash(c, 'Заявка принята', 'success');
+  if (res.meta.changes) flash(c, flashT(c).reqAccepted, 'success');
   return c.redirect('/friends');
 });
 
@@ -861,7 +871,7 @@ app.post('/friends/decline/:id{[0-9]+}', async (c) => {
   const res = await c.env.DB.prepare("DELETE FROM friendships WHERE id = ? AND to_user_id = ? AND status = 'pending'")
     .bind(Number(c.req.param('id')), c.get('user').id)
     .run();
-  if (res.meta.changes) flash(c, 'Заявка отклонена', 'success');
+  if (res.meta.changes) flash(c, flashT(c).reqDeclined, 'success');
   return c.redirect('/friends');
 });
 
@@ -882,6 +892,7 @@ app.get('/profile', async (c) => {
   return c.html(
     profilePage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       sym: symbol(user),
       shortcutUrl: c.env.SHORTCUT_URL || DEFAULT_SHORTCUT_URL,
       username: user.username,
@@ -903,7 +914,7 @@ app.post('/profile/telegram', async (c) => {
   const token = c.env.TELEGRAM_BOT_TOKEN;
   const bot = token ? await botUsername(botApi(token, c.env.TELEGRAM_API)) : null;
   if (!bot) {
-    flash(c, 'Telegram-бот сейчас недоступен', 'error');
+    flash(c, flashT(c).botUnavailable, 'error');
     return c.redirect('/profile');
   }
   const code = randomBytes(18).toString('base64url');
@@ -919,13 +930,13 @@ const MAX_BIO = 200;
 app.post('/profile/bio', async (c) => {
   const bio = formStr(await c.req.parseBody(), 'bio').replace(/\s+/g, ' ').trim().slice(0, MAX_BIO);
   await c.env.DB.prepare('UPDATE users SET bio = ? WHERE id = ?').bind(bio || null, c.get('user').id).run();
-  flash(c, bio ? 'Описание сохранено' : 'Описание убрано', 'success');
+  flash(c, bio ? flashT(c).bioSaved : flashT(c).bioRemoved, 'success');
   return c.redirect('/profile');
 });
 
 app.post('/profile/telegram/unlink', async (c) => {
   const res = await c.env.DB.prepare('DELETE FROM telegram_links WHERE user_id = ?').bind(c.get('user').id).run();
-  if (res.meta.changes) flash(c, 'Telegram отключён', 'success');
+  if (res.meta.changes) flash(c, flashT(c).tgDisconnected, 'success');
   return c.redirect((await c.req.parseBody())['back'] === 'settings' ? '/settings' : '/profile');
 });
 
@@ -974,9 +985,9 @@ async function linkPendingTelegram(c: C, userId: number) {
   if (!tg) return;
   deleteCookie(c, TG_PENDING_COOKIE, { path: '/', secure: true });
   const taken = await c.env.DB.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tg.id).first<{ user_id: number }>();
-  if (taken && taken.user_id !== userId) return flash(c, 'Этот Telegram уже подключён к другому аккаунту', 'error');
+  if (taken && taken.user_id !== userId) return flash(c, flashT(c).tgOtherAccount, 'error');
   await linkTelegram(c.env.DB, userId, tg);
-  flash(c, 'Telegram подключён — теперь можно входить в один тап', 'success');
+  flash(c, flashT(c).tgConnected, 'success');
 }
 
 // Фото из Telegram становится аватаркой нового аккаунта (только JPEG, как и при обычной загрузке)
@@ -1010,7 +1021,7 @@ app.get('/auth/telegram', async (c) => {
     return c.redirect(`${site}${here.pathname}${here.search}`);
   }
   if (!cfg) {
-    flash(c, 'Вход через Telegram пока не настроен', 'error');
+    flash(c, flashT(c).tgLoginOff, 'error');
     return c.redirect(linking ? back : '/login');
   }
   const s = newLoginState();
@@ -1034,7 +1045,7 @@ app.get('/auth/telegram/callback', async (c) => {
     tg = await finishLogin(cfg, code, saved);
   } catch (e) {
     console.error('telegram login failed', e);
-    flash(c, 'Telegram не подтвердил вход, попробуй ещё раз', 'error');
+    flash(c, flashT(c).tgNotConfirmed, 'error');
     return c.redirect(back);
   }
 
@@ -1042,10 +1053,10 @@ app.get('/auth/telegram/callback', async (c) => {
   const link = await db.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tg.id).first<{ user_id: number }>();
   const uid = await getSessionUserId(c);
   if (saved.link && uid) {
-    if (link && link.user_id !== uid) flash(c, 'Этот Telegram уже подключён к другому аккаунту', 'error');
+    if (link && link.user_id !== uid) flash(c, flashT(c).tgOtherAccount, 'error');
     else {
       await linkTelegram(db, uid, tg);
-      flash(c, 'Telegram привязан — теперь можно входить на сайт через Telegram', 'success');
+      flash(c, flashT(c).tgLinked, 'success');
     }
     return c.redirect(linkBack);
   }
@@ -1187,14 +1198,14 @@ app.post('/profile/avatar', async (c) => {
   const form = await c.req.parseBody();
   const f = form['avatar'];
   if (!(f instanceof File) || f.size === 0) {
-    flash(c, 'Выберите фото', 'error');
+    flash(c, flashT(c).choosePhoto, 'error');
     return c.redirect('/profile');
   }
   const bytes = new Uint8Array(await f.arrayBuffer());
   // Браузер уже сжал фото до 256x256 JPEG; здесь только проверяем, что это действительно JPEG
   const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   if (!isJpeg || bytes.length > MAX_AVATAR_BYTES) {
-    flash(c, 'Не удалось обработать фото, попробуйте другое', 'error');
+    flash(c, flashT(c).photoFail, 'error');
     return c.redirect('/profile');
   }
   await c.env.DB.prepare(
@@ -1203,13 +1214,13 @@ app.post('/profile/avatar', async (c) => {
   )
     .bind(c.get('user').id, bytes)
     .run();
-  flash(c, 'Фото обновлено', 'success');
+  flash(c, flashT(c).photoUpdated, 'success');
   return c.redirect('/profile');
 });
 
 app.post('/profile/avatar/delete', async (c) => {
   await c.env.DB.prepare('DELETE FROM avatars WHERE user_id = ?').bind(c.get('user').id).run();
-  flash(c, 'Фото удалено', 'success');
+  flash(c, flashT(c).photoDeleted, 'success');
   return c.redirect('/profile');
 });
 
@@ -1222,7 +1233,7 @@ app.post('/profile/token', async (c) => {
   )
     .bind(c.get('user').id, token)
     .run();
-  flash(c, 'Токен создан', 'success');
+  flash(c, flashT(c).tokenCreated, 'success');
   return c.redirect('/profile');
 });
 
@@ -1306,6 +1317,7 @@ app.get('/settings', async (c) => {
   return c.html(
     settingsPage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       username: user.username,
       hasPassword: !!user.password_hash,
       telegram: { linked: !!tgLink, tgUsername: tgLink?.tg_username ?? null, bot: tgBot, login: !!tgLoginConfig(c) },
@@ -1323,26 +1335,31 @@ app.post('/settings', async (c) => {
   if (action === 'change_password') {
     // У аккаунта, созданного через Telegram, пароля ещё нет — его задают без «текущего»
     if (user.password_hash && !checkPassword(user.password_hash, formStr(form, 'current_password'))) {
-      flash(c, 'Текущий пароль неверен', 'error');
+      flash(c, flashT(c).pwWrong, 'error');
       return c.redirect('/settings');
     }
     const newPassword = formStr(form, 'new_password');
     if (newPassword.length < MIN_PASSWORD) {
-      flash(c, `Новый пароль должен быть не короче ${MIN_PASSWORD} символов`, 'error');
+      flash(c, flashT(c).pwShort.replace('%d', String(MIN_PASSWORD)), 'error');
       return c.redirect('/settings');
     }
     await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hashPassword(newPassword), user.id).run();
     await revokeSessions(c, user.id); // кто знал старый пароль, вылетает со всех устройств
-    flash(c, user.password_hash ? 'Пароль изменён, другие устройства вышли из аккаунта' : 'Пароль задан — теперь можно входить и по логину', 'success');
+    flash(c, user.password_hash ? flashT(c).pwChanged : flashT(c).pwSet, 'success');
   } else if (action === 'logout_all') {
     await revokeSessions(c, user.id);
-    flash(c, 'Готово: вышли на всех устройствах, кроме этого', 'success');
+    flash(c, flashT(c).loggedOutAll, 'success');
   } else if (action === 'change_currency') {
     const cur = formStr(form, 'currency');
     if (cur in CURRENCIES) {
       await c.env.DB.prepare('UPDATE users SET currency = ? WHERE id = ?').bind(cur, user.id).run();
-      flash(c, 'Валюта обновлена', 'success');
+      flash(c, flashT(c).currencyUpdated, 'success');
     }
+  } else if (action === 'change_lang') {
+    const lng = langOf(formStr(form, 'lang'));
+    await c.env.DB.prepare('UPDATE users SET lang = ? WHERE id = ?').bind(lng, user.id).run();
+    setCookie(c, 'lang', lng, { path: '/', maxAge: 400 * 24 * 3600, sameSite: 'Lax' });
+    flash(c, tr(lng).fl.langUpdated, 'success');
   }
   return c.redirect('/settings');
 });
@@ -1361,7 +1378,7 @@ app.post('/settings/delete_account', async (c) => {
     db.prepare('DELETE FROM users WHERE id = ?').bind(id),
   ]);
   logout(c);
-  flash(c, 'Аккаунт удалён', 'success');
+  flash(c, flashT(c).accountDeleted, 'success');
   return c.redirect('/login');
 });
 
