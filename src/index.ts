@@ -6,7 +6,7 @@ import { recognizeProduct, takeAiQuota } from './vision';
 import { cleanupLimits, hit } from './limits';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
-import { tr, langOf, type Lang } from './i18n';
+import { categoryId, currencySymbol, tr, langOf, type Lang } from './i18n';
 import { authorizeUrl, finishLogin, newLoginState, type TgIdentity, type TgLoginConfig, type TgLoginState } from './tglogin';
 import {
   botApi,
@@ -34,7 +34,6 @@ import {
   tgNewAccountPage,
   friendProfilePage,
   monthPage,
-  MONTHS_NOM,
   profilePage,
   settingsPage,
   type Currency,
@@ -212,7 +211,8 @@ function popFlashes(c: C): Flash[] {
 }
 
 function symbol(user: User) {
-  return (CURRENCIES[user.currency] ?? CURRENCIES.RUB).symbol;
+  const code = user.currency in CURRENCIES ? user.currency : 'RUB';
+  return currencySymbol(code, langOf(user.lang), CURRENCIES[code].symbol);
 }
 
 // ---------- даты (UTC, как было на Render) ----------
@@ -332,8 +332,8 @@ app.post('/register', async (c) => {
     return fail(fe.userExists);
   }
 
-  const row = await c.env.DB.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?) RETURNING id')
-    .bind(username, hashPassword(password))
+  const row = await c.env.DB.prepare('INSERT INTO users (username, password_hash, lang) VALUES (?, ?, ?) RETURNING id')
+    .bind(username, hashPassword(password), pageLang(c))
     .first<{ id: number }>();
   await login(c, row!.id);
   await linkPendingTelegram(c, row!.id);
@@ -390,9 +390,9 @@ app.post('/forgot', async (c) => {
     return c.html(forgotPage([['error', tr(pageLang(c)).fe.forgotTooMany]], false, pageLang(c)));
   }
   const row = await db
-    .prepare('SELECT u.id, u.username, l.chat_id FROM users u JOIN telegram_links l ON l.user_id = u.id WHERE u.username = ?')
+    .prepare('SELECT u.id, u.username, u.lang, l.chat_id FROM users u JOIN telegram_links l ON l.user_id = u.id WHERE u.username = ?')
     .bind(username)
-    .first<{ id: number; username: string; chat_id: number }>();
+    .first<{ id: number; username: string; lang: string; chat_id: number }>();
   const token = c.env.TELEGRAM_BOT_TOKEN;
   if (row && token) {
     const secret = randomBytes(32).toString('base64url');
@@ -405,8 +405,8 @@ app.post('/forgot', async (c) => {
     await tg(botApi(token, c.env.TELEGRAM_API), 'sendMessage', {
       chat_id: row.chat_id,
       parse_mode: 'HTML',
-      text: `🔑 <b>Сброс пароля</b>\n\nКто-то попросил новый пароль для аккаунта <b>${name}</b> на сайте. Ссылка действует 30 минут.\n\nЕсли это был не ты — ничего не делай, пароль останется прежним.`,
-      reply_markup: { inline_keyboard: [[{ text: 'Задать новый пароль', url: `${canonicalOrigin(c) ?? new URL(c.req.url).origin}/reset/${secret}` }]] },
+      text: tr(langOf(row.lang)).srv.resetMsg(name),
+      reply_markup: { inline_keyboard: [[{ text: tr(langOf(row.lang)).srv.resetBtn, url: `${canonicalOrigin(c) ?? new URL(c.req.url).origin}/reset/${secret}` }]] },
     }).catch((e) => console.error('reset message failed', e));
   }
   // Ответ одинаковый для любого логина: по нему нельзя узнать, есть ли такой аккаунт
@@ -599,12 +599,14 @@ app.post('/month/send', async (c) => {
   if (!isJpeg || bytes.length > MAX_PHOTO_BYTES) return c.json({ ok: false, error: 'bad_image' }, 400);
   const api = botApi(token, c.env.TELEGRAM_API);
   const bot = await botUsername(api);
-  const month = MONTHS_NOM[Number(periodStart('month').slice(5, 7)) - 1].toLowerCase();
+  const lang = uiLang(c);
+  const monthNom = tr(lang).months.nom[Number(periodStart('month').slice(5, 7)) - 1];
+  const month = lang === 'en' ? monthNom : monthNom.toLowerCase();
   const r = await sendPhoto(
     api,
     link.chat_id,
     new Blob([bytes], { type: 'image/jpeg' }),
-    `📊 <b>Мой ${month}</b> в СпендТрекере\n\nСохрани картинку и выложи в сторис 👀${bot ? `\nСчитаю траты тут: @${bot}` : ''}`,
+    tr(lang).srv.monthCaption(month, bot),
   );
   return c.json({ ok: r.ok });
 });
@@ -630,7 +632,7 @@ app.post('/api/product/:code{[0-9]{8,14}}/photo', async (c) => {
   const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   if (!isJpeg || bytes.length > MAX_PHOTO_BYTES) return c.json({ ok: false, error: 'bad_image' }, 400);
   if (!(await takeAiQuota(c.env.DB, c.get('user').id))) return c.json({ ok: false, error: 'limit' }, 429);
-  const guess = await recognizeProduct(c.env.AI, bytes);
+  const guess = await recognizeProduct(c.env.AI, bytes, false, uiLang(c));
   return c.json(guess ? { ok: true, name: guess.name, category: guess.category } : { ok: false, error: 'unknown' });
 });
 
@@ -648,7 +650,15 @@ app.get('/api/stores', async (c) => {
 
 // Траты демо-аккаунта и двух друзей; даты считаются от сегодняшнего дня, поэтому данные всегда «свежие»
 const COKE = '5449000000996';
-const DEMO_USERS = ['Демо', 'Аня', 'Макс'];
+const DEMO_USERS: Record<Lang, string[]> = { ru: ['Демо', 'Аня', 'Макс'], en: ['Demo', 'Anya', 'Max'] };
+// Названия демо-трат и магазинов для английской версии
+const DEMO_EN: Record<string, string> = {
+  'Coca-Cola 0,5 л': 'Coca-Cola 0.5 L', Капучино: 'Cappuccino', 'Такси до работы': 'Taxi to work', Продукты: 'Groceries', Кроссовки: 'Sneakers',
+  'Продукты на ужин': 'Dinner groceries', 'Кино с друзьями': 'Movies with friends', Сигареты: 'Cigarettes', Аптека: 'Pharmacy', Ужин: 'Dinner',
+  Бензин: 'Gas', 'Подписка на музыку': 'Music subscription', 'Продукты на неделю': 'Weekly groceries', Витамины: 'Vitamins', Футболка: 'T-shirt',
+  Аренда: 'Rent', Платье: 'Dress', Суши: 'Sushi', Концерт: 'Concert', Каршеринг: 'Car sharing', Пицца: 'Pizza',
+  Пятёрочка: 'Pyatyorochka', Перекрёсток: 'Perekrestok', ВкусВилл: 'VkusVill', Магнит: 'Magnit', Лукойл: 'Lukoil', Лента: 'Lenta',
+};
 const DEMO_EXPENSES: [user: number, daysAgo: number, amount: number, category: string, note: string, store: string | null, barcode: string | null][] = [
   [0, 0, 89, 'Еда', 'Coca-Cola 0,5 л', 'Пятёрочка', COKE],
   [0, 0, 350, 'Еда', 'Капучино', 'Cofix', null],
@@ -681,13 +691,15 @@ app.post('/demo', async (c) => {
   if (c.env.DEMO !== '1') return c.notFound();
   const db = c.env.DB;
   const ids: number[] = [];
-  for (const name of DEMO_USERS) {
+  const lang = pageLang(c);
+  const en = lang === 'en';
+  for (const name of DEMO_USERS[lang]) {
     let row = await db.prepare('SELECT id FROM users WHERE username = ?').bind(name).first<{ id: number }>();
     if (!row) {
       // Пароль случайный: в демо входят только кнопкой
       row = await db
-        .prepare("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, datetime('now', '-40 days')) RETURNING id")
-        .bind(name, hashPassword(randomBytes(18).toString('base64url')))
+        .prepare("INSERT INTO users (username, password_hash, created_at, lang) VALUES (?, ?, datetime('now', '-40 days'), ?) RETURNING id")
+        .bind(name, hashPassword(randomBytes(18).toString('base64url')), lang)
         .first<{ id: number }>();
     }
     ids.push(row!.id);
@@ -705,7 +717,7 @@ app.post('/demo', async (c) => {
           `INSERT INTO expenses (user_id, amount, category, note, expense_date, store, barcode, created_at)
            VALUES (?, ?, ?, ?, date('now', ?), ?, ?, datetime('now', ?, ?))`,
         )
-        .bind(ids[u], amount, category, note, `-${ago} days`, store, barcode, `-${ago} days`, `-${i} minutes`),
+        .bind(ids[u], amount, category, en ? (DEMO_EN[note] ?? note) : note, `-${ago} days`, store && en ? (DEMO_EN[store] ?? store) : store, barcode, `-${ago} days`, `-${i} minutes`),
     ),
   ]);
   await login(c, me);
@@ -1015,7 +1027,7 @@ app.get('/auth/telegram', async (c) => {
   const here = new URL(c.req.url);
   if (site && here.origin !== site) {
     if (linking) {
-      flash(c, `Чтобы привязать Telegram, открой сайт на ${site.replace('https://', '')}`, 'error');
+      flash(c, tr(pageLang(c)).srv.tgOpenOnSite.replace('%s', site.replace('https://', '')), 'error');
       return c.redirect(back);
     }
     return c.redirect(`${site}${here.pathname}${here.search}`);
@@ -1037,7 +1049,7 @@ app.get('/auth/telegram/callback', async (c) => {
   const back = saved?.link ? linkBack : '/login';
   const code = c.req.query('code');
   if (!cfg || !saved || !code || c.req.query('state') !== saved.state) {
-    flash(c, c.req.query('error') ? 'Вход через Telegram отменён' : 'Не получилось войти через Telegram, попробуй ещё раз', 'error');
+    flash(c, c.req.query('error') ? tr(pageLang(c)).srv.tgCancelled : tr(pageLang(c)).srv.tgFailed, 'error');
     return c.redirect(back);
   }
   let tg: TgIdentity;
@@ -1092,11 +1104,11 @@ app.post('/auth/telegram/new', async (c) => {
   for (let i = 2; await db.prepare('SELECT 1 FROM users WHERE username = ?').bind(username).first(); i++) {
     username = i < 10 ? `${base}${i}` : `tg${tg.id}_${i}`;
   }
-  const row = await db.prepare("INSERT INTO users (username, password_hash) VALUES (?, '') RETURNING id").bind(username).first<{ id: number }>();
+  const row = await db.prepare("INSERT INTO users (username, password_hash, lang) VALUES (?, '', ?) RETURNING id").bind(username, pageLang(c)).first<{ id: number }>();
   await linkTelegram(db, row!.id, tg);
   await saveTelegramPhoto(db, row!.id, tg.picture);
   await login(c, row!.id);
-  flash(c, `Аккаунт создан! Твой логин — ${username}`, 'success');
+  flash(c, tr(pageLang(c)).srv.accountCreated.replace('%s', username), 'success');
   return c.redirect('/dashboard');
 });
 
@@ -1120,12 +1132,13 @@ app.post('/tg/auth', async (c) => {
 });
 
 // Распознавание голосовых: Whisper на Workers AI. Подсказка с цифрами — чтобы суммы приходили цифрами, а не словами.
-async function transcribe(ai: Ai, audio: ArrayBuffer) {
+async function transcribe(ai: Ai, audio: ArrayBuffer, lang: Lang) {
   const r = await ai.run('@cf/openai/whisper-large-v3-turbo', {
     audio: Buffer.from(audio).toString('base64'),
-    language: 'ru',
+    language: lang,
     vad_filter: true,
-    initial_prompt: 'Кофе 250 рублей. Вчера такси 540. Продукты 1200.',
+    // Подсказка подталкивает Whisper к тому, как мы диктуем траты: короткие фразы с суммой
+    initial_prompt: lang === 'en' ? 'Coffee 250 dollars. Taxi 540 yesterday. Groceries 1200.' : 'Кофе 250 рублей. Вчера такси 540. Продукты 1200.',
   });
   return r.text ?? '';
 }
@@ -1136,8 +1149,8 @@ function botDeps(env: Env, token: string, siteUrl: string): BotDeps {
     db,
     api: botApi(token, env.TELEGRAM_API),
     file: botFileApi(token, env.TELEGRAM_API),
-    transcribe: env.AI ? (audio) => transcribe(env.AI as Ai, audio) : null,
-    readPhoto: env.AI ? (jpeg) => recognizeProduct(env.AI as Ai, jpeg, true) : null,
+    transcribe: env.AI ? (audio, lang) => transcribe(env.AI as Ai, audio, lang) : null,
+    readPhoto: env.AI ? (jpeg, lang) => recognizeProduct(env.AI as Ai, jpeg, true, lang) : null,
     siteUrl,
     categories: CATEGORIES,
     currencies: CURRENCIES,
@@ -1269,13 +1282,12 @@ app.post('/api/add', async (c) => {
   const rec = token
     ? await c.env.DB.prepare('SELECT user_id FROM api_tokens WHERE token = ?').bind(token).first<{ user_id: number }>()
     : null;
+  // Язык ответа: аккаунта, если токен верный, иначе по заголовку Accept-Language
+  const urow = rec ? await c.env.DB.prepare('SELECT lang FROM users WHERE id = ?').bind(rec.user_id).first<{ lang: string }>() : null;
+  const E = tr(urow ? langOf(urow.lang) : /^en/i.test(c.req.header('Accept-Language') ?? '') ? 'en' : 'ru').srv;
   if (!rec) {
-    const hint = !token
-      ? 'Токен не дошёл: проверь, что в заголовке X-Token выбрана переменная с токеном'
-      : token.length !== 32
-        ? `Пришло ${token.length} символов вместо 32: в действии «Текст» должен быть только токен`
-        : 'Такого токена нет на этом сайте: скопируй токен в Профиле на expense-tracker.hhoh7327.workers.dev';
-    return c.json({ ok: false, error: 'Неверный токен', hint }, 401);
+    const hint = !token ? E.apiTokenMissing : token.length !== 32 ? E.apiTokenLen(token.length) : E.apiTokenUnknown(new URL(c.req.url).host);
+    return c.json({ ok: false, error: E.apiBadToken, hint }, 401);
   }
 
   const rawAmount = field('amount');
@@ -1287,7 +1299,7 @@ app.post('/api/add', async (c) => {
     return c.json(
       {
         ok: false,
-        error: 'Некорректная сумма',
+        error: E.apiBadAmount,
         received: String(rawAmount),
         keys: [...Object.keys(data), ...Object.keys(form)],
         content_type: contentType || null,
@@ -1295,9 +1307,9 @@ app.post('/api/add', async (c) => {
       400,
     );
   }
-  if (amount <= 0) return c.json({ ok: false, error: 'Сумма должна быть больше нуля', received: String(rawAmount) }, 400);
+  if (amount <= 0) return c.json({ ok: false, error: E.apiAmountPositive, received: String(rawAmount) }, 400);
 
-  let category = String(field('category')).trim();
+  let category = categoryId(String(field('category')).trim());
   if (!CATEGORIES.includes(category)) category = 'Прочее';
   const note = [...String(field('note')).trim()].slice(0, 255).join('');
 

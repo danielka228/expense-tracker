@@ -29,7 +29,9 @@ const CATEGORY_LABELS_EN: Record<string, string> = {
 };
 
 export interface Dict {
+  cl: typeof CLIENT_RU;
   brand: string;
+  mascotAlt: string;
   htmlLang: string;
   ogLocale: string;
   shareTitle: string;
@@ -129,6 +131,21 @@ export interface Dict {
     forgotTooMany: string;
     resetExpired: string;
     resetDone: string;
+  };
+  srv: {
+    tgOpenOnSite: string; // %s — адрес сайта
+    tgCancelled: string;
+    tgFailed: string;
+    accountCreated: string; // %s — логин
+    resetMsg(name: string): string;
+    resetBtn: string;
+    monthCaption(month: string, bot: string | null): string;
+    apiTokenMissing: string;
+    apiTokenLen(n: number): string;
+    apiTokenUnknown(host: string): string;
+    apiBadToken: string;
+    apiBadAmount: string;
+    apiAmountPositive: string;
   };
   fl: {
     sessionExpired: string;
@@ -306,8 +323,108 @@ export interface Dict {
   };
 }
 
+
+// Строки для браузерных скриптов (голос, сканер, магазины рядом). Приезжают в страницу как window.T.
+// Английский описан через typeof русского: набор ключей не разойдётся.
+const CLIENT_RU = {
+  speechLang: 'ru-RU',
+  dec: ',',
+  m: 'м',
+  km: 'км',
+  noStores: 'Рядом ничего не нашлось',
+  geoDenied: 'Нет доступа к геопозиции',
+  geoFail: 'Не удалось определить место',
+  speak: 'Говори…',
+  done: 'Готово',
+  voiceEg: 'Например: «кофе с другом 350» или «вчера такси 1200»',
+  voiceOff: 'Голосовой ввод недоступен',
+  voiceNoBrowser: 'Этот браузер не умеет распознавать речь. Открой сайт в Safari или Chrome.',
+  listening: 'Слушаю…',
+  errMic: 'Нет доступа к микрофону — разреши его в настройках браузера',
+  errSvc: 'Распознавание речи выключено в настройках телефона',
+  errNet: 'Нет связи с сервером распознавания',
+  errCap: 'Микрофон не найден',
+  errNone: 'Ничего не услышал — попробуй ещё раз',
+  retryHint: 'Нажми «Ещё раз» и говори сразу',
+  again: 'Ещё раз',
+  doneTick: 'Готово ✓',
+  noAmount: 'Сумму не расслышал — впиши её вручную',
+  recognizing: 'Распознаю…',
+  months: ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'],
+  torchNo: 'Вспышка недоступна в этом браузере',
+  pointCam: 'Наведи камеру на штрих-код',
+  camNo: 'Камера недоступна',
+  scanFail: 'Не удалось запустить сканер',
+  camDenied: 'Нет доступа к камере — разреши её в настройках',
+  searching: 'Ищу товар…',
+  notFound: 'Товар не найден',
+  typeName: 'Впиши название — запомню его для этого кода',
+  nameEg: 'Например, Winston Blue',
+  whatBought: 'Что купил',
+  looking: 'Смотрю на фото…',
+  looksLike: 'Похоже на «%s». Проверь название — оно запомнится для этого кода.',
+  photoLimit: 'На сегодня фото закончились — впиши название сам.',
+  photoUnknown: 'Не разобрал товар на фото. Попробуй ещё раз или впиши название.',
+  photoSendFail: 'Не получилось отправить фото. Впиши название сам.',
+  lastTime: 'В прошлый раз',
+  usually: 'обычно',
+  purchases: 'покупок',
+  nearby: 'Рядом',
+  mrp: 'МРЦ на упаковке',
+  store: 'Магазин',
+};
+const CLIENT_EN: typeof CLIENT_RU = {
+  speechLang: 'en-US',
+  dec: '.',
+  m: 'm',
+  km: 'km',
+  noStores: 'Nothing found nearby',
+  geoDenied: 'Location access denied',
+  geoFail: "Couldn't determine the place",
+  speak: 'Speak…',
+  done: 'Done',
+  voiceEg: 'For example: "coffee with a friend 350" or "taxi 1200 yesterday"',
+  voiceOff: 'Voice input is unavailable',
+  voiceNoBrowser: "This browser can't recognize speech. Open the site in Safari or Chrome.",
+  listening: 'Listening…',
+  errMic: 'No microphone access — allow it in your browser settings',
+  errSvc: 'Speech recognition is turned off in your phone settings',
+  errNet: 'No connection to the recognition server',
+  errCap: 'Microphone not found',
+  errNone: "Didn't hear anything — try again",
+  retryHint: 'Tap "Again" and start speaking right away',
+  again: 'Again',
+  doneTick: 'Done ✓',
+  noAmount: "Couldn't catch the amount — type it in",
+  recognizing: 'Recognizing…',
+  months: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'],
+  torchNo: 'Flash is not available in this browser',
+  pointCam: 'Point the camera at a barcode',
+  camNo: 'Camera unavailable',
+  scanFail: "Couldn't start the scanner",
+  camDenied: 'No camera access — allow it in settings',
+  searching: 'Looking for the product…',
+  notFound: 'Product not found',
+  typeName: "Enter a name — I'll remember it for this code",
+  nameEg: 'For example, Winston Blue',
+  whatBought: 'What you bought',
+  looking: 'Looking at the photo…',
+  looksLike: 'Looks like "%s". Check the name — it will be remembered for this code.',
+  photoLimit: 'No more photos for today — enter the name yourself.',
+  photoUnknown: "Couldn't recognize the product in the photo. Try again or enter the name.",
+  photoSendFail: "Couldn't send the photo. Enter the name yourself.",
+  lastTime: 'Last time',
+  usually: 'usually',
+  purchases: 'purchases',
+  nearby: 'Nearby',
+  mrp: 'Recommended price on the pack',
+  store: 'Store',
+};
+
 const ru: Dict = {
+  cl: CLIENT_RU,
   brand: 'СпендТрекер',
+  mascotAlt: 'Трэк, персонаж СпендТрекера',
   htmlLang: 'ru',
   ogLocale: 'ru_RU',
   shareTitle: 'СпендТрекер — траты под контролем',
@@ -437,6 +554,21 @@ const ru: Dict = {
     forgotTooMany: 'Слишком много запросов. Попробуй через час.',
     resetExpired: 'Ссылка устарела или уже использована. Запроси новую.',
     resetDone: 'Пароль изменён — ты в аккаунте',
+  },
+  srv: {
+    tgOpenOnSite: 'Чтобы привязать Telegram, открой сайт на %s',
+    tgCancelled: 'Вход через Telegram отменён',
+    tgFailed: 'Не получилось войти через Telegram, попробуй ещё раз',
+    accountCreated: 'Аккаунт создан! Твой логин — %s',
+    resetMsg: (name) => `🔑 <b>Сброс пароля</b>\n\nКто-то попросил новый пароль для аккаунта <b>${name}</b> на сайте. Ссылка действует 30 минут.\n\nЕсли это был не ты — ничего не делай, пароль останется прежним.`,
+    resetBtn: 'Задать новый пароль',
+    monthCaption: (month, bot) => `📊 <b>Мой ${month}</b> в СпендТрекере\n\nСохрани картинку и выложи в сторис 👀${bot ? `\nСчитаю траты тут: @${bot}` : ''}`,
+    apiTokenMissing: 'Токен не дошёл: проверь, что в заголовке X-Token выбрана переменная с токеном',
+    apiTokenLen: (n) => `Пришло ${n} символов вместо 32: в действии «Текст» должен быть только токен`,
+    apiTokenUnknown: (host) => `Такого токена нет на этом сайте: скопируй токен в Профиле на ${host}`,
+    apiBadToken: 'Неверный токен',
+    apiBadAmount: 'Некорректная сумма',
+    apiAmountPositive: 'Сумма должна быть больше нуля',
   },
   fl: {
     sessionExpired: 'Сессия устарела, войдите заново',
@@ -621,7 +753,9 @@ const ru: Dict = {
 };
 
 const en: Dict = {
+  cl: CLIENT_EN,
   brand: 'SpendTracker',
+  mascotAlt: 'Track, the SpendTracker mascot',
   htmlLang: 'en',
   ogLocale: 'en_US',
   shareTitle: 'SpendTracker — your money, under control',
@@ -751,6 +885,21 @@ const en: Dict = {
     forgotTooMany: 'Too many requests. Try again in an hour.',
     resetExpired: 'The link has expired or was already used. Request a new one.',
     resetDone: "Password changed — you're in",
+  },
+  srv: {
+    tgOpenOnSite: 'To link Telegram, open the site at %s',
+    tgCancelled: 'Telegram login was cancelled',
+    tgFailed: "Couldn't log in with Telegram, try again",
+    accountCreated: 'Account created! Your username is %s',
+    resetMsg: (name) => `🔑 <b>Password reset</b>\n\nSomeone asked for a new password for the account <b>${name}</b> on the site. The link is valid for 30 minutes.\n\nIf it wasn't you — do nothing, the password stays the same.`,
+    resetBtn: 'Set a new password',
+    monthCaption: (month, bot) => `📊 <b>My ${month}</b> in SpendTracker\n\nSave the picture and post it to your story 👀${bot ? `\nI track expenses here: @${bot}` : ''}`,
+    apiTokenMissing: 'The token did not arrive: check that the X-Token header uses the variable with the token',
+    apiTokenLen: (n) => `Got ${n} characters instead of 32: the "Text" action should contain only the token`,
+    apiTokenUnknown: (host) => `There is no such token on this site: copy the token from your Profile on ${host}`,
+    apiBadToken: 'Invalid token',
+    apiBadAmount: 'Invalid amount',
+    apiAmountPositive: 'The amount must be greater than zero',
   },
   fl: {
     sessionExpired: 'Session expired, please log in again',
@@ -935,5 +1084,15 @@ const en: Dict = {
 };
 
 export const tr = (lang: Lang): Dict => (lang === 'en' ? en : ru);
+// Символы, которые у нас записаны кириллицей («сом», «сум»), в английском интерфейсе пишем латиницей
+const CURRENCY_SYMBOLS_EN: Record<string, string> = { KGS: 'som', UZS: "so'm" };
+export const currencySymbol = (code: string, lang: Lang, base: string) => (lang === 'en' ? (CURRENCY_SYMBOLS_EN[code] ?? base) : base);
 export const currencyLabel = (code: string, lang: Lang, ruLabel: string) => (lang === 'en' ? (CURRENCY_LABELS_EN[code] ?? ruLabel) : ruLabel);
+// Обратное к categoryLabel: «Food» → «Еда». «Быстрая команда» и другие внешние источники могут прислать английское название
+export const categoryId = (label: string) =>
+  Object.entries(CATEGORY_LABELS_EN).find(([, en]) => en.toLowerCase() === label.trim().toLowerCase())?.[0] ?? label;
 export const categoryLabel = (cat: string, lang: Lang) => (lang === 'en' ? (CATEGORY_LABELS_EN[cat] ?? cat) : cat);
+
+/** <script>-текст, который кладёт словарь в window.T (< экранируем, чтобы строка не закрыла тег script) */
+export const clientScript = (lang: Lang) =>
+  `window.T=${JSON.stringify(tr(lang).cl).replace(/</g, '\\u003c')};window.LANG=${JSON.stringify(lang)};`;

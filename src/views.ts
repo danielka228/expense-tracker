@@ -4,7 +4,7 @@ import { COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, VOICE_JS } from './c
 import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS } from './styles';
 import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
 import { plural } from './trek';
-import { tr, categoryLabel, currencyLabel, LANGS, LANG_LABEL, type Lang } from './i18n';
+import { tr, categoryLabel, clientScript, currencyLabel, currencySymbol, LANGS, LANG_LABEL, type Lang } from './i18n';
 
 type H = HtmlEscapedString | Promise<HtmlEscapedString>;
 export type Flash = [category: string, message: string];
@@ -81,7 +81,7 @@ ${o.share
 <meta property="og:image" content="${o.share}/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Трэк, персонаж СпендТрекера">
+<meta property="og:image:alt" content="${S.mascotAlt}">
 <meta name="twitter:card" content="summary_large_image">`
   : ''}
 <style>
@@ -92,7 +92,7 @@ ${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
   ${o.bare ? content : html`<div class="${o.center ? 'center-wrap' : 'wrap'}">${content}</div>`}
   ${o.loggedIn ? html`<nav class="tabbar">${tabs}
   </nav>` : ''}
-  <script>${raw(COMMON_JS)}${raw(MASCOT_JS)}${raw(o.scripts ?? '')}</script>
+  <script>${o.scripts ? raw(clientScript(o.lang ?? 'ru')) : ''}${raw(COMMON_JS)}${raw(MASCOT_JS)}${raw(o.scripts ?? '')}</script>
 </body>
 </html>`;
 }
@@ -147,7 +147,7 @@ export function landingPage(d: { demo: boolean; origin: string; lang: Lang }) {
 </header>
 <main class="l-wrap">
   <section class="l-hero">
-    <div class="reveal" style="margin-bottom:14px">${raw(mascot('wave', 112))}</div>
+    <div class="reveal" style="margin-bottom:14px">${raw(mascot('wave', 112, '', d.lang))}</div>
     <div class="eyebrow reveal">${L.eyebrow}</div>
     <h1 class="l-h1 reveal" style="--d:.08s">${L.h1a}<br><span class="g">${L.h1b}</span></h1>
     <p class="l-lead reveal" style="--d:.16s">${L.lead}</p>
@@ -225,7 +225,7 @@ export function landingPage(d: { demo: boolean; origin: string; lang: Lang }) {
   </section>
 
   <section class="l-cta">
-    <div class="reveal" style="margin-bottom:10px">${raw(mascot('happy', 96))}</div>
+    <div class="reveal" style="margin-bottom:10px">${raw(mascot('happy', 96, '', d.lang))}</div>
     <h2 class="l-h2 reveal">${L.ctaSecH}</h2>
     <p class="l-p reveal" style="margin:0 auto 28px">${L.ctaSecP}</p>
     <div class="l-ctas reveal">${cta}</div>
@@ -260,7 +260,7 @@ export function authPage(
     { title: isLogin ? A.titleLogin : A.titleRegister, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS + TG_CSS, share: opts.origin },
     html`<div style="position:absolute; top:max(14px, env(safe-area-inset-top)); right:16px">${langToggle(lang, isLogin ? '/login' : '/register')}</div>
 <div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(isLogin ? 'wave' : 'happy', 104))}</div>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(isLogin ? 'wave' : 'happy', 104, '', lang))}</div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? A.headLogin : A.headRegister}</h1>
 <p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${isLogin ? A.subLogin : A.subRegister}</p>
 ${opts.tgPending
@@ -292,7 +292,7 @@ export function forgotPage(flashes: Flash[], sent = false, lang: Lang = 'ru') {
   return layout(
     { title: F.title, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(sent ? 'wink' : 'worried', 104))}</div>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(sent ? 'wink' : 'worried', 104, '', lang))}</div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${sent ? F.headSent : F.headAsk}</h1>
 ${sent
   ? html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${F.sent1}</p>
@@ -314,7 +314,7 @@ export function resetPage(flashes: Flash[], username: string, lang: Lang = 'ru')
   return layout(
     { title: R.title, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104))}</div>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104, '', lang))}</div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${R.head}</h1>
 <p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${R.forAccount} <b>${username}</b></p>
 <form method="POST" class="reveal" style="--d:.15s">
@@ -334,7 +334,7 @@ export function tgNewAccountPage(flashes: Flash[], name: string, lang: Lang = 'r
   return layout(
     { title: T.title, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS + TG_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('wave', 104))}</div>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('wave', 104, '', lang))}</div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${T.hi}, ${name}!</h1>
 <p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${T.text}</p>
 <form method="POST" action="/auth/telegram/new" class="reveal" style="--d:.15s; margin:0">
@@ -362,7 +362,7 @@ export function tgAppPage(next: string, lang: Lang = 'ru') {
   @keyframes tg-spin { to { transform: rotate(360deg); } }`,
     },
     html`<div style="height: max(18vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104))}</div>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104, '', lang))}</div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${S.brand}</h1>
 <p class="reveal" id="tg-status" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 0">${T.signingIn}</p>
 <div class="tg-spin" id="tg-spin"></div>
@@ -471,9 +471,10 @@ function dayTitle(iso: string, today: string, lang: Lang = 'ru') {
   return lang === 'en' ? `${S.months.short[d.getUTCMonth()]} ${d.getUTCDate()}` : `${d.getUTCDate()} ${S.months.short[d.getUTCMonth()]}`;
 }
 
-function shortNum(n: number) {
-  if (n >= 10000) return `${Math.round(n / 1000)}к`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1).replace('.0', '').replace('.', ',')}к`;
+function shortNum(n: number, lang: Lang = 'ru') {
+  const en = lang === 'en';
+  if (n >= 10000) return `${Math.round(n / 1000)}${en ? 'k' : 'к'}`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace('.0', '').replace('.', en ? '.' : ',')}${en ? 'k' : 'к'}`;
   return fmt0(n);
 }
 
@@ -493,7 +494,7 @@ function donut(byCategory: { category: string; total: number }[], sum: number, s
   });
   return html`<div class="donut">
     <svg viewBox="0 0 128 128"><circle cx="64" cy="64" r="${R}" stroke="rgba(255,255,255,.05)"/>${segs}</svg>
-    <div class="center"><div class="v">${shortNum(sum)}</div><div class="k">${sym} ${lang === 'en' ? 'this month' : 'за месяц'}</div></div>
+    <div class="center"><div class="v">${shortNum(sum, lang)}</div><div class="k">${sym} ${lang === 'en' ? 'this month' : 'за месяц'}</div></div>
   </div>`;
 }
 
@@ -517,7 +518,7 @@ function weekWidget(week: { date: string; total: number }[], today: string, sym:
       const dow = S.weekdays[new Date(r.date + 'T00:00:00Z').getUTCDay()];
       return html`<div class="col ${r.date === today ? 'today' : ''}" style="--k:${k}">
         <div class="bar-wrap" style="--h: ${h}%">
-          ${r.total ? html`<span class="val">${shortNum(r.total)}</span>` : ''}
+          ${r.total ? html`<span class="val">${shortNum(r.total, lang)}</span>` : ''}
           <div class="bar" style="height: ${h}%"></div>
         </div>
         <div class="day">${dow}</div>
@@ -634,7 +635,7 @@ function kopiCard(d: { sym: string; today: string; todayTotal: number; monthTota
         'Хе-хе, щекотно! 😄',
       ];
   return html`<div class="kopi-card reveal" style="--d:.03s" data-tips="${JSON.stringify(tips)}" data-i="0">
-  ${raw(mascot(mood, 64))}
+  ${raw(mascot(mood, 64, '', lang))}
   <div class="kopi-bubble"><span class="who">${en ? 'Track' : 'Трэк'}</span><span class="kopi-text">${raw(text)}</span></div>
 </div>`;
 }
@@ -724,7 +725,7 @@ ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory
   <h3 style="margin-bottom:2px;">${A.recentH}</h3>
   ${d.recent.length
     ? recentRows
-    : html`<div class="kopi-empty">${raw(mascot('sleep', 72))}<div>${A.emptyDash}</div></div>`}
+    : html`<div class="kopi-empty">${raw(mascot('sleep', 72, '', d.lang))}<div>${A.emptyDash}</div></div>`}
 </div>
 
 <div class="sheet-back" id="voice">
@@ -1159,7 +1160,7 @@ export function settingsPage(d: {
 }) {
   const S = tr(d.lang);
   const A = S.app;
-  const curLabel = (code: string, info: Currency) => `${currencyLabel(code, d.lang, info.label)} (${info.symbol})`;
+  const curLabel = (code: string, info: Currency) => `${currencyLabel(code, d.lang, info.label)} (${currencySymbol(code, d.lang, info.symbol)})`;
   const cur = d.currencies[d.currentCurrency] ?? Object.values(d.currencies)[0];
   return layout(
     { title: S.nav.settings, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'settings', extraCss: SETTINGS_CSS },
@@ -1293,7 +1294,7 @@ export function monthPage(d: { flashes: Flash[]; card: MonthCard | null; canSend
   if (!d.card) {
     return layout(
       { title: A.monthTitle, flashes: d.flashes, loggedIn: true, lang: d.lang, extraCss: DASHBOARD_CSS + css },
-      html`${header(A.monthTitle)}<div class="card reveal" style="text-align:center">${raw(mascot('sleep', 110))}<p style="margin:12px 0 0">${A.monthEmpty}</p><a class="btn" href="/dashboard" style="margin-top:14px">${A.addExpenseBtn}</a></div>`,
+      html`${header(A.monthTitle)}<div class="card reveal" style="text-align:center">${raw(mascot('sleep', 110, '', d.lang))}<p style="margin:12px 0 0">${A.monthEmpty}</p><a class="btn" href="/dashboard" style="margin-top:14px">${A.addExpenseBtn}</a></div>`,
     );
   }
   return layout(
