@@ -147,7 +147,7 @@ export const COMMON_JS = `
   window.esc = esc;
   window.renderStoreChips = function (box, stores, selected, onPick) {
     box.innerHTML = stores.map(function (s, i) {
-      var d = s.distance < 1000 ? s.distance + ' м' : (s.distance / 1000).toFixed(1).replace('.', ',') + ' км';
+      var d = s.distance < 1000 ? s.distance + ' ' + T.m : (s.distance / 1000).toFixed(1).replace('.', T.dec) + ' ' + T.km;
       return '<button type="button" class="schip' + (s.name === selected ? ' on' : '') + '" style="--d:' + (i * 0.05) + 's" data-i="' + i + '">' +
         '<span class="logo" style="background:' + esc(s.color) + '">' + esc(s.name.charAt(0).toUpperCase()) + '</span>' +
         esc(s.name) + ' <small>' + d + '</small></button>';
@@ -199,7 +199,7 @@ export const DASH_JS = `
   if (loc) loc.addEventListener('click', function () {
     box.innerHTML = '<span class="schip skeleton"></span><span class="schip skeleton"></span><span class="schip skeleton"></span>';
     window.Geo.stores().then(function (stores) {
-      if (!stores.length) { box.innerHTML = ''; storeInp.placeholder = 'Рядом ничего не нашлось'; return; }
+      if (!stores.length) { box.innerHTML = ''; storeInp.placeholder = T.noStores; return; }
       window.renderStoreChips(box, stores, storeInp.value, function (s) {
         storeInp.value = s ? s.name : '';
         form.elements['store_src'].value = s ? 'chip' : '';
@@ -208,7 +208,7 @@ export const DASH_JS = `
       });
     }).catch(function (e) {
       box.innerHTML = '';
-      storeInp.placeholder = e === 'denied' ? 'Нет доступа к геопозиции' : 'Не удалось определить место';
+      storeInp.placeholder = e === 'denied' ? T.geoDenied : T.geoFail;
     });
   });
 })();
@@ -238,7 +238,7 @@ export const VOICE_JS = `
 
   function setStatus(txt, recDot) { statusEl.innerHTML = (recDot ? '<span class="rec"></span>' : '') + esc(txt); }
   function renderText() {
-    if (!finalText && !interim) { textEl.innerHTML = '<span class="interim">Говори…</span>'; return; }
+    if (!finalText && !interim) { textEl.innerHTML = '<span class="interim">' + esc(T.speak) + '</span>'; return; }
     textEl.innerHTML = esc(finalText) + '<span class="interim">' + esc(interim) + '</span>';
   }
   function setStop(label, isRetry) { stopLabel.textContent = label; retry = isRetry; }
@@ -273,7 +273,7 @@ export const VOICE_JS = `
   function startRecognition() {
     var r = new SR();
     rec = r;
-    r.lang = 'ru-RU';
+    r.lang = T.speechLang;
     r.interimResults = true;
     r.continuous = false;
     r.maxAlternatives = 1;
@@ -305,18 +305,18 @@ export const VOICE_JS = `
   function start() {
     finalText = ''; interim = ''; errorCode = ''; retried = false; speaking = 0;
     renderText();
-    setStop('Готово', false);
+    setStop(T.done, false);
     stopBtn.style.display = '';
-    hintEl.textContent = 'Например: «кофе с другом 350» или «вчера такси 1200»';
+    hintEl.textContent = T.voiceEg;
     window.Sheet.open(back);
     if (!SR) {
-      setStatus('Голосовой ввод недоступен');
-      textEl.innerHTML = '<span class="interim">Этот браузер не умеет распознавать речь. Открой сайт в Safari или Chrome.</span>';
+      setStatus(T.voiceOff);
+      textEl.innerHTML = '<span class="interim">' + esc(T.voiceNoBrowser) + '</span>';
       stopBtn.style.display = 'none';
       return;
     }
     listening = true;
-    setStatus('Слушаю…', true);
+    setStatus(T.listening, true);
     startRecognition();
     startMeter();
     if (!raf) raf = requestAnimationFrame(draw);
@@ -329,14 +329,14 @@ export const VOICE_JS = `
     if (!back.classList.contains('open')) return;
     if (!text) {
       var msg = {
-        'not-allowed': 'Нет доступа к микрофону — разреши его в настройках браузера',
-        'service-not-allowed': 'Распознавание речи выключено в настройках телефона',
-        'network': 'Нет связи с сервером распознавания',
-        'audio-capture': 'Микрофон не найден'
-      }[errorCode] || 'Ничего не услышал — попробуй ещё раз';
+        'not-allowed': T.errMic,
+        'service-not-allowed': T.errSvc,
+        'network': T.errNet,
+        'audio-capture': T.errCap
+      }[errorCode] || T.errNone;
       setStatus(msg);
-      textEl.innerHTML = '<span class="interim">Нажми «Ещё раз» и говори сразу</span>';
-      setStop('Ещё раз', true);
+      textEl.innerHTML = '<span class="interim">' + esc(T.retryHint) + '</span>';
+      setStop(T.again, true);
       return;
     }
     var p = parseVoice(text, form.getAttribute('data-today'));
@@ -346,7 +346,7 @@ export const VOICE_JS = `
     if (p.category) { catEl.value = p.category; window.markFilled(catEl); }
     if (p.note) { noteEl.value = p.note; window.markFilled(noteEl); }
     if (p.date) { dateEl.value = p.date; window.markFilled(dateEl); }
-    setStatus(p.amount !== null ? 'Готово ✓' : 'Сумму не расслышал — впиши её вручную');
+    setStatus(p.amount !== null ? T.doneTick : T.noAmount);
     setTimeout(function () {
       window.Sheet.close(back);
       form.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -415,7 +415,7 @@ export const VOICE_JS = `
   btn.addEventListener('click', start);
   stopBtn.addEventListener('click', function () {
     if (retry) { start(); return; }
-    if (rec) { setStatus('Распознаю…'); try { rec.stop(); } catch (e) { finish(); } }
+    if (rec) { setStatus(T.recognizing); try { rec.stop(); } catch (e) { finish(); } }
     else window.Sheet.close(back);
   });
   cancelBtn.addEventListener('click', function () { window.Sheet.close(back); });
@@ -478,8 +478,8 @@ export const SCAN_JS = `
   function setMsg(t) { msg.textContent = t || ''; }
   function money(n) { return Math.round(n).toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, '\\u202f') + ' ' + sym; }
   function shortDate(iso) {
-    var m = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
-    return (+iso.slice(8, 10)) + ' ' + m[+iso.slice(5, 7) - 1];
+    var mon = T.months[+iso.slice(5, 7) - 1], day = +iso.slice(8, 10);
+    return LANG === 'en' ? mon + ' ' + day : day + ' ' + mon;
   }
 
   function loadScript(src) {
@@ -518,8 +518,8 @@ export const SCAN_JS = `
       if (navigator.vibrate) navigator.vibrate(10);
     }).catch(function () {
       setTorch(false);
-      setMsg('Вспышка недоступна в этом браузере');
-      setTimeout(function () { setMsg(code || 'Наведи камеру на штрих-код'); }, 2000);
+      setMsg(T.torchNo);
+      setTimeout(function () { setMsg(code || T.pointCam); }, 2000);
     });
   });
 
@@ -530,17 +530,17 @@ export const SCAN_JS = `
     stream = null; video.srcObject = null; busy = false;
   }
   function startCamera() {
-    setMsg('Наведи камеру на штрих-код');
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setMsg('Камера недоступна'); manualBox.hidden = false; return; }
+    setMsg(T.pointCam);
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { setMsg(T.camNo); manualBox.hidden = false; return; }
     navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false })
       .then(function (s) {
         if (!back.classList.contains('open') || code) { s.getTracks().forEach(function (t) { t.stop(); }); return; }
         stream = s; video.srcObject = s;
         var pl = video.play(); if (pl && pl.catch) pl.catch(function () {});
-        return getDetector().then(loop).catch(function () { setMsg('Не удалось запустить сканер'); manualBox.hidden = false; });
+        return getDetector().then(loop).catch(function () { setMsg(T.scanFail); manualBox.hidden = false; });
       })
       .catch(function (e) {
-        setMsg(e && e.name === 'NotAllowedError' ? 'Нет доступа к камере — разреши её в настройках' : 'Камера недоступна');
+        setMsg(e && e.name === 'NotAllowedError' ? T.camDenied : T.camNo);
         manualBox.hidden = false;
       });
   }
@@ -573,7 +573,7 @@ export const SCAN_JS = `
     setTimeout(function () { stopCamera(); vf.classList.add('done'); }, 420);
     manualBox.hidden = true; manualToggle.hidden = true;
     result.hidden = false;
-    prodEl.innerHTML = '<div class="pic none">' + BOX_SVG + '</div><div><div class="pn">Ищу товар…</div><div class="pb">' + esc(c) + '</div></div>';
+    prodEl.innerHTML = '<div class="pic none">' + BOX_SVG + '</div><div><div class="pn">' + esc(T.searching) + '</div><div class="pb">' + esc(c) + '</div></div>';
     fetch('/api/product/' + c, { credentials: 'same-origin' }).then(function (r) { return r.json(); }).then(function (j) {
       product = j.product; prices = j.prices || prices; aiOn = !!j.ai;
     }).catch(function () {
@@ -583,12 +583,12 @@ export const SCAN_JS = `
 
   function renderProduct() {
     var p = product;
-    var title = p.found ? (p.name || p.brand) : 'Товар не найден';
-    var sub = p.found ? [p.name && p.brand ? p.brand : null, p.quantity].filter(Boolean).join(' · ') : 'Впиши название — запомню его для этого кода';
+    var title = p.found ? (p.name || p.brand) : T.notFound;
+    var sub = p.found ? [p.name && p.brand ? p.brand : null, p.quantity].filter(Boolean).join(' · ') : T.typeName;
     var pic = p.image ? '<div class="pic" style="background-image:url(&quot;' + esc(p.image) + '&quot;)"></div>' : '<div class="pic none">' + BOX_SVG + '</div>';
     prodEl.innerHTML = pic + '<div style="min-width:0"><div class="pn">' + esc(title) + '</div><div class="pb">' + esc(sub || p.barcode) + '</div></div>';
     nameEl.value = p.found ? [p.name || p.brand, p.quantity].filter(Boolean).join(' ') : '';
-    nameEl.placeholder = meta.tobacco ? 'Например, Winston Blue' : 'Что купил';
+    nameEl.placeholder = meta.tobacco ? T.nameEg : T.whatBought;
     // Код с пачки однозначно говорит, что это табак — категорию ставим сами
     if (p.category) catEl.value = p.category; else if (meta.tobacco) catEl.value = 'Табак';
     // Нет ни в одной базе — можно сфотографировать упаковку, ИИ подскажет название
@@ -621,7 +621,7 @@ export const SCAN_JS = `
   photoFile.addEventListener('change', function () {
     var f = photoFile.files && photoFile.files[0];
     if (!f || !code) return;
-    photoBtn.disabled = true; say('Смотрю на фото…');
+    photoBtn.disabled = true; say(T.looking);
     var mine = code;
     shrinkPhoto(f).then(function (blob) {
       return fetch('/api/product/' + mine + '/photo', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob, credentials: 'same-origin' });
@@ -630,15 +630,15 @@ export const SCAN_JS = `
       photoBtn.disabled = false;
       if (j.ok) {
         nameEl.value = j.name; catEl.value = j.category;
-        say('Похоже на «' + j.name + '». Проверь название — оно запомнится для этого кода.');
+        say(T.looksLike.replace('%s', j.name));
       } else if (j.error === 'limit') {
-        say('На сегодня фото закончились — впиши название сам.', true);
+        say(T.photoLimit, true);
       } else {
-        say('Не разобрал товар на фото. Попробуй ещё раз или впиши название.', true);
+        say(T.photoUnknown, true);
       }
       if (!j.ok) nameEl.focus();
     }).catch(function () {
-      photoBtn.disabled = false; say('Не получилось отправить фото. Впиши название сам.', true); nameEl.focus();
+      photoBtn.disabled = false; say(T.photoSendFail, true); nameEl.focus();
     });
   });
 
@@ -647,11 +647,11 @@ export const SCAN_JS = `
     var mine = prices.mine || [], all = prices.stores || [];
     var here = selStore ? all.filter(function (s) { return s.store === selStore.name; })[0] : null;
     var mineHere = selStore ? mine.filter(function (m) { return m.store === selStore.name; })[0] : null;
-    if (mine[0]) lines.push('В прошлый раз — <b>' + money(mine[0].amount) + '</b> · ' + (mine[0].store ? esc(mine[0].store) + ', ' : '') + shortDate(mine[0].date));
-    if (here) lines.push(esc(here.store) + ': обычно <b>' + money(here.avg) + '</b>' + (here.n > 1 ? ' · покупок: ' + here.n : ''));
+    if (mine[0]) lines.push(esc(T.lastTime) + ' — <b>' + money(mine[0].amount) + '</b> · ' + (mine[0].store ? esc(mine[0].store) + ', ' : '') + shortDate(mine[0].date));
+    if (here) lines.push(esc(here.store) + ': ' + esc(T.usually) + ' <b>' + money(here.avg) + '</b>' + (here.n > 1 ? ' · ' + esc(T.purchases) + ': ' + here.n : ''));
     var others = all.filter(function (s) { return s.store && (!selStore || s.store !== selStore.name); }).slice(0, 3);
-    if (others.length) lines.push('Рядом: ' + others.map(function (s) { return esc(s.store) + ' <b>' + money(s.avg) + '</b>'; }).join(' · '));
-    if (meta.mrp) lines.push('МРЦ на упаковке — <b>' + money(meta.mrp) + '</b>');
+    if (others.length) lines.push(esc(T.nearby) + ': ' + others.map(function (s) { return esc(s.store) + ' <b>' + money(s.avg) + '</b>'; }).join(' · '));
+    if (meta.mrp) lines.push(esc(T.mrp) + ' — <b>' + money(meta.mrp) + '</b>');
     pricesEl.innerHTML = lines.join('<br>');
     pricesEl.hidden = !lines.length;
     suggest = mineHere ? mineHere.amount : here ? here.avg : mine[0] ? mine[0].amount : meta.mrp || null;
@@ -677,7 +677,7 @@ export const SCAN_JS = `
       if (product) updatePrice();
     }).catch(function (e) {
       storesBox.innerHTML = '';
-      storeEl.placeholder = e === 'denied' ? 'Нет доступа к геопозиции' : 'Магазин';
+      storeEl.placeholder = e === 'denied' ? T.geoDenied : T.store;
     });
   }
 

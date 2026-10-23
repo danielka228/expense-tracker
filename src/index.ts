@@ -6,6 +6,7 @@ import { recognizeProduct, takeAiQuota } from './vision';
 import { cleanupLimits, hit } from './limits';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
+import { categoryId, currencySymbol, tr, langOf, type Lang } from './i18n';
 import { authorizeUrl, finishLogin, newLoginState, type TgIdentity, type TgLoginConfig, type TgLoginState } from './tglogin';
 import {
   botApi,
@@ -33,7 +34,6 @@ import {
   tgNewAccountPage,
   friendProfilePage,
   monthPage,
-  MONTHS_NOM,
   profilePage,
   settingsPage,
   type Currency,
@@ -65,6 +65,7 @@ interface User {
   created_at: string | null;
   session_ver: number;
   bio: string | null;
+  lang: string;
 }
 
 type App = { Bindings: Env; Variables: { user: User } };
@@ -156,7 +157,7 @@ async function getSessionUserId(c: C): Promise<number | null> {
 }
 
 async function login(c: C, userId: number) {
-  const row = await c.env.DB.prepare('SELECT session_ver FROM users WHERE id = ?').bind(userId).first<{ session_ver: number }>();
+  const row = await c.env.DB.prepare('SELECT session_ver, lang FROM users WHERE id = ?').bind(userId).first<{ session_ver: number; lang: string }>();
   await setSignedCookie(c, SESSION_COOKIE, `${userId}.${row?.session_ver ?? 0}`, c.env.SECRET_KEY, {
     path: '/',
     httpOnly: true,
@@ -164,6 +165,8 @@ async function login(c: C, userId: number) {
     sameSite: 'Lax',
     maxAge: SESSION_MAX_AGE,
   });
+  // Язык страниц до входа читается из cookie — ставим её под язык аккаунта, чтобы было единообразно
+  setCookie(c, 'lang', langOf(row?.lang), { path: '/', maxAge: 400 * 24 * 3600, sameSite: 'Lax' });
 }
 
 // Отзывает все входы человека; текущее устройство остаётся в аккаунте
@@ -208,7 +211,8 @@ function popFlashes(c: C): Flash[] {
 }
 
 function symbol(user: User) {
-  return (CURRENCIES[user.currency] ?? CURRENCIES.RUB).symbol;
+  const code = user.currency in CURRENCIES ? user.currency : 'RUB';
+  return currencySymbol(code, langOf(user.lang), CURRENCIES[code].symbol);
 }
 
 // ---------- даты (UTC, как было на Render) ----------
@@ -280,7 +284,7 @@ const loginRequired = async (c: C, next: () => Promise<void>) => {
   const user = await c.env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(uid).first<User>();
   if (!user) {
     logout(c);
-    flash(c, 'Сессия устарела, войдите заново', 'error');
+    flash(c, flashT(c).sessionExpired, 'error');
     return c.redirect('/login');
   }
   c.set('user', user);
@@ -293,12 +297,26 @@ for (const p of ['/dashboard', '/month', '/month/*', '/delete/*', '/friends', '/
 
 // ---------- маршруты ----------
 
-app.get('/', async (c) => {
-  if (await getSessionUserId(c)) return c.redirect('/dashboard');
-  return c.html(landingPage({ demo: c.env.DEMO === '1', origin: new URL(c.req.url).origin }));
+// Язык страниц до входа берём из cookie (переключатель RU/EN ставит её); по умолчанию русский.
+const pageLang = (c: C): Lang => langOf(getCookie(c, 'lang'));
+// Язык для залогиненных: предпочитаем язык аккаунта, иначе cookie.
+const uiLang = (c: C): Lang => langOf((c.get('user') as User | undefined)?.lang ?? getCookie(c, 'lang'));
+const flashT = (c: C) => tr(uiLang(c)).fl;
+
+app.get('/lang/:code', (c) => {
+  const code = langOf(c.req.param('code'));
+  setCookie(c, 'lang', code, { path: '/', maxAge: 400 * 24 * 3600, sameSite: 'Lax' });
+  const next = c.req.query('next') || '/';
+  const safe = /^\/[a-z0-9_/?=&.-]*$/i.test(next) && !next.startsWith('//') ? next : '/';
+  return c.redirect(safe);
 });
 
-const authOpts = async (c: C) => ({ origin: new URL(c.req.url).origin, demo: c.env.DEMO === '1', tgLogin: !!tgLoginConfig(c), tgPending: !!(await readTgPending(c)) });
+app.get('/', async (c) => {
+  if (await getSessionUserId(c)) return c.redirect('/dashboard');
+  return c.html(landingPage({ demo: c.env.DEMO === '1', origin: new URL(c.req.url).origin, lang: pageLang(c) }));
+});
+
+const authOpts = async (c: C) => ({ origin: new URL(c.req.url).origin, demo: c.env.DEMO === '1', tgLogin: !!tgLoginConfig(c), tgPending: !!(await readTgPending(c)), lang: pageLang(c) });
 app.get('/register', async (c) => c.html(authPage('register', popFlashes(c), await authOpts(c))));
 app.post('/register', async (c) => {
   const form = await c.req.parseBody();
@@ -306,19 +324,20 @@ app.post('/register', async (c) => {
   const password = formStr(form, 'password');
   const fail = async (msg: string) => c.html(authPage('register', [...popFlashes(c), ['error', msg]], await authOpts(c)));
 
-  if (!username || !password) return fail('Заполните все поля');
-  if (password.length < MIN_PASSWORD) return fail(`Пароль должен быть не короче ${MIN_PASSWORD} символов`);
-  if (!(await hit(c.env.DB, `register:${clientIp(c)}`, 5, 3600))) return fail('Слишком много регистраций с этого адреса. Попробуй через час.');
+  const fe = tr(pageLang(c)).fe;
+  if (!username || !password) return fail(fe.fillAll);
+  if (password.length < MIN_PASSWORD) return fail(fe.pwShort.replace('%d', String(MIN_PASSWORD)));
+  if (!(await hit(c.env.DB, `register:${clientIp(c)}`, 5, 3600))) return fail(fe.tooManyReg);
   if (await c.env.DB.prepare('SELECT 1 FROM users WHERE username = ?').bind(username).first()) {
-    return fail('Такой пользователь уже существует');
+    return fail(fe.userExists);
   }
 
-  const row = await c.env.DB.prepare('INSERT INTO users (username, password_hash) VALUES (?, ?) RETURNING id')
-    .bind(username, hashPassword(password))
+  const row = await c.env.DB.prepare('INSERT INTO users (username, password_hash, lang) VALUES (?, ?, ?) RETURNING id')
+    .bind(username, hashPassword(password), pageLang(c))
     .first<{ id: number }>();
   await login(c, row!.id);
   await linkPendingTelegram(c, row!.id);
-  flash(c, 'Регистрация прошла успешно!', 'success');
+  flash(c, tr(pageLang(c)).fe.regSuccess, 'success');
   return c.redirect('/dashboard');
 });
 
@@ -330,7 +349,7 @@ app.post('/login', async (c) => {
   // Перебор паролей: не больше 20 попыток за 10 минут с одного адреса и 10 — к одному логину
   const db = c.env.DB;
   if (!(await hit(db, `login-ip:${clientIp(c)}`, 20, 600)) || !(await hit(db, `login-user:${username.toLowerCase()}`, 10, 600))) {
-    return c.html(authPage('login', [...popFlashes(c), ['error', 'Слишком много попыток входа. Подожди 10 минут.']], await authOpts(c)));
+    return c.html(authPage('login', [...popFlashes(c), ['error', tr(pageLang(c)).fe.tooManyLogin]], await authOpts(c)));
   }
 
   const user = await db.prepare('SELECT * FROM users WHERE username = ?').bind(username).first<User>();
@@ -342,7 +361,7 @@ app.post('/login', async (c) => {
     await linkPendingTelegram(c, user.id);
     return c.redirect('/dashboard');
   }
-  return c.html(authPage('login', [...popFlashes(c), ['error', 'Неверный логин или пароль']], await authOpts(c)));
+  return c.html(authPage('login', [...popFlashes(c), ['error', tr(pageLang(c)).fe.badCreds]], await authOpts(c)));
 });
 
 app.get('/logout', (c) => {
@@ -363,17 +382,17 @@ async function resetUser(db: D1Database, token: string) {
     .first<{ id: number; username: string }>();
 }
 
-app.get('/forgot', (c) => c.html(forgotPage(popFlashes(c))));
+app.get('/forgot', (c) => c.html(forgotPage(popFlashes(c), false, pageLang(c))));
 app.post('/forgot', async (c) => {
   const db = c.env.DB;
   const username = formStr(await c.req.parseBody(), 'username').trim();
   if (!(await hit(db, `forgot-ip:${clientIp(c)}`, 5, 3600)) || !(await hit(db, `forgot-user:${username.toLowerCase()}`, 3, 3600))) {
-    return c.html(forgotPage([['error', 'Слишком много запросов. Попробуй через час.']]));
+    return c.html(forgotPage([['error', tr(pageLang(c)).fe.forgotTooMany]], false, pageLang(c)));
   }
   const row = await db
-    .prepare('SELECT u.id, u.username, l.chat_id FROM users u JOIN telegram_links l ON l.user_id = u.id WHERE u.username = ?')
+    .prepare('SELECT u.id, u.username, u.lang, l.chat_id FROM users u JOIN telegram_links l ON l.user_id = u.id WHERE u.username = ?')
     .bind(username)
-    .first<{ id: number; username: string; chat_id: number }>();
+    .first<{ id: number; username: string; lang: string; chat_id: number }>();
   const token = c.env.TELEGRAM_BOT_TOKEN;
   if (row && token) {
     const secret = randomBytes(32).toString('base64url');
@@ -386,38 +405,38 @@ app.post('/forgot', async (c) => {
     await tg(botApi(token, c.env.TELEGRAM_API), 'sendMessage', {
       chat_id: row.chat_id,
       parse_mode: 'HTML',
-      text: `🔑 <b>Сброс пароля</b>\n\nКто-то попросил новый пароль для аккаунта <b>${name}</b> на сайте. Ссылка действует 30 минут.\n\nЕсли это был не ты — ничего не делай, пароль останется прежним.`,
-      reply_markup: { inline_keyboard: [[{ text: 'Задать новый пароль', url: `${canonicalOrigin(c) ?? new URL(c.req.url).origin}/reset/${secret}` }]] },
+      text: tr(langOf(row.lang)).srv.resetMsg(name),
+      reply_markup: { inline_keyboard: [[{ text: tr(langOf(row.lang)).srv.resetBtn, url: `${canonicalOrigin(c) ?? new URL(c.req.url).origin}/reset/${secret}` }]] },
     }).catch((e) => console.error('reset message failed', e));
   }
   // Ответ одинаковый для любого логина: по нему нельзя узнать, есть ли такой аккаунт
-  return c.html(forgotPage([], true));
+  return c.html(forgotPage([], true, pageLang(c)));
 });
 
 app.get('/reset/:token', async (c) => {
   const user = await resetUser(c.env.DB, c.req.param('token'));
   if (!user) {
-    flash(c, 'Ссылка устарела или уже использована. Запроси новую.', 'error');
+    flash(c, tr(pageLang(c)).fe.resetExpired, 'error');
     return c.redirect('/forgot');
   }
-  return c.html(resetPage(popFlashes(c), user.username));
+  return c.html(resetPage(popFlashes(c), user.username, pageLang(c)));
 });
 app.post('/reset/:token', async (c) => {
   const db = c.env.DB;
   const user = await resetUser(db, c.req.param('token'));
   if (!user) {
-    flash(c, 'Ссылка устарела или уже использована. Запроси новую.', 'error');
+    flash(c, tr(pageLang(c)).fe.resetExpired, 'error');
     return c.redirect('/forgot');
   }
   const password = formStr(await c.req.parseBody(), 'password');
-  if (password.length < MIN_PASSWORD) return c.html(resetPage([['error', `Пароль должен быть не короче ${MIN_PASSWORD} символов`]], user.username));
+  if (password.length < MIN_PASSWORD) return c.html(resetPage([['error', tr(pageLang(c)).fe.pwShort.replace('%d', String(MIN_PASSWORD))]], user.username, pageLang(c)));
   // Новый пароль, ссылка сгорает, все старые входы отзываются
   await db.batch([
     db.prepare('UPDATE users SET password_hash = ?, session_ver = session_ver + 1 WHERE id = ?').bind(hashPassword(password), user.id),
     db.prepare('DELETE FROM password_resets WHERE user_id = ?').bind(user.id),
   ]);
   await login(c, user.id);
-  flash(c, 'Пароль изменён — ты в аккаунте', 'success');
+  flash(c, tr(pageLang(c)).fe.resetDone, 'success');
   return c.redirect('/dashboard');
 });
 
@@ -478,6 +497,7 @@ app.get('/dashboard', async (c) => {
   return c.html(
     dashboardPage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       sym: symbol(user),
       username: user.username,
       demo: c.env.DEMO === '1',
@@ -493,7 +513,7 @@ app.post('/dashboard', async (c) => {
   const rawAmount = formStr(form, 'amount').replace(/,/g, '.').trim();
   const amount = rawAmount === '' ? NaN : Number(rawAmount);
   if (!Number.isFinite(amount)) {
-    flash(c, 'Введите корректную сумму', 'error');
+    flash(c, flashT(c).badAmount, 'error');
     return c.redirect('/dashboard');
   }
 
@@ -516,7 +536,7 @@ app.post('/dashboard', async (c) => {
     barcode && note ? rememberProduct(c.env.DB, barcode, note, category) : null,
     store && hasPos && formStr(form, 'store_src') === 'typed' ? rememberPlace(c.env.DB, store, category, lat, lon, user.id) : null,
   ]);
-  flash(c, 'Трата добавлена', 'success');
+  flash(c, flashT(c).expenseAdded, 'success');
   return c.redirect('/dashboard');
 });
 
@@ -550,6 +570,7 @@ app.get('/month', async (c) => {
   return c.html(
     monthPage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       canSend: !!token && link.results.length > 0,
       card: s.n
         ? {
@@ -578,12 +599,14 @@ app.post('/month/send', async (c) => {
   if (!isJpeg || bytes.length > MAX_PHOTO_BYTES) return c.json({ ok: false, error: 'bad_image' }, 400);
   const api = botApi(token, c.env.TELEGRAM_API);
   const bot = await botUsername(api);
-  const month = MONTHS_NOM[Number(periodStart('month').slice(5, 7)) - 1].toLowerCase();
+  const lang = uiLang(c);
+  const monthNom = tr(lang).months.nom[Number(periodStart('month').slice(5, 7)) - 1];
+  const month = lang === 'en' ? monthNom : monthNom.toLowerCase();
   const r = await sendPhoto(
     api,
     link.chat_id,
     new Blob([bytes], { type: 'image/jpeg' }),
-    `📊 <b>Мой ${month}</b> в СпендТрекере\n\nСохрани картинку и выложи в сторис 👀${bot ? `\nСчитаю траты тут: @${bot}` : ''}`,
+    tr(lang).srv.monthCaption(month, bot),
   );
   return c.json({ ok: r.ok });
 });
@@ -609,7 +632,7 @@ app.post('/api/product/:code{[0-9]{8,14}}/photo', async (c) => {
   const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   if (!isJpeg || bytes.length > MAX_PHOTO_BYTES) return c.json({ ok: false, error: 'bad_image' }, 400);
   if (!(await takeAiQuota(c.env.DB, c.get('user').id))) return c.json({ ok: false, error: 'limit' }, 429);
-  const guess = await recognizeProduct(c.env.AI, bytes);
+  const guess = await recognizeProduct(c.env.AI, bytes, false, uiLang(c));
   return c.json(guess ? { ok: true, name: guess.name, category: guess.category } : { ok: false, error: 'unknown' });
 });
 
@@ -627,7 +650,15 @@ app.get('/api/stores', async (c) => {
 
 // Траты демо-аккаунта и двух друзей; даты считаются от сегодняшнего дня, поэтому данные всегда «свежие»
 const COKE = '5449000000996';
-const DEMO_USERS = ['Демо', 'Аня', 'Макс'];
+const DEMO_USERS: Record<Lang, string[]> = { ru: ['Демо', 'Аня', 'Макс'], en: ['Demo', 'Anya', 'Max'] };
+// Названия демо-трат и магазинов для английской версии
+const DEMO_EN: Record<string, string> = {
+  'Coca-Cola 0,5 л': 'Coca-Cola 0.5 L', Капучино: 'Cappuccino', 'Такси до работы': 'Taxi to work', Продукты: 'Groceries', Кроссовки: 'Sneakers',
+  'Продукты на ужин': 'Dinner groceries', 'Кино с друзьями': 'Movies with friends', Сигареты: 'Cigarettes', Аптека: 'Pharmacy', Ужин: 'Dinner',
+  Бензин: 'Gas', 'Подписка на музыку': 'Music subscription', 'Продукты на неделю': 'Weekly groceries', Витамины: 'Vitamins', Футболка: 'T-shirt',
+  Аренда: 'Rent', Платье: 'Dress', Суши: 'Sushi', Концерт: 'Concert', Каршеринг: 'Car sharing', Пицца: 'Pizza',
+  Пятёрочка: 'Pyatyorochka', Перекрёсток: 'Perekrestok', ВкусВилл: 'VkusVill', Магнит: 'Magnit', Лукойл: 'Lukoil', Лента: 'Lenta',
+};
 const DEMO_EXPENSES: [user: number, daysAgo: number, amount: number, category: string, note: string, store: string | null, barcode: string | null][] = [
   [0, 0, 89, 'Еда', 'Coca-Cola 0,5 л', 'Пятёрочка', COKE],
   [0, 0, 350, 'Еда', 'Капучино', 'Cofix', null],
@@ -660,13 +691,15 @@ app.post('/demo', async (c) => {
   if (c.env.DEMO !== '1') return c.notFound();
   const db = c.env.DB;
   const ids: number[] = [];
-  for (const name of DEMO_USERS) {
+  const lang = pageLang(c);
+  const en = lang === 'en';
+  for (const name of DEMO_USERS[lang]) {
     let row = await db.prepare('SELECT id FROM users WHERE username = ?').bind(name).first<{ id: number }>();
     if (!row) {
       // Пароль случайный: в демо входят только кнопкой
       row = await db
-        .prepare("INSERT INTO users (username, password_hash, created_at) VALUES (?, ?, datetime('now', '-40 days')) RETURNING id")
-        .bind(name, hashPassword(randomBytes(18).toString('base64url')))
+        .prepare("INSERT INTO users (username, password_hash, created_at, lang) VALUES (?, ?, datetime('now', '-40 days'), ?) RETURNING id")
+        .bind(name, hashPassword(randomBytes(18).toString('base64url')), lang)
         .first<{ id: number }>();
     }
     ids.push(row!.id);
@@ -684,7 +717,7 @@ app.post('/demo', async (c) => {
           `INSERT INTO expenses (user_id, amount, category, note, expense_date, store, barcode, created_at)
            VALUES (?, ?, ?, ?, date('now', ?), ?, ?, datetime('now', ?, ?))`,
         )
-        .bind(ids[u], amount, category, note, `-${ago} days`, store, barcode, `-${ago} days`, `-${i} minutes`),
+        .bind(ids[u], amount, category, en ? (DEMO_EN[note] ?? note) : note, `-${ago} days`, store && en ? (DEMO_EN[store] ?? store) : store, barcode, `-${ago} days`, `-${i} minutes`),
     ),
   ]);
   await login(c, me);
@@ -695,7 +728,7 @@ app.post('/delete/:id{[0-9]+}', async (c) => {
   const res = await c.env.DB.prepare('DELETE FROM expenses WHERE id = ? AND user_id = ?')
     .bind(Number(c.req.param('id')), c.get('user').id)
     .run();
-  if (res.meta.changes) flash(c, 'Запись удалена', 'success');
+  if (res.meta.changes) flash(c, flashT(c).expenseDeleted, 'success');
   return c.redirect('/dashboard');
 });
 
@@ -740,6 +773,7 @@ app.get('/friends', async (c) => {
   return c.html(
     friendsPage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       sym: symbol(user),
       period,
       board,
@@ -761,7 +795,7 @@ app.get('/friends/:id{[0-9]+}', async (c) => {
   const fs = await db.prepare(FRIENDSHIP_SQL).bind(user.id, fid).first<{ id: number; created_at: string }>();
   const friend = fs ? await db.prepare('SELECT * FROM users WHERE id = ?').bind(fid).first<User>() : null;
   if (!fs || !friend) {
-    flash(c, 'Профиль виден только друзьям', 'error');
+    flash(c, flashT(c).friendsOnly, 'error');
     return c.redirect('/friends');
   }
   const [o, av] = await Promise.all([
@@ -782,6 +816,7 @@ app.get('/friends/:id{[0-9]+}', async (c) => {
   return c.html(
     friendProfilePage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       sym: symbol(user),
       id: fid,
       username: friend.username,
@@ -800,7 +835,7 @@ app.post('/friends/remove/:id{[0-9]+}', async (c) => {
   )
     .bind(c.get('user').id, Number(c.req.param('id')))
     .run();
-  if (res.meta.changes) flash(c, 'Удалён из друзей', 'success');
+  if (res.meta.changes) flash(c, flashT(c).friendRemoved, 'success');
   return c.redirect('/friends');
 });
 
@@ -811,12 +846,12 @@ app.post('/friends/add', async (c) => {
   const targetUsername = formStr(form, 'friend_login').trim().replace(/^@/, '');
 
   if (targetUsername === user.username) {
-    flash(c, 'Нельзя добавить самого себя', 'error');
+    flash(c, flashT(c).selfAdd, 'error');
     return c.redirect('/friends');
   }
   const target = await db.prepare('SELECT id, username FROM users WHERE username = ?').bind(targetUsername).first<{ id: number; username: string }>();
   if (!target) {
-    flash(c, 'Пользователь с таким ником не найден', 'error');
+    flash(c, flashT(c).userNotFound, 'error');
     return c.redirect('/friends');
   }
   const existing = await db
@@ -827,12 +862,12 @@ app.post('/friends/add', async (c) => {
     .bind(user.id, target.id)
     .first();
   if (existing) {
-    flash(c, 'Заявка уже отправлена или вы уже друзья', 'error');
+    flash(c, flashT(c).reqExists, 'error');
     return c.redirect('/friends');
   }
 
   await db.prepare("INSERT INTO friendships (from_user_id, to_user_id, status) VALUES (?, ?, 'pending')").bind(user.id, target.id).run();
-  flash(c, `Заявка отправлена пользователю ${target.username}`, 'success');
+  flash(c, flashT(c).reqSentTo.replace('%s', target.username), 'success');
   return c.redirect('/friends');
 });
 
@@ -840,7 +875,7 @@ app.post('/friends/accept/:id{[0-9]+}', async (c) => {
   const res = await c.env.DB.prepare("UPDATE friendships SET status = 'accepted' WHERE id = ? AND to_user_id = ? AND status = 'pending'")
     .bind(Number(c.req.param('id')), c.get('user').id)
     .run();
-  if (res.meta.changes) flash(c, 'Заявка принята', 'success');
+  if (res.meta.changes) flash(c, flashT(c).reqAccepted, 'success');
   return c.redirect('/friends');
 });
 
@@ -848,7 +883,7 @@ app.post('/friends/decline/:id{[0-9]+}', async (c) => {
   const res = await c.env.DB.prepare("DELETE FROM friendships WHERE id = ? AND to_user_id = ? AND status = 'pending'")
     .bind(Number(c.req.param('id')), c.get('user').id)
     .run();
-  if (res.meta.changes) flash(c, 'Заявка отклонена', 'success');
+  if (res.meta.changes) flash(c, flashT(c).reqDeclined, 'success');
   return c.redirect('/friends');
 });
 
@@ -869,6 +904,7 @@ app.get('/profile', async (c) => {
   return c.html(
     profilePage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       sym: symbol(user),
       shortcutUrl: c.env.SHORTCUT_URL || DEFAULT_SHORTCUT_URL,
       username: user.username,
@@ -890,7 +926,7 @@ app.post('/profile/telegram', async (c) => {
   const token = c.env.TELEGRAM_BOT_TOKEN;
   const bot = token ? await botUsername(botApi(token, c.env.TELEGRAM_API)) : null;
   if (!bot) {
-    flash(c, 'Telegram-бот сейчас недоступен', 'error');
+    flash(c, flashT(c).botUnavailable, 'error');
     return c.redirect('/profile');
   }
   const code = randomBytes(18).toString('base64url');
@@ -906,13 +942,13 @@ const MAX_BIO = 200;
 app.post('/profile/bio', async (c) => {
   const bio = formStr(await c.req.parseBody(), 'bio').replace(/\s+/g, ' ').trim().slice(0, MAX_BIO);
   await c.env.DB.prepare('UPDATE users SET bio = ? WHERE id = ?').bind(bio || null, c.get('user').id).run();
-  flash(c, bio ? 'Описание сохранено' : 'Описание убрано', 'success');
+  flash(c, bio ? flashT(c).bioSaved : flashT(c).bioRemoved, 'success');
   return c.redirect('/profile');
 });
 
 app.post('/profile/telegram/unlink', async (c) => {
   const res = await c.env.DB.prepare('DELETE FROM telegram_links WHERE user_id = ?').bind(c.get('user').id).run();
-  if (res.meta.changes) flash(c, 'Telegram отключён', 'success');
+  if (res.meta.changes) flash(c, flashT(c).tgDisconnected, 'success');
   return c.redirect((await c.req.parseBody())['back'] === 'settings' ? '/settings' : '/profile');
 });
 
@@ -961,9 +997,9 @@ async function linkPendingTelegram(c: C, userId: number) {
   if (!tg) return;
   deleteCookie(c, TG_PENDING_COOKIE, { path: '/', secure: true });
   const taken = await c.env.DB.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tg.id).first<{ user_id: number }>();
-  if (taken && taken.user_id !== userId) return flash(c, 'Этот Telegram уже подключён к другому аккаунту', 'error');
+  if (taken && taken.user_id !== userId) return flash(c, flashT(c).tgOtherAccount, 'error');
   await linkTelegram(c.env.DB, userId, tg);
-  flash(c, 'Telegram подключён — теперь можно входить в один тап', 'success');
+  flash(c, flashT(c).tgConnected, 'success');
 }
 
 // Фото из Telegram становится аватаркой нового аккаунта (только JPEG, как и при обычной загрузке)
@@ -991,13 +1027,13 @@ app.get('/auth/telegram', async (c) => {
   const here = new URL(c.req.url);
   if (site && here.origin !== site) {
     if (linking) {
-      flash(c, `Чтобы привязать Telegram, открой сайт на ${site.replace('https://', '')}`, 'error');
+      flash(c, tr(pageLang(c)).srv.tgOpenOnSite.replace('%s', site.replace('https://', '')), 'error');
       return c.redirect(back);
     }
     return c.redirect(`${site}${here.pathname}${here.search}`);
   }
   if (!cfg) {
-    flash(c, 'Вход через Telegram пока не настроен', 'error');
+    flash(c, flashT(c).tgLoginOff, 'error');
     return c.redirect(linking ? back : '/login');
   }
   const s = newLoginState();
@@ -1013,7 +1049,7 @@ app.get('/auth/telegram/callback', async (c) => {
   const back = saved?.link ? linkBack : '/login';
   const code = c.req.query('code');
   if (!cfg || !saved || !code || c.req.query('state') !== saved.state) {
-    flash(c, c.req.query('error') ? 'Вход через Telegram отменён' : 'Не получилось войти через Telegram, попробуй ещё раз', 'error');
+    flash(c, c.req.query('error') ? tr(pageLang(c)).srv.tgCancelled : tr(pageLang(c)).srv.tgFailed, 'error');
     return c.redirect(back);
   }
   let tg: TgIdentity;
@@ -1021,7 +1057,7 @@ app.get('/auth/telegram/callback', async (c) => {
     tg = await finishLogin(cfg, code, saved);
   } catch (e) {
     console.error('telegram login failed', e);
-    flash(c, 'Telegram не подтвердил вход, попробуй ещё раз', 'error');
+    flash(c, flashT(c).tgNotConfirmed, 'error');
     return c.redirect(back);
   }
 
@@ -1029,10 +1065,10 @@ app.get('/auth/telegram/callback', async (c) => {
   const link = await db.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tg.id).first<{ user_id: number }>();
   const uid = await getSessionUserId(c);
   if (saved.link && uid) {
-    if (link && link.user_id !== uid) flash(c, 'Этот Telegram уже подключён к другому аккаунту', 'error');
+    if (link && link.user_id !== uid) flash(c, flashT(c).tgOtherAccount, 'error');
     else {
       await linkTelegram(db, uid, tg);
-      flash(c, 'Telegram привязан — теперь можно входить на сайт через Telegram', 'success');
+      flash(c, flashT(c).tgLinked, 'success');
     }
     return c.redirect(linkBack);
   }
@@ -1049,7 +1085,7 @@ app.get('/auth/telegram/callback', async (c) => {
 app.get('/auth/telegram/new', async (c) => {
   const tg = await readTgPending(c);
   if (!tg) return c.redirect('/login');
-  return c.html(tgNewAccountPage(popFlashes(c), tg.name ?? (tg.username ? `@${tg.username}` : 'друг')));
+  return c.html(tgNewAccountPage(popFlashes(c), tg.name ?? (tg.username ? `@${tg.username}` : (pageLang(c) === 'en' ? 'friend' : 'друг')), pageLang(c)));
 });
 
 app.post('/auth/telegram/new', async (c) => {
@@ -1068,11 +1104,11 @@ app.post('/auth/telegram/new', async (c) => {
   for (let i = 2; await db.prepare('SELECT 1 FROM users WHERE username = ?').bind(username).first(); i++) {
     username = i < 10 ? `${base}${i}` : `tg${tg.id}_${i}`;
   }
-  const row = await db.prepare("INSERT INTO users (username, password_hash) VALUES (?, '') RETURNING id").bind(username).first<{ id: number }>();
+  const row = await db.prepare("INSERT INTO users (username, password_hash, lang) VALUES (?, '', ?) RETURNING id").bind(username, pageLang(c)).first<{ id: number }>();
   await linkTelegram(db, row!.id, tg);
   await saveTelegramPhoto(db, row!.id, tg.picture);
   await login(c, row!.id);
-  flash(c, `Аккаунт создан! Твой логин — ${username}`, 'success');
+  flash(c, tr(pageLang(c)).srv.accountCreated.replace('%s', username), 'success');
   return c.redirect('/dashboard');
 });
 
@@ -1080,7 +1116,7 @@ app.post('/auth/telegram/new', async (c) => {
 // мы проверяем подпись Telegram и входим в привязанный аккаунт без пароля.
 app.get('/tg/app', (c) => {
   const next = c.req.query('next') ?? '';
-  return c.html(tgAppPage(/^\/[a-z0-9_/-]*$/i.test(next) && !next.startsWith('//') ? next : '/dashboard'));
+  return c.html(tgAppPage(/^\/[a-z0-9_/-]*$/i.test(next) && !next.startsWith('//') ? next : '/dashboard', pageLang(c)));
 });
 
 app.post('/tg/auth', async (c) => {
@@ -1096,12 +1132,13 @@ app.post('/tg/auth', async (c) => {
 });
 
 // Распознавание голосовых: Whisper на Workers AI. Подсказка с цифрами — чтобы суммы приходили цифрами, а не словами.
-async function transcribe(ai: Ai, audio: ArrayBuffer) {
+async function transcribe(ai: Ai, audio: ArrayBuffer, lang: Lang) {
   const r = await ai.run('@cf/openai/whisper-large-v3-turbo', {
     audio: Buffer.from(audio).toString('base64'),
-    language: 'ru',
+    language: lang,
     vad_filter: true,
-    initial_prompt: 'Кофе 250 рублей. Вчера такси 540. Продукты 1200.',
+    // Подсказка подталкивает Whisper к тому, как мы диктуем траты: короткие фразы с суммой
+    initial_prompt: lang === 'en' ? 'Coffee 250 dollars. Taxi 540 yesterday. Groceries 1200.' : 'Кофе 250 рублей. Вчера такси 540. Продукты 1200.',
   });
   return r.text ?? '';
 }
@@ -1112,8 +1149,8 @@ function botDeps(env: Env, token: string, siteUrl: string): BotDeps {
     db,
     api: botApi(token, env.TELEGRAM_API),
     file: botFileApi(token, env.TELEGRAM_API),
-    transcribe: env.AI ? (audio) => transcribe(env.AI as Ai, audio) : null,
-    readPhoto: env.AI ? (jpeg) => recognizeProduct(env.AI as Ai, jpeg, true) : null,
+    transcribe: env.AI ? (audio, lang) => transcribe(env.AI as Ai, audio, lang) : null,
+    readPhoto: env.AI ? (jpeg, lang) => recognizeProduct(env.AI as Ai, jpeg, true, lang) : null,
     siteUrl,
     categories: CATEGORIES,
     currencies: CURRENCIES,
@@ -1174,14 +1211,14 @@ app.post('/profile/avatar', async (c) => {
   const form = await c.req.parseBody();
   const f = form['avatar'];
   if (!(f instanceof File) || f.size === 0) {
-    flash(c, 'Выберите фото', 'error');
+    flash(c, flashT(c).choosePhoto, 'error');
     return c.redirect('/profile');
   }
   const bytes = new Uint8Array(await f.arrayBuffer());
   // Браузер уже сжал фото до 256x256 JPEG; здесь только проверяем, что это действительно JPEG
   const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
   if (!isJpeg || bytes.length > MAX_AVATAR_BYTES) {
-    flash(c, 'Не удалось обработать фото, попробуйте другое', 'error');
+    flash(c, flashT(c).photoFail, 'error');
     return c.redirect('/profile');
   }
   await c.env.DB.prepare(
@@ -1190,13 +1227,13 @@ app.post('/profile/avatar', async (c) => {
   )
     .bind(c.get('user').id, bytes)
     .run();
-  flash(c, 'Фото обновлено', 'success');
+  flash(c, flashT(c).photoUpdated, 'success');
   return c.redirect('/profile');
 });
 
 app.post('/profile/avatar/delete', async (c) => {
   await c.env.DB.prepare('DELETE FROM avatars WHERE user_id = ?').bind(c.get('user').id).run();
-  flash(c, 'Фото удалено', 'success');
+  flash(c, flashT(c).photoDeleted, 'success');
   return c.redirect('/profile');
 });
 
@@ -1209,7 +1246,7 @@ app.post('/profile/token', async (c) => {
   )
     .bind(c.get('user').id, token)
     .run();
-  flash(c, 'Токен создан', 'success');
+  flash(c, flashT(c).tokenCreated, 'success');
   return c.redirect('/profile');
 });
 
@@ -1245,13 +1282,12 @@ app.post('/api/add', async (c) => {
   const rec = token
     ? await c.env.DB.prepare('SELECT user_id FROM api_tokens WHERE token = ?').bind(token).first<{ user_id: number }>()
     : null;
+  // Язык ответа: аккаунта, если токен верный, иначе по заголовку Accept-Language
+  const urow = rec ? await c.env.DB.prepare('SELECT lang FROM users WHERE id = ?').bind(rec.user_id).first<{ lang: string }>() : null;
+  const E = tr(urow ? langOf(urow.lang) : /^en/i.test(c.req.header('Accept-Language') ?? '') ? 'en' : 'ru').srv;
   if (!rec) {
-    const hint = !token
-      ? 'Токен не дошёл: проверь, что в заголовке X-Token выбрана переменная с токеном'
-      : token.length !== 32
-        ? `Пришло ${token.length} символов вместо 32: в действии «Текст» должен быть только токен`
-        : 'Такого токена нет на этом сайте: скопируй токен в Профиле на expense-tracker.hhoh7327.workers.dev';
-    return c.json({ ok: false, error: 'Неверный токен', hint }, 401);
+    const hint = !token ? E.apiTokenMissing : token.length !== 32 ? E.apiTokenLen(token.length) : E.apiTokenUnknown(new URL(c.req.url).host);
+    return c.json({ ok: false, error: E.apiBadToken, hint }, 401);
   }
 
   const rawAmount = field('amount');
@@ -1263,7 +1299,7 @@ app.post('/api/add', async (c) => {
     return c.json(
       {
         ok: false,
-        error: 'Некорректная сумма',
+        error: E.apiBadAmount,
         received: String(rawAmount),
         keys: [...Object.keys(data), ...Object.keys(form)],
         content_type: contentType || null,
@@ -1271,9 +1307,9 @@ app.post('/api/add', async (c) => {
       400,
     );
   }
-  if (amount <= 0) return c.json({ ok: false, error: 'Сумма должна быть больше нуля', received: String(rawAmount) }, 400);
+  if (amount <= 0) return c.json({ ok: false, error: E.apiAmountPositive, received: String(rawAmount) }, 400);
 
-  let category = String(field('category')).trim();
+  let category = categoryId(String(field('category')).trim());
   if (!CATEGORIES.includes(category)) category = 'Прочее';
   const note = [...String(field('note')).trim()].slice(0, 255).join('');
 
@@ -1293,6 +1329,7 @@ app.get('/settings', async (c) => {
   return c.html(
     settingsPage({
       flashes: popFlashes(c),
+      lang: langOf(c.get('user').lang),
       username: user.username,
       hasPassword: !!user.password_hash,
       telegram: { linked: !!tgLink, tgUsername: tgLink?.tg_username ?? null, bot: tgBot, login: !!tgLoginConfig(c) },
@@ -1310,26 +1347,31 @@ app.post('/settings', async (c) => {
   if (action === 'change_password') {
     // У аккаунта, созданного через Telegram, пароля ещё нет — его задают без «текущего»
     if (user.password_hash && !checkPassword(user.password_hash, formStr(form, 'current_password'))) {
-      flash(c, 'Текущий пароль неверен', 'error');
+      flash(c, flashT(c).pwWrong, 'error');
       return c.redirect('/settings');
     }
     const newPassword = formStr(form, 'new_password');
     if (newPassword.length < MIN_PASSWORD) {
-      flash(c, `Новый пароль должен быть не короче ${MIN_PASSWORD} символов`, 'error');
+      flash(c, flashT(c).pwShort.replace('%d', String(MIN_PASSWORD)), 'error');
       return c.redirect('/settings');
     }
     await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(hashPassword(newPassword), user.id).run();
     await revokeSessions(c, user.id); // кто знал старый пароль, вылетает со всех устройств
-    flash(c, user.password_hash ? 'Пароль изменён, другие устройства вышли из аккаунта' : 'Пароль задан — теперь можно входить и по логину', 'success');
+    flash(c, user.password_hash ? flashT(c).pwChanged : flashT(c).pwSet, 'success');
   } else if (action === 'logout_all') {
     await revokeSessions(c, user.id);
-    flash(c, 'Готово: вышли на всех устройствах, кроме этого', 'success');
+    flash(c, flashT(c).loggedOutAll, 'success');
   } else if (action === 'change_currency') {
     const cur = formStr(form, 'currency');
     if (cur in CURRENCIES) {
       await c.env.DB.prepare('UPDATE users SET currency = ? WHERE id = ?').bind(cur, user.id).run();
-      flash(c, 'Валюта обновлена', 'success');
+      flash(c, flashT(c).currencyUpdated, 'success');
     }
+  } else if (action === 'change_lang') {
+    const lng = langOf(formStr(form, 'lang'));
+    await c.env.DB.prepare('UPDATE users SET lang = ? WHERE id = ?').bind(lng, user.id).run();
+    setCookie(c, 'lang', lng, { path: '/', maxAge: 400 * 24 * 3600, sameSite: 'Lax' });
+    flash(c, tr(lng).fl.langUpdated, 'success');
   }
   return c.redirect('/settings');
 });
@@ -1348,7 +1390,7 @@ app.post('/settings/delete_account', async (c) => {
     db.prepare('DELETE FROM users WHERE id = ?').bind(id),
   ]);
   logout(c);
-  flash(c, 'Аккаунт удалён', 'success');
+  flash(c, flashT(c).accountDeleted, 'success');
   return c.redirect('/login');
 });
 

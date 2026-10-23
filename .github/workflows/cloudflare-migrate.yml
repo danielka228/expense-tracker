@@ -194,19 +194,24 @@ jobs:
           if [ -n "$site" ]; then
             printf '%s' "$site" | npx wrangler secret put SITE_URL $ENV_ARGS
           fi
-          curl -sS "$api/setMyCommands" -H 'Content-Type: application/json' --data '{"commands": [
-            {"command": "menu", "description": "Меню"},
-            {"command": "stats", "description": "Статистика"},
-            {"command": "last", "description": "Мои траты"},
-            {"command": "undo", "description": "Удалить последнюю запись"},
-            {"command": "stickers", "description": "Стикеры Трэка"},
-            {"command": "help", "description": "Как пользоваться"}]}' | jq -c '{ok}'
+          # Меню команд и описание бота на двух языках: английский — по умолчанию, русский — тем,
+          # у кого Telegram на русском или соседнем языке (то же правило, что langFromTg в коде бота)
+          ru_codes="ru uk be kk ky uz tg tk hy az ka mo"
+          cmds_en='[{"command":"menu","description":"Menu"},{"command":"stats","description":"Stats"},{"command":"last","description":"My expenses"},{"command":"undo","description":"Delete the last entry"},{"command":"lang","description":"Language"},{"command":"stickers","description":"Track stickers"},{"command":"help","description":"How to use"}]'
+          cmds_ru='[{"command":"menu","description":"Меню"},{"command":"stats","description":"Статистика"},{"command":"last","description":"Мои траты"},{"command":"undo","description":"Удалить последнюю запись"},{"command":"lang","description":"Язык"},{"command":"stickers","description":"Стикеры Трэка"},{"command":"help","description":"Как пользоваться"}]'
+          curl -sS "$api/setMyCommands" -H 'Content-Type: application/json' --data "$(jq -nc --argjson c "$cmds_en" '{commands: $c}')" | jq -c '{ok}'
+          for lc in $ru_codes; do
+            curl -sS "$api/setMyCommands" -H 'Content-Type: application/json' --data "$(jq -nc --argjson c "$cmds_ru" --arg l "$lc" '{commands: $c, language_code: $l}')" > /dev/null
+          done
           # Кнопка слева от поля ввода открывает сайт прямо в Telegram (Mini App) — сразу в аккаунте
           app="${{ steps.domain.outputs.url || steps.subdomain.outputs.url }}/tg/app"
           curl -sS "$api/setChatMenuButton" -H 'Content-Type: application/json' \
             --data "$(jq -nc --arg u "$app" '{menu_button: {type: "web_app", text: "СпендТрекер", web_app: {url: $u}}}')" | jq -c '{ok, description}'
           curl -sS "$api/setMyDescription" -H 'Content-Type: application/json' \
-            --data '{"description": "Записываю траты в СпендТрекер. Напиши «кофе 250» — и трата уже на сайте."}' | jq -c '{ok}'
+            --data '{"description": "I log your expenses in SpendTracker. Write \"coffee 250\" — and it is already on the site."}' | jq -c '{ok}'
+          for lc in $ru_codes; do
+            curl -sS "$api/setMyDescription" -H 'Content-Type: application/json' --data "$(jq -nc --arg l "$lc" '{description: "Записываю траты в СпендТрекер. Напиши «кофе 250» — и трата уже на сайте.", language_code: $l}')" > /dev/null
+          done
           # Админ-панель: ID владельца — в секрет Worker, а /admin — в меню команд только его чата
           admin=$(printf '%s' "$TG_ADMIN" | tr -cd '0-9')
           if [ -n "$admin" ]; then
@@ -214,7 +219,7 @@ jobs:
             curl -sS "$api/setMyCommands" -H 'Content-Type: application/json' --data "$(jq -nc --argjson id "$admin" '{scope: {type: "chat", chat_id: $id}, commands: [
               {command: "menu", description: "Меню"}, {command: "admin", description: "Админ-панель"},
               {command: "stats", description: "Статистика"}, {command: "last", description: "Мои траты"},
-              {command: "undo", description: "Удалить последнюю запись"}, {command: "stickers", description: "Стикеры Трэка"},
+              {command: "undo", description: "Удалить последнюю запись"}, {command: "lang", description: "Язык"}, {command: "stickers", description: "Стикеры Трэка"},
               {command: "help", description: "Как пользоваться"}]}')" | jq -c '{ok, description}'
           else
             echo "Секрет TELEGRAM_ADMIN_ID не задан — админ-панель выключена. Узнай свой ID командой /myid у бота."

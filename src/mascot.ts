@@ -2,6 +2,8 @@
 // Рисуется SVG прямо в странице; настроение задаётся ртом, глазами и бровями.
 // Покачивается и моргает на CSS, следит глазами за пальцем/курсором и подпрыгивает от нажатия — MASCOT_JS.
 
+import type { Lang } from './i18n';
+
 export type Mood = 'happy' | 'wave' | 'wow' | 'worried' | 'sleep' | 'wink' | 'love' | 'sad' | 'cool';
 
 const INK = '#1c1c2e';
@@ -52,14 +54,14 @@ function mouth(mood: Mood) {
 }
 
 /** SVG-персонаж. size — ширина в пикселях. */
-export function mascot(mood: Mood = 'happy', size = 96, extraClass = '') {
+export function mascot(mood: Mood = 'happy', size = 96, extraClass = '', lang: Lang = 'ru') {
   const arm = (side: 'l' | 'r', wave: boolean) =>
     side === 'l'
       ? `<path d="M17 70 Q8 74 9 84" fill="none" stroke="url(#kopi-g)" stroke-width="7" stroke-linecap="round"/>`
       : wave
         ? `<g class="kopi-wave"><path d="M103 66 Q114 58 112 46" fill="none" stroke="url(#kopi-g)" stroke-width="7" stroke-linecap="round"/></g>`
         : `<path d="M103 70 Q112 74 111 84" fill="none" stroke="url(#kopi-g)" stroke-width="7" stroke-linecap="round"/>`;
-  return `<span class="kopi ${extraClass}" role="img" aria-label="Трэк, персонаж СпендТрекера" style="width:${size}px">
+  return `<span class="kopi ${extraClass}" role="img" aria-label="${lang === 'en' ? 'Track, the SpendTracker mascot' : 'Трэк, персонаж СпендТрекера'}" style="width:${size}px">
 <svg viewBox="0 0 120 132" width="${size}" height="${Math.round((size * 132) / 120)}">
   <defs>
     <linearGradient id="kopi-g" x1="0" y1="0" x2="1" y2="1">

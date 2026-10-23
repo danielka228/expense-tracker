@@ -1,6 +1,9 @@
 // Дизайн в духе iOS и Telegram: чистый чёрный фон, спокойные карточки, один акцентный цвет,
 // системный шрифт Apple, плавные «пружинные» анимации и появление блоков при прокрутке.
 export const BASE_CSS = `
+  .lang-switch { display: inline-flex; border: 1px solid var(--separator, rgba(128,128,128,.3)); border-radius: 999px; overflow: hidden; font-size: 12px; font-weight: 700; }
+  .lang-opt { padding: 5px 10px; color: var(--text-2); text-decoration: none; line-height: 1; }
+  .lang-opt.on { background: var(--accent); color: #fff; }
   :root {
     --bg: #000;
     --surface: #121215;

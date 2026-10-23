@@ -5,6 +5,7 @@
 // Названия в открытых базах пишут сами пользователи, поэтому всё, что вернула модель, проверяем и обрезаем.
 
 import { aiDayAllowed } from './limits';
+import type { Lang } from './i18n';
 
 const MODEL = '@cf/google/gemma-3-12b-it';
 
@@ -52,8 +53,16 @@ category — одна из: ${PRODUCT_CATEGORIES.join(', ')}.`;
 
 const AMOUNT_RULE = `\nДобавь в JSON поле "amount" — число. Если на фото чек: name — «Чек» и название магазина, amount — итоговая сумма. Если на фото ценник: amount — цена. Иначе amount: null.`;
 
+// То же для английского: название покупки пишем по-английски, а категория остаётся одной из русских (так они хранятся в базе)
+const RULES_EN = `Return only JSON like {"name": "...", "category": "..."} with no explanations.
+name — a short name of the purchase in English: "Brand Product volume", for example "Simply Orange Juice 1 L". Keep brand names as they are. Write units in English (L, ml, g, kg).
+category — exactly one of these words: ${PRODUCT_CATEGORIES.join(', ')}.`;
+
+const AMOUNT_RULE_EN = `\nAdd an "amount" field to the JSON — a number. If the photo shows a receipt: name is "Receipt" and the store name, amount is the total. If it shows a price tag: amount is the price. Otherwise amount: null.`;
+
 /** Фото упаковки → название и категория (withAmount — ещё и сумма с ценника или чека). null — не разобрал или ИИ недоступен. */
-export async function recognizeProduct(ai: Runner, jpeg: Uint8Array, withAmount = false): Promise<Guess | null> {
+export async function recognizeProduct(ai: Runner, jpeg: Uint8Array, withAmount = false, lang: Lang = 'ru'): Promise<Guess | null> {
+  const en = lang === 'en';
   let b64 = '';
   for (let i = 0; i < jpeg.length; i += 0x8000) b64 += String.fromCharCode(...jpeg.subarray(i, i + 0x8000));
   try {
@@ -65,7 +74,9 @@ export async function recognizeProduct(ai: Runner, jpeg: Uint8Array, withAmount 
           content: [
             {
               type: 'text',
-              text: `На фото товар из магазина. Определи, что это. ${RULES}${withAmount ? AMOUNT_RULE : ''}\nЕсли на фото не товар или ничего не разобрать, верни {"name": null, "category": null}.`,
+              text: en
+                ? `The photo shows a product from a store. Work out what it is. ${RULES_EN}${withAmount ? AMOUNT_RULE_EN : ''}\nIf the photo is not a product or nothing can be made out, return {"name": null, "category": null}.`
+                : `На фото товар из магазина. Определи, что это. ${RULES}${withAmount ? AMOUNT_RULE : ''}\nЕсли на фото не товар или ничего не разобрать, верни {"name": null, "category": null}.`,
             },
             { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${btoa(b64)}` } },
           ],

@@ -4,6 +4,7 @@ import { COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, VOICE_JS } from './c
 import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS } from './styles';
 import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
 import { plural } from './trek';
+import { tr, categoryLabel, clientScript, currencyLabel, currencySymbol, LANGS, LANG_LABEL, type Lang } from './i18n';
 
 type H = HtmlEscapedString | Promise<HtmlEscapedString>;
 export type Flash = [category: string, message: string];
@@ -30,12 +31,6 @@ const TAB_ICONS = {
   settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
 };
 type Tab = keyof typeof TAB_ICONS;
-const TAB_LABELS: Record<Tab, string> = {
-  dashboard: 'Траты',
-  friends: 'Друзья',
-  profile: 'Профиль',
-  settings: 'Настройки',
-};
 
 const WALLET_SVG = '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2z"/><circle cx="16.5" cy="14.5" r="1" fill="currentColor"/></svg>';
 const CHEV = raw('<svg class="chev" viewBox="0 0 8 13"><path d="M1.5 1.5 6.5 6.5 1.5 11.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>');
@@ -44,6 +39,7 @@ interface LayoutOpts {
   title: string;
   flashes: Flash[];
   loggedIn: boolean;
+  lang?: Lang;
   activeTab?: Tab;
   center?: boolean;
   bare?: boolean; // без общей обёртки (страница-презентация)
@@ -52,41 +48,40 @@ interface LayoutOpts {
   share?: string; // адрес сайта (https://…): публичной странице добавляем превью для чатов и соцсетей
 }
 
-const SHARE_TITLE = 'СпендТрекер — траты под контролем';
-const SHARE_TEXT = 'Записывай траты за пару касаний: на сайте, в Telegram-боте или голосом. Сканер штрихкодов, друзья и сводки от Трэка.';
-
 export function layout(o: LayoutOpts, content: H) {
+  const S = tr(o.lang ?? 'ru');
+  const tabLabels: Record<Tab, string> = S.nav;
   const tabs = (Object.keys(TAB_ICONS) as Tab[]).map(
     (t) => html`
     <a class="tab ${o.activeTab === t ? 'active' : ''}" href="/${t}">
-      <span class="icon">${raw(TAB_ICONS[t])}</span><span>${TAB_LABELS[t]}</span>
+      <span class="icon">${raw(TAB_ICONS[t])}</span><span>${tabLabels[t]}</span>
     </a>`,
   );
   return html`<!DOCTYPE html>
-<html lang="ru" class="no-js">
+<html lang="${S.htmlLang}" class="no-js">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <meta name="theme-color" content="#000000">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<meta name="apple-mobile-web-app-title" content="СпендТрекер">
+<meta name="apple-mobile-web-app-title" content="${S.brand}">
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <title>${o.title}</title>
 ${o.share
-  ? html`<meta name="description" content="${SHARE_TEXT}">
+  ? html`<meta name="description" content="${S.shareText}">
 <meta property="og:type" content="website">
-<meta property="og:site_name" content="СпендТрекер">
-<meta property="og:locale" content="ru_RU">
-<meta property="og:title" content="${SHARE_TITLE}">
-<meta property="og:description" content="${SHARE_TEXT}">
+<meta property="og:site_name" content="${S.brand}">
+<meta property="og:locale" content="${S.ogLocale}">
+<meta property="og:title" content="${S.shareTitle}">
+<meta property="og:description" content="${S.shareText}">
 <meta property="og:url" content="${o.share}/">
 <meta property="og:image" content="${o.share}/og.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
-<meta property="og:image:alt" content="Трэк, персонаж СпендТрекера">
+<meta property="og:image:alt" content="${S.mascotAlt}">
 <meta name="twitter:card" content="summary_large_image">`
   : ''}
 <style>
@@ -97,9 +92,16 @@ ${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
   ${o.bare ? content : html`<div class="${o.center ? 'center-wrap' : 'wrap'}">${content}</div>`}
   ${o.loggedIn ? html`<nav class="tabbar">${tabs}
   </nav>` : ''}
-  <script>${raw(COMMON_JS)}${raw(MASCOT_JS)}${raw(o.scripts ?? '')}</script>
+  <script>${o.scripts ? raw(clientScript(o.lang ?? 'ru')) : ''}${raw(COMMON_JS)}${raw(MASCOT_JS)}${raw(o.scripts ?? '')}</script>
 </body>
 </html>`;
+}
+
+// Переключатель языка RU/EN: ссылки на /lang/<код>?next=<откуда>, активный подсвечен
+function langToggle(lang: Lang, next: string) {
+  const link = (code: Lang, label: string) =>
+    html`<a class="lang-opt ${lang === code ? 'on' : ''}" href="/lang/${code}?next=${encodeURIComponent(next)}">${label}</a>`;
+  return html`<span class="lang-switch">${link('ru', 'RU')}${link('en', 'EN')}</span>`;
 }
 
 // Панель сверху + большой заголовок, который при прокрутке «уезжает» в панель (как в iOS)
@@ -116,8 +118,11 @@ function scrub(text: string, accentFrom?: number) {
   return text.split(' ').map((w, i) => html`<span class="${accentFrom !== undefined && i >= accentFrom ? 'g' : ''}">${w} </span>`);
 }
 
-export function landingPage(d: { demo: boolean; origin: string }) {
+export function landingPage(d: { demo: boolean; origin: string; lang: Lang }) {
+  const S = tr(d.lang);
+  const L = S.landing;
   const today = new Date().toISOString().slice(0, 10);
+  const monthName = S.months.in[Number(today.slice(5, 7)) - 1];
   const days = Array.from({ length: 7 }, (_, i) => new Date(Date.parse(today) - (6 - i) * 86400000).toISOString().slice(0, 10));
   const sampleWeek = days.map((date, i) => ({ date, total: [1500, 640, 2300, 890, 4500, 1200, 350][i] }));
   const sampleCats = [
@@ -128,94 +133,91 @@ export function landingPage(d: { demo: boolean; origin: string }) {
     { category: 'Развлечения', total: 2800 },
   ];
   const cta = d.demo
-    ? html`<form method="POST" action="/demo" style="margin:0"><button type="submit" class="btn">Открыть демо</button></form>
-       <a class="btn btn-plain" href="/register">Создать аккаунт ›</a>`
-    : html`<a class="btn" href="/register">Начать бесплатно</a><a class="btn btn-plain" href="/login">Войти ›</a>`;
+    ? html`<form method="POST" action="/demo" style="margin:0"><button type="submit" class="btn">${L.ctaDemo}</button></form>
+       <a class="btn btn-plain" href="/register">${L.ctaCreate}</a>`
+    : html`<a class="btn" href="/register">${L.ctaStart}</a><a class="btn btn-plain" href="/login">${L.ctaLoginArrow}</a>`;
   const barcode = [3, 1, 2, 1, 1, 3, 1, 2, 2, 1, 1, 2, 3, 1, 1, 2, 1, 3, 2, 1, 1, 2, 1, 1, 3, 1, 2, 1];
+  const sampleRows = L.sampleRows.map((r, i) => [...r, [89, 1200, 4500][i], ['Еда', 'Транспорт', 'Одежда'][i]] as const);
 
   return layout(
-    { title: 'СпендТрекер — траты под контролем', flashes: [], loggedIn: false, bare: true, extraCss: DASHBOARD_CSS + FRIENDS_CSS + LANDING_CSS, scripts: LANDING_JS, share: d.origin },
+    { title: S.shareTitle, flashes: [], loggedIn: false, lang: d.lang, bare: true, extraCss: DASHBOARD_CSS + FRIENDS_CSS + LANDING_CSS, scripts: LANDING_JS, share: d.origin },
     html`<header class="l-nav">
-  <a class="l-logo" href="/"><i>${raw(WALLET_SVG)}</i>СпендТрекер</a>
-  <a class="pill" href="/login">Войти</a>
+  <a class="l-logo" href="/"><i>${raw(WALLET_SVG)}</i>${S.brand}</a>
+  <span style="display:flex; gap:10px; align-items:center">${langToggle(d.lang, '/')}<a class="pill" href="/login">${L.login}</a></span>
 </header>
 <main class="l-wrap">
   <section class="l-hero">
-    <div class="reveal" style="margin-bottom:14px">${raw(mascot('wave', 112))}</div>
-    <div class="eyebrow reveal">Новый СпендТрекер</div>
-    <h1 class="l-h1 reveal" style="--d:.08s">Деньги.<br><span class="g">Под контролем.</span></h1>
-    <p class="l-lead reveal" style="--d:.16s">Записывай траты голосом, сканируй покупки и смотри, куда уходят деньги. Красиво и без лишних шагов.</p>
+    <div class="reveal" style="margin-bottom:14px">${raw(mascot('wave', 112, '', d.lang))}</div>
+    <div class="eyebrow reveal">${L.eyebrow}</div>
+    <h1 class="l-h1 reveal" style="--d:.08s">${L.h1a}<br><span class="g">${L.h1b}</span></h1>
+    <p class="l-lead reveal" style="--d:.16s">${L.lead}</p>
     <div class="l-ctas reveal" style="--d:.24s">${cta}</div>
     <div class="device reveal" style="--d:.32s">
       <div class="card hero" style="margin-bottom:10px">
-        <div class="label">Потрачено в октябре</div>
+        <div class="label">${L.spentInMonth.replace('%s', monthName)}</div>
         <div class="big">${countUp(36400)}<span class="cur">₽</span></div>
         <div class="chips">
-          <div class="chip"><div class="k">Сегодня</div><div class="v">439 ₽</div></div>
-          <div class="chip"><div class="k">Эта неделя</div><div class="v">11 380 ₽</div></div>
+          <div class="chip"><div class="k">${L.today}</div><div class="v">439 ₽</div></div>
+          <div class="chip"><div class="k">${L.thisWeek}</div><div class="v">11 380 ₽</div></div>
         </div>
       </div>
-      ${[
-        ['Coca-Cola 0,5 л', 'Еда · Пятёрочка', 89, 'Еда'],
-        ['Такси до работы', 'Транспорт', 1200, 'Транспорт'],
-        ['Кроссовки', 'Одежда', 4500, 'Одежда'],
-      ].map(
+      ${sampleRows.map(
         ([n, c, a, cat]) => html`<div class="expense-row"><div class="main">${ico(String(cat))}<div style="min-width:0"><div class="info">${n}</div><div class="cat">${c}</div></div></div><div class="amt">${fmt0(Number(a))} ₽</div></div>`,
       )}
     </div>
   </section>
 
-  <section class="l-sec"><p class="scrub">${scrub('Каждая трата — в два касания. Скажи её, отсканируй или впиши. СпендТрекер сам поймёт сумму, категорию и даже магазин.', 17)}</p></section>
+  <section class="l-sec"><p class="scrub">${scrub(L.scrub1, d.lang === 'en' ? 15 : 17)}</p></section>
 
   <section class="l-sec">
-    <h2 class="l-h2 reveal">Скажи — <span class="g">и готово.</span></h2>
-    <p class="l-p reveal">«Вчера такси 1 200» — и сумма, категория и дата заполнятся сами. Эквалайзер слышит твой голос.</p>
+    <h2 class="l-h2 reveal">${L.voiceH2a} <span class="g">${L.voiceH2b}</span></h2>
+    <p class="l-p reveal">${L.voiceP}</p>
     <div class="showcase two">
       <div class="tile reveal">
         <div class="mini-eq">${Array.from({ length: 23 }, (_, k) => html`<i style="--k:${k}; --a:${Math.round(30 + 60 * Math.sin((k / 22) * Math.PI))}"></i>`)}</div>
-        <div style="text-align:right"><span class="bubble">кофе с другом 350</span></div>
-        <h4>Голосом</h4><p>Понимает «тысячи», «полторы», «вчера» и сам подбирает категорию.</p>
+        <div style="text-align:right"><span class="bubble">${L.voiceBubble}</span></div>
+        <h4>${L.byVoice}</h4><p>${L.byVoiceP}</p>
       </div>
       <div class="tile reveal" style="--d:.1s">
-        <div class="expense-row" style="margin:6px 0 18px"><div class="main">${ico('Еда')}<div style="min-width:0"><div class="info">Кофе с другом</div><div class="cat">Еда</div></div></div><div class="amt">350 ₽</div></div>
-        <h4>Сразу в списке</h4><p>Без форм и лишних касаний. Проверил — нажал «Добавить».</p>
+        <div class="expense-row" style="margin:6px 0 18px"><div class="main">${ico('Еда')}<div style="min-width:0"><div class="info">${L.voiceRowNote}</div><div class="cat">${categoryLabel('Еда', d.lang)}</div></div></div><div class="amt">350 ₽</div></div>
+        <h4>${L.inListH}</h4><p>${L.inListP}</p>
       </div>
     </div>
   </section>
 
   <section class="l-sec">
-    <h2 class="l-h2 reveal">Наведи камеру.<br><span class="g">Остальное — наше.</span></h2>
-    <p class="l-p reveal">Отсканируй штрих-код — СпендТрекер найдёт товар, поймёт, в каком ты магазине, и подскажет цену.</p>
+    <h2 class="l-h2 reveal">${L.scanH2a}<br><span class="g">${L.scanH2b}</span></h2>
+    <p class="l-p reveal">${L.scanP}</p>
     <div class="showcase two">
       <div class="tile reveal">
         <div class="mock-vf"><div class="bars">${barcode.map((w) => html`<i style="--w:${w * 2}px"></i>`)}</div><div class="frame"></div><div class="line"></div></div>
-        <h4>Штрих-код</h4><p>Миллионы товаров из открытой базы Open Food Facts.</p>
+        <h4>${L.barcodeH}</h4><p>${L.barcodeP}</p>
       </div>
       <div class="tile reveal" style="--d:.1s">
         <div class="product" style="margin-top:6px"><div class="pic none">${raw('<svg viewBox="0 0 24 24"><path d="M21 8 12 3 3 8v8l9 5 9-5z"/><path d="m3 8 9 5 9-5"/><path d="M12 13v8"/></svg>')}</div><div><div class="pn">Coca-Cola 0,5 л</div><div class="pb">Coca-Cola · 500 мл</div></div></div>
         <div class="store-chips">
-          <span class="schip on"><span class="logo" style="background:#e3262f">П</span>Пятёрочка <small>40 м</small></span>
-          <span class="schip"><span class="logo" style="background:#e4003a">М</span>Магнит <small>120 м</small></span>
+          <span class="schip on"><span class="logo" style="background:#e3262f">П</span>Пятёрочка <small>40 ${d.lang === 'en' ? 'm' : 'м'}</small></span>
+          <span class="schip"><span class="logo" style="background:#e4003a">М</span>Магнит <small>120 ${d.lang === 'en' ? 'm' : 'м'}</small></span>
         </div>
-        <div class="prices">В «Пятёрочке» обычно <b>87 ₽</b> · Магнит <b>95 ₽</b></div>
-        <h4>Магазин рядом</h4><p>По геопозиции — только в момент сканирования. Цены — из настоящих покупок.</p>
+        <div class="prices">${raw(L.pricesLine)}</div>
+        <h4>${L.storeH}</h4><p>${L.storeP}</p>
       </div>
     </div>
   </section>
 
   <section class="l-sec">
-    <h2 class="l-h2 reveal">Весь месяц.<br><span class="g">Одним взглядом.</span></h2>
+    <h2 class="l-h2 reveal">${L.monthH2a}<br><span class="g">${L.monthH2b}</span></h2>
     <div class="showcase two">
-      <div class="reveal">${weekWidget(sampleWeek, today, '₽')}</div>
-      <div class="reveal" style="--d:.1s">${categoriesWidget(sampleCats, today, '₽', false)}</div>
+      <div class="reveal">${weekWidget(sampleWeek, today, '₽', d.lang)}</div>
+      <div class="reveal" style="--d:.1s">${categoriesWidget(sampleCats, today, '₽', d.lang, false)}</div>
     </div>
   </section>
 
   <section class="l-sec">
-    <p class="scrub">${scrub('С друзьями — веселее. Добавь их и смотри, кто в этом месяце потратил больше всех.', 0)}</p>
+    <p class="scrub">${scrub(L.friendsScrub, 0)}</p>
     <div class="showcase" style="max-width:520px">
       <div class="card reveal" style="margin:0">
-        ${[['Аня', 9445, false], ['Ты', 7889, true], ['Макс', 3595, false]].map(
+        ${[[L.friendA, 9445, false], [L.you, 7889, true], [L.friendB, 3595, false]].map(
           ([n, t, me], i) => html`<div class="board-row ${i === 0 ? 'rank-1' : ''} ${me ? 'me' : ''}"><div class="rank">${i + 1}</div><div class="av">${String(n)[0]}</div><div class="name">${n}</div><div class="amount">${fmt0(Number(t))} ₽</div></div>`,
         )}
       </div>
@@ -223,12 +225,12 @@ export function landingPage(d: { demo: boolean; origin: string }) {
   </section>
 
   <section class="l-cta">
-    <div class="reveal" style="margin-bottom:10px">${raw(mascot('happy', 96))}</div>
-    <h2 class="l-h2 reveal">Начни сегодня.</h2>
-    <p class="l-p reveal" style="margin:0 auto 28px">Бесплатно. Без рекламы. Прямо в браузере — и на главном экране iPhone.</p>
+    <div class="reveal" style="margin-bottom:10px">${raw(mascot('happy', 96, '', d.lang))}</div>
+    <h2 class="l-h2 reveal">${L.ctaSecH}</h2>
+    <p class="l-p reveal" style="margin:0 auto 28px">${L.ctaSecP}</p>
     <div class="l-ctas reveal">${cta}</div>
   </section>
-  <footer class="l-foot">СпендТрекер · ${today.slice(0, 4)}</footer>
+  <footer class="l-foot">${S.brand} · ${today.slice(0, 4)}</footer>
 </main>`,
   );
 }
@@ -248,122 +250,123 @@ const TG_CSS = `
 export function authPage(
   kind: 'login' | 'register',
   flashes: Flash[],
-  opts: { demo?: boolean; tgLogin?: boolean; tgPending?: boolean; origin?: string } = {},
+  opts: { demo?: boolean; tgLogin?: boolean; tgPending?: boolean; origin?: string; lang?: Lang } = {},
 ) {
   const isLogin = kind === 'login';
   const demo = !!opts.demo;
+  const lang = opts.lang ?? 'ru';
+  const A = tr(lang).auth;
   return layout(
-    { title: isLogin ? 'Вход' : 'Регистрация', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS + TG_CSS, share: opts.origin },
-    html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(isLogin ? 'wave' : 'happy', 104))}</div>
-<h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? 'С возвращением' : 'Новый аккаунт'}</h1>
-<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${isLogin ? 'Войди, чтобы продолжить' : 'Пара секунд — и можно считать траты'}</p>
+    { title: isLogin ? A.titleLogin : A.titleRegister, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS + TG_CSS, share: opts.origin },
+    html`<div style="position:absolute; top:max(14px, env(safe-area-inset-top)); right:16px">${langToggle(lang, isLogin ? '/login' : '/register')}</div>
+<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(isLogin ? 'wave' : 'happy', 104, '', lang))}</div>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? A.headLogin : A.headRegister}</h1>
+<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${isLogin ? A.subLogin : A.subRegister}</p>
 ${opts.tgPending
-  ? html`<p class="tg-note reveal" style="--d:.12s">${isLogin ? 'Войди в свой аккаунт' : 'Создай аккаунт'} — и Telegram сразу к нему привяжется</p>`
+  ? html`<p class="tg-note reveal" style="--d:.12s">${isLogin ? A.pendingLogin : A.pendingRegister}</p>`
   : opts.tgLogin
-    ? html`<a class="btn btn-tg reveal" style="--d:.12s" href="/auth/telegram">${raw(TG_ICON)}${isLogin ? 'Войти через Telegram' : 'Продолжить с Telegram'}</a>
-<div class="auth-or reveal" style="--d:.14s">или по логину</div>`
+    ? html`<a class="btn btn-tg reveal" style="--d:.12s" href="/auth/telegram">${raw(TG_ICON)}${isLogin ? A.tgLogin : A.tgContinue}</a>
+<div class="auth-or reveal" style="--d:.14s">${A.orLogin}</div>`
     : ''}
 <form method="POST" class="reveal" style="--d:.15s">
   <div class="form-rows">
-    <label class="form-row" style="margin:0"><span>Логин</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
-    <label class="form-row" style="margin:0"><span>Пароль</span><input type="password" name="password" required autocomplete="${isLogin ? 'current-password' : 'new-password'}" style="text-align:left"></label>
+    <label class="form-row" style="margin:0"><span>${A.login}</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
+    <label class="form-row" style="margin:0"><span>${A.password}</span><input type="password" name="password" required autocomplete="${isLogin ? 'current-password' : 'new-password'}" style="text-align:left"></label>
   </div>
-  <button type="submit">${isLogin ? 'Войти' : 'Создать аккаунт'}</button>
+  <button type="submit">${isLogin ? A.btnLogin : A.btnRegister}</button>
 </form>
 ${demo
-  ? html`<form method="POST" action="/demo" class="reveal" style="--d:.2s; margin-top:10px"><button type="submit" class="btn-tinted">Войти в демо-аккаунт</button></form>`
+  ? html`<form method="POST" action="/demo" class="reveal" style="--d:.2s; margin-top:10px"><button type="submit" class="btn-tinted">${A.demoBtn}</button></form>`
   : ''}
 ${isLogin
-  ? html`<div class="footer-link reveal" style="--d:.22s"><a href="/forgot">Забыли пароль?</a></div>
-<div class="footer-link reveal" style="--d:.25s">Нет аккаунта? <a href="/register">Зарегистрироваться</a></div>`
-  : html`<div class="footer-link reveal" style="--d:.25s">Уже есть аккаунт? <a href="/login">Войти</a></div>`}`,
+  ? html`<div class="footer-link reveal" style="--d:.22s"><a href="/forgot">${A.forgot}</a></div>
+<div class="footer-link reveal" style="--d:.25s">${A.noAccount} <a href="/register">${A.registerLink}</a></div>`
+  : html`<div class="footer-link reveal" style="--d:.25s">${A.haveAccount} <a href="/login">${A.loginLink}</a></div>`}`,
   );
 }
 
 // «Забыли пароль?»: логин → бот присылает ссылку в привязанный Telegram (sent — ответ после отправки формы)
-export function forgotPage(flashes: Flash[], sent = false) {
+export function forgotPage(flashes: Flash[], sent = false, lang: Lang = 'ru') {
+  const F = tr(lang).forgot;
   return layout(
-    { title: 'Забыли пароль?', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS },
+    { title: F.title, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(sent ? 'wink' : 'worried', 104))}</div>
-<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${sent ? 'Проверь Telegram' : 'Забыли пароль?'}</h1>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(sent ? 'wink' : 'worried', 104, '', lang))}</div>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${sent ? F.headSent : F.headAsk}</h1>
 ${sent
-  ? html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">
-  Если к аккаунту привязан Telegram, бот уже прислал туда ссылку для нового пароля. Она действует 30 минут.
-</p>
-<p class="reveal" style="--d:.15s; text-align:center; color:var(--text-2); margin:0 0 26px">
-  Сообщения нет? Значит, Telegram к аккаунту не привязан — тогда восстановить вход нельзя: другого способа проверить, что аккаунт твой, у сайта нет.
-</p>`
-  : html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">
-  Напиши логин — бот пришлёт в Telegram ссылку, по которой можно задать новый пароль.
-</p>
+  ? html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${F.sent1}</p>
+<p class="reveal" style="--d:.15s; text-align:center; color:var(--text-2); margin:0 0 26px">${F.sent2}</p>`
+  : html`<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${F.ask}</p>
 <form method="POST" class="reveal" style="--d:.15s">
   <div class="form-rows">
-    <label class="form-row" style="margin:0"><span>Логин</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
+    <label class="form-row" style="margin:0"><span>${F.login}</span><input type="text" name="username" required autocapitalize="off" autocorrect="off" autocomplete="username" style="text-align:left"></label>
   </div>
-  <button type="submit">Прислать ссылку</button>
+  <button type="submit">${F.send}</button>
 </form>`}
-<div class="footer-link reveal" style="--d:.25s"><a href="/login">Вернуться ко входу</a></div>`,
+<div class="footer-link reveal" style="--d:.25s"><a href="/login">${F.back}</a></div>`,
   );
 }
 
 // Страница из ссылки бота: новый пароль
-export function resetPage(flashes: Flash[], username: string) {
+export function resetPage(flashes: Flash[], username: string, lang: Lang = 'ru') {
+  const R = tr(lang).reset;
   return layout(
-    { title: 'Новый пароль', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS },
+    { title: R.title, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104))}</div>
-<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">Новый пароль</h1>
-<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">для аккаунта <b>${username}</b></p>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104, '', lang))}</div>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${R.head}</h1>
+<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${R.forAccount} <b>${username}</b></p>
 <form method="POST" class="reveal" style="--d:.15s">
   <input type="text" name="username" value="${username}" autocomplete="username" hidden>
   <div class="form-rows">
-    <label class="form-row" style="margin:0"><span>Пароль</span><input type="password" name="password" required minlength="8" autocomplete="new-password" style="text-align:left"></label>
+    <label class="form-row" style="margin:0"><span>${R.password}</span><input type="password" name="password" required minlength="8" autocomplete="new-password" style="text-align:left"></label>
   </div>
-  <button type="submit">Сохранить и войти</button>
+  <button type="submit">${R.save}</button>
 </form>
-<div class="footer-link reveal" style="--d:.25s">После смены пароля все остальные устройства выйдут из аккаунта.</div>`,
+<div class="footer-link reveal" style="--d:.25s">${R.note}</div>`,
   );
 }
 
 // Вошли через Telegram, а аккаунта с ним ещё нет: создать новый или привязать к существующему
-export function tgNewAccountPage(flashes: Flash[], name: string) {
+export function tgNewAccountPage(flashes: Flash[], name: string, lang: Lang = 'ru') {
+  const T = tr(lang).tgNew;
   return layout(
-    { title: 'Вход через Telegram', flashes, loggedIn: false, center: true, extraCss: DASHBOARD_CSS + TG_CSS },
+    { title: T.title, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS + TG_CSS },
     html`<div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('wave', 104))}</div>
-<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">Привет, ${name}!</h1>
-<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">
-  Telegram подтвердил вход. Этот Telegram пока не привязан ни к одному аккаунту СпендТрекера.
-</p>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('wave', 104, '', lang))}</div>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${T.hi}, ${name}!</h1>
+<p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${T.text}</p>
 <form method="POST" action="/auth/telegram/new" class="reveal" style="--d:.15s; margin:0">
-  <button type="submit" class="btn-tg">${raw(TG_ICON)}Создать аккаунт через Telegram</button>
+  <button type="submit" class="btn-tg">${raw(TG_ICON)}${T.create}</button>
 </form>
-<a class="btn btn-tinted reveal" href="/login" style="--d:.2s; margin-top:10px">У меня уже есть аккаунт</a>
-<div class="footer-link reveal" style="--d:.25s">Войдёшь по логину и паролю — и Telegram привяжется к нему.</div>`,
+<a class="btn btn-tinted reveal" href="/login" style="--d:.2s; margin-top:10px">${T.have}</a>
+<div class="footer-link reveal" style="--d:.25s">${T.note}</div>`,
   );
 }
 
 // ---------- сайт внутри Telegram (Mini App) ----------
 
-export function tgAppPage(next: string) {
+export function tgAppPage(next: string, lang: Lang = 'ru') {
+  const S = tr(lang);
+  const T = S.tgApp;
   return layout(
     {
-      title: 'СпендТрекер',
+      title: S.brand,
       flashes: [],
       loggedIn: false,
+      lang,
       center: true,
       extraCss: `${DASHBOARD_CSS}
   .tg-spin { width: 26px; height: 26px; margin: 22px auto 0; border-radius: 50%; border: 2.5px solid var(--fill); border-top-color: var(--accent); animation: tg-spin .8s linear infinite; }
   @keyframes tg-spin { to { transform: rotate(360deg); } }`,
     },
     html`<div style="height: max(18vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104))}</div>
-<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">СпендТрекер</h1>
-<p class="reveal" id="tg-status" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 0">Входим в аккаунт…</p>
+<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot('happy', 104, '', lang))}</div>
+<h1 class="reveal" style="--d:.05s; text-align:center; font-size:30px">${S.brand}</h1>
+<p class="reveal" id="tg-status" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 0">${T.signingIn}</p>
 <div class="tg-spin" id="tg-spin"></div>
-<a class="btn reveal" id="tg-login" href="/login" style="--d:.15s; margin-top:26px" hidden>Войти по логину и паролю</a>
+<a class="btn reveal" id="tg-login" href="/login" style="--d:.15s; margin-top:26px" hidden>${T.loginBtn}</a>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script>
 (function () {
@@ -374,7 +377,7 @@ export function tgAppPage(next: string) {
     document.getElementById('tg-spin').hidden = true;
     document.getElementById('tg-login').hidden = false;
   }
-  if (!tg || !tg.initData) return fail('Эта страница открывается из Telegram-бота.');
+  if (!tg || !tg.initData) return fail(${raw(JSON.stringify(T.fromBot))});
   tg.ready();
   tg.expand();
   try { tg.setHeaderColor('#000000'); tg.setBackgroundColor('#000000'); } catch (e) {}
@@ -383,10 +386,10 @@ export function tgAppPage(next: string) {
     .then(function (j) {
       if (j.ok) return location.replace(next);
       fail(j.error === 'not_linked'
-        ? 'Этот Telegram ещё не подключён к аккаунту. Войди и нажми в профиле «Подключить Telegram».'
-        : 'Не получилось войти автоматически.');
+        ? ${raw(JSON.stringify(T.notLinked))}
+        : ${raw(JSON.stringify(T.failed))});
     })
-    .catch(function () { fail('Нет связи с сервером. Попробуй ещё раз.'); });
+    .catch(function () { fail(${raw(JSON.stringify(T.noServer))}); });
 })();
 </script>`,
   );
@@ -459,21 +462,23 @@ const MONTHS_GEN = ['января', 'февраля', 'марта', 'апрел�
 export const MONTHS_SHORT = ['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
 const WEEKDAYS = ['Вс', 'Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб'];
 
-function dayTitle(iso: string, today: string) {
+function dayTitle(iso: string, today: string, lang: Lang = 'ru') {
+  const S = tr(lang);
   const d = new Date(iso + 'T00:00:00Z');
   const diff = Math.round((Date.parse(today + 'T00:00:00Z') - d.getTime()) / 86400000);
-  if (diff === 0) return 'Сегодня';
-  if (diff === 1) return 'Вчера';
-  return `${d.getUTCDate()} ${MONTHS_SHORT[d.getUTCMonth()]}`;
+  if (diff === 0) return S.today;
+  if (diff === 1) return S.yesterday;
+  return lang === 'en' ? `${S.months.short[d.getUTCMonth()]} ${d.getUTCDate()}` : `${d.getUTCDate()} ${S.months.short[d.getUTCMonth()]}`;
 }
 
-function shortNum(n: number) {
-  if (n >= 10000) return `${Math.round(n / 1000)}к`;
-  if (n >= 1000) return `${(n / 1000).toFixed(1).replace('.0', '').replace('.', ',')}к`;
+function shortNum(n: number, lang: Lang = 'ru') {
+  const en = lang === 'en';
+  if (n >= 10000) return `${Math.round(n / 1000)}${en ? 'k' : 'к'}`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1).replace('.0', '').replace('.', en ? '.' : ',')}${en ? 'k' : 'к'}`;
   return fmt0(n);
 }
 
-function donut(byCategory: { category: string; total: number }[], sum: number, sym: string) {
+function donut(byCategory: { category: string; total: number }[], sum: number, sym: string, lang: Lang = 'ru') {
   const R = 54;
   const C = 2 * Math.PI * R;
   const gapLen = byCategory.length > 1 ? 3 : 0;
@@ -489,7 +494,7 @@ function donut(byCategory: { category: string; total: number }[], sum: number, s
   });
   return html`<div class="donut">
     <svg viewBox="0 0 128 128"><circle cx="64" cy="64" r="${R}" stroke="rgba(255,255,255,.05)"/>${segs}</svg>
-    <div class="center"><div class="v">${shortNum(sum)}</div><div class="k">${sym} за месяц</div></div>
+    <div class="center"><div class="v">${shortNum(sum, lang)}</div><div class="k">${sym} ${lang === 'en' ? 'this month' : 'за месяц'}</div></div>
   </div>`;
 }
 
@@ -502,17 +507,18 @@ const X_SVG = '<svg viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 1
 
 // ---------- виджеты (используются и на главной, и на странице-презентации) ----------
 
-function weekWidget(week: { date: string; total: number }[], today: string, sym: string) {
+function weekWidget(week: { date: string; total: number }[], today: string, sym: string, lang: Lang = 'ru') {
+  const S = tr(lang);
   const maxDay = Math.max(...week.map((r) => r.total), 0);
   return html`<div class="card" style="margin:0 0 14px">
-  <div class="card-head"><h3>Последние 7 дней</h3><span class="hint">${fmt0(week.reduce((s, r) => s + r.total, 0))} ${sym}</span></div>
+  <div class="card-head"><h3>${lang === 'en' ? 'Last 7 days' : 'Последние 7 дней'}</h3><span class="hint">${fmt0(week.reduce((s, r) => s + r.total, 0))} ${sym}</span></div>
   <div class="week">
     ${week.map((r, k) => {
       const h = maxDay ? Math.max(6, Math.round((r.total / maxDay) * 100)) : 6;
-      const dow = WEEKDAYS[new Date(r.date + 'T00:00:00Z').getUTCDay()];
+      const dow = S.weekdays[new Date(r.date + 'T00:00:00Z').getUTCDay()];
       return html`<div class="col ${r.date === today ? 'today' : ''}" style="--k:${k}">
         <div class="bar-wrap" style="--h: ${h}%">
-          ${r.total ? html`<span class="val">${shortNum(r.total)}</span>` : ''}
+          ${r.total ? html`<span class="val">${shortNum(r.total, lang)}</span>` : ''}
           <div class="bar" style="height: ${h}%"></div>
         </div>
         <div class="day">${dow}</div>
@@ -522,16 +528,17 @@ function weekWidget(week: { date: string; total: number }[], today: string, sym:
 </div>`;
 }
 
-function categoriesWidget(byCategory: { category: string; total: number }[], today: string, sym: string, list = true) {
+function categoriesWidget(byCategory: { category: string; total: number }[], today: string, sym: string, lang: Lang = 'ru', list = true) {
+  const S = tr(lang);
   const sum = byCategory.reduce((s, r) => s + r.total, 0);
   const maxCat = Math.max(...byCategory.map((r) => r.total), 0);
   return html`<div class="card" style="margin:0 0 14px">
-  <div class="card-head"><h3>Категории</h3><span class="hint">${MONTHS_NOM[Number(today.slice(5, 7)) - 1]}</span></div>
+  <div class="card-head"><h3>${lang === 'en' ? 'Categories' : 'Категории'}</h3><span class="hint">${S.months.nom[Number(today.slice(5, 7)) - 1]}</span></div>
   <div class="donut-wrap"${list ? '' : raw(' style="margin:0"')}>
-    ${donut(byCategory, sum, sym)}
+    ${donut(byCategory, sum, sym, lang)}
     <div class="legend">
       ${byCategory.slice(0, 5).map(
-        (r) => html`<div class="row"><span class="dot" style="background:${COLORS[catStyle(r.category).color]}"></span><span class="name">${r.category}</span><span class="pct">${Math.round((r.total / sum) * 100)}%</span></div>`,
+        (r) => html`<div class="row"><span class="dot" style="background:${COLORS[catStyle(r.category).color]}"></span><span class="name">${categoryLabel(r.category, lang)}</span><span class="pct">${Math.round((r.total / sum) * 100)}%</span></div>`,
       )}
     </div>
   </div>
@@ -540,7 +547,7 @@ function categoriesWidget(byCategory: { category: string; total: number }[], tod
         (r) => html`<div class="cat-item">
       ${ico(r.category)}
       <div style="flex:1; min-width:0;">
-        <div class="top"><span>${r.category}</span><span>${fmt0(r.total)} ${sym}</span></div>
+        <div class="top"><span>${categoryLabel(r.category, lang)}</span><span>${fmt0(r.total)} ${sym}</span></div>
         <div class="cat-bar"><div class="track"><div class="fill" style="width: ${maxCat ? Math.round((r.total / maxCat) * 100) : 0}%;"></div></div></div>
       </div>
     </div>`,
@@ -549,23 +556,26 @@ function categoriesWidget(byCategory: { category: string; total: number }[], tod
 </div>`;
 }
 
-function expenseRows(recent: ExpenseRow[], today: string, sym: string, deletable: boolean) {
+function expenseRows(recent: ExpenseRow[], today: string, sym: string, deletable: boolean, lang: Lang = 'ru') {
+  const delQ = lang === 'en' ? 'Delete this entry?' : 'Удалить запись?';
+  const delAria = lang === 'en' ? 'Delete' : 'Удалить';
   let lastDay = '';
   return recent.map((e) => {
-    const label = e.expense_date !== lastDay ? html`<div class="day-label">${dayTitle(e.expense_date, today)}</div>` : '';
+    const label = e.expense_date !== lastDay ? html`<div class="day-label">${dayTitle(e.expense_date, today, lang)}</div>` : '';
     lastDay = e.expense_date;
+    const catName = categoryLabel(e.category, lang);
     return html`${label}<div class="expense-row">
       <div class="main">
         ${ico(e.category)}
         <div style="min-width:0;">
-          <div class="info">${e.note ? e.note : e.category}</div>
-          <div class="cat">${e.store ? `${e.category} · ${e.store}` : e.category}</div>
+          <div class="info">${e.note ? e.note : catName}</div>
+          <div class="cat">${e.store ? `${catName} · ${e.store}` : catName}</div>
         </div>
       </div>
       <div class="amt">${fmt0(e.amount)} ${sym}</div>
       ${deletable
-        ? html`<form method="POST" action="/delete/${e.id}" style="margin:0;" onsubmit="return confirm('Удалить запись?');">
-        <button type="submit" class="btn-danger btn-icon" aria-label="Удалить">${raw(X_SVG)}</button>
+        ? html`<form method="POST" action="/delete/${e.id}" style="margin:0;" onsubmit="return confirm('${delQ}');">
+        <button type="submit" class="btn-danger btn-icon" aria-label="${delAria}">${raw(X_SVG)}</button>
       </form>`
         : ''}
     </div>`;
@@ -577,7 +587,9 @@ function expenseRows(recent: ExpenseRow[], today: string, sym: string, deletable
 const escText = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /** Что Трэк говорит сегодня: сравнивает траты за день с обычными для этого месяца */
-function kopiCard(d: { sym: string; today: string; todayTotal: number; monthTotal: number; recent: ExpenseRow[]; byCategory: { category: string; total: number }[] }) {
+function kopiCard(d: { sym: string; today: string; todayTotal: number; monthTotal: number; recent: ExpenseRow[]; byCategory: { category: string; total: number }[]; lang?: Lang }) {
+  const lang = d.lang ?? 'ru';
+  const en = lang === 'en';
   const sym = escText(d.sym);
   const day = Number(d.today.slice(8, 10));
   const usual = day > 1 ? (d.monthTotal - d.todayTotal) / (day - 1) : 0;
@@ -586,32 +598,45 @@ function kopiCard(d: { sym: string; today: string; todayTotal: number; monthTota
   let text: string;
   if (!d.recent.length) {
     mood = 'wave';
-    text = 'Привет! Я <b>Трэк</b> 👋 Помогу следить за деньгами. Запиши первую трату — скажи её голосом или отсканируй покупку.';
+    text = en
+      ? "Hi! I'm <b>Track</b> 👋 I'll help you watch your money. Record your first expense — say it by voice or scan a purchase."
+      : 'Привет! Я <b>Трэк</b> 👋 Помогу следить за деньгами. Запиши первую трату — скажи её голосом или отсканируй покупку.';
   } else if (!d.todayTotal) {
     mood = 'happy';
-    text = 'Сегодня ни одной траты. Так держать! 🌱';
+    text = en ? 'No expenses today. Keep it up! 🌱' : 'Сегодня ни одной траты. Так держать! 🌱';
   } else if (usual > 0 && d.todayTotal > usual * 1.5) {
     mood = 'worried';
-    text = `Ого, сегодня уже ${today}. Обычно за день выходит около ${fmt0(usual)} ${sym}.`;
+    text = en
+      ? `Whoa, already ${today} today. A usual day is around ${fmt0(usual)} ${sym}.`
+      : `Ого, сегодня уже ${today}. Обычно за день выходит около ${fmt0(usual)} ${sym}.`;
   } else if (usual > 0 && d.todayTotal < usual * 0.8) {
     mood = 'happy';
-    text = `Сегодня ${today} — меньше, чем обычно. Копим! 🌱`;
+    text = en ? `${today} today — less than usual. Saving up! 🌱` : `Сегодня ${today} — меньше, чем обычно. Копим! 🌱`;
   } else {
     mood = 'wink';
-    text = `Сегодня ${today}. Всё под контролем 😉`;
+    text = en ? `${today} today. All under control 😉` : `Сегодня ${today}. Всё под контролем 😉`;
   }
   const top = d.byCategory[0];
-  const tips = [
-    text,
-    'Нажми «Голосом» и скажи «кофе 250» — я всё запишу.',
-    'Наведи камеру на штрих-код — найду товар и магазин рядом.',
-    ...(top ? [`В этом месяце больше всего уходит на «${escText(top.category)}» — ${fmt0(top.total)} ${sym}.`] : []),
-    'Пиши мне траты и в Telegram — подключи бота в профиле.',
-    'Хе-хе, щекотно! 😄',
-  ];
+  const tips = en
+    ? [
+        text,
+        'Tap "Voice" and say "coffee 250" — I\'ll log it all.',
+        'Point the camera at a barcode — I\'ll find the product and a store nearby.',
+        ...(top ? [`This month "${escText(categoryLabel(top.category, lang))}" takes the most — ${fmt0(top.total)} ${sym}.`] : []),
+        'Message me expenses in Telegram too — connect the bot in your profile.',
+        'Hehe, that tickles! 😄',
+      ]
+    : [
+        text,
+        'Нажми «Голосом» и скажи «кофе 250» — я всё запишу.',
+        'Наведи камеру на штрих-код — найду товар и магазин рядом.',
+        ...(top ? [`В этом месяце больше всего уходит на «${escText(top.category)}» — ${fmt0(top.total)} ${sym}.`] : []),
+        'Пиши мне траты и в Telegram — подключи бота в профиле.',
+        'Хе-хе, щекотно! 😄',
+      ];
   return html`<div class="kopi-card reveal" style="--d:.03s" data-tips="${JSON.stringify(tips)}" data-i="0">
-  ${raw(mascot(mood, 64))}
-  <div class="kopi-bubble"><span class="who">Трэк</span><span class="kopi-text">${raw(text)}</span></div>
+  ${raw(mascot(mood, 64, '', lang))}
+  <div class="kopi-bubble"><span class="who">${en ? 'Track' : 'Трэк'}</span><span class="kopi-text">${raw(text)}</span></div>
 </div>`;
 }
 
@@ -630,82 +655,89 @@ export function dashboardPage(d: {
   week: { date: string; total: number }[];
   byCategory: { category: string; total: number }[];
   recent: ExpenseRow[];
+  lang: Lang;
 }) {
-  const month = MONTHS_IN[Number(d.today.slice(5, 7)) - 1];
-  const catOptions = (sel?: string) => d.categories.map((c) => html`<option value="${c}" ${c === sel ? 'selected' : ''}>${c}</option>`);
+  const S = tr(d.lang);
+  const A = S.app;
+  const month = S.months.in[Number(d.today.slice(5, 7)) - 1];
+  const catOptions = (sel?: string) => d.categories.map((c) => html`<option value="${c}" ${c === sel ? 'selected' : ''}>${categoryLabel(c, d.lang)}</option>`);
 
-  const recentRows = expenseRows(d.recent, d.today, d.sym, true);
+  const recentRows = expenseRows(d.recent, d.today, d.sym, true, d.lang);
+  const dateStr = d.lang === 'en'
+    ? `${S.months.short[Number(d.today.slice(5, 7)) - 1]} ${Number(d.today.slice(8, 10))}`
+    : `${Number(d.today.slice(8, 10))} ${S.months.short[Number(d.today.slice(5, 7)) - 1]}`;
 
   return layout(
     {
-      title: 'Мои траты',
+      title: S.nav.dashboard,
       flashes: d.flashes,
       loggedIn: true,
+      lang: d.lang,
       activeTab: 'dashboard',
       extraCss: DASHBOARD_CSS,
       scripts: PARSE_JS + DASH_JS + VOICE_JS + SCAN_JS,
     },
     html`${header(
-      'Траты',
-      d.demo ? html`<span class="pill">Демо</span>` : undefined,
-      html`Привет, ${d.username} · ${dayTitle(d.today, d.today).toLowerCase()}, ${Number(d.today.slice(8, 10))} ${MONTHS_SHORT[Number(d.today.slice(5, 7)) - 1]}`,
+      S.nav.dashboard,
+      d.demo ? html`<span class="pill">${A.demo}</span>` : undefined,
+      html`${A.greeting.replace('%s', d.username)} · ${dayTitle(d.today, d.today, d.lang).toLowerCase()}, ${dateStr}`,
     )}
 
 <div class="card hero reveal">
-  <div class="label">Потрачено в ${month}</div>
+  <div class="label">${A.spentIn.replace('%s', month)}</div>
   <div class="big">${countUp(d.monthTotal)}<span class="cur">${d.sym}</span></div>
   <div class="chips">
-    <div class="chip"><div class="k">Сегодня</div><div class="v">${countUp(d.todayTotal)} ${d.sym}</div></div>
-    <div class="chip"><div class="k">Эта неделя</div><div class="v">${countUp(d.weekTotal)} ${d.sym}</div></div>
+    <div class="chip"><div class="k">${A.today}</div><div class="v">${countUp(d.todayTotal)} ${d.sym}</div></div>
+    <div class="chip"><div class="k">${A.thisWeek}</div><div class="v">${countUp(d.weekTotal)} ${d.sym}</div></div>
   </div>
 </div>
 
 ${kopiCard(d)}
 
 <div class="actions reveal" style="--d:.06s">
-  <button type="button" class="action voice" id="act-voice"><span class="ring">${raw(MIC_SVG)}</span>Голосом</button>
-  <button type="button" class="action" id="act-scan"><span class="ring">${raw(SCAN_SVG)}</span>Сканировать</button>
-  <button type="button" class="action" id="act-manual"><span class="ring">${raw(PLUS_SVG)}</span>Вручную</button>
+  <button type="button" class="action voice" id="act-voice"><span class="ring">${raw(MIC_SVG)}</span>${A.voiceBtn}</button>
+  <button type="button" class="action" id="act-scan"><span class="ring">${raw(SCAN_SVG)}</span>${A.scanBtn}</button>
+  <button type="button" class="action" id="act-manual"><span class="ring">${raw(PLUS_SVG)}</span>${A.manualBtn}</button>
 </div>
 
 <div class="card reveal" style="--d:.1s">
   <form method="POST" id="add-form" data-today="${d.today}" data-sym="${d.sym}" autocomplete="off">
-    <div class="amount-wrap"><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0" required aria-label="Сумма"><span class="amount-cur">${d.sym}</span></div>
+    <div class="amount-wrap"><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0" required aria-label="${d.lang === 'en' ? 'Amount' : 'Сумма'}"><span class="amount-cur">${d.sym}</span></div>
     <div class="form-rows">
-      <label class="form-row"><span>Категория</span><select name="category">${catOptions()}</select></label>
-      <label class="form-row"><span>Дата</span><input type="date" name="expense_date" value="${d.today}"></label>
-      <div class="form-row"><span>Магазин</span><input type="text" name="store" placeholder="Необязательно" maxlength="80"><button type="button" class="loc" id="loc-btn" aria-label="Магазины рядом">${raw(PIN_SVG)}</button></div>
-      <label class="form-row"><span>Заметка</span><input type="text" name="note" placeholder="Кофе с другом" maxlength="255"></label>
+      <label class="form-row"><span>${A.category}</span><select name="category">${catOptions()}</select></label>
+      <label class="form-row"><span>${A.date}</span><input type="date" name="expense_date" value="${d.today}"></label>
+      <div class="form-row"><span>${A.store}</span><input type="text" name="store" placeholder="${A.optional}" maxlength="80"><button type="button" class="loc" id="loc-btn" aria-label="${A.store}">${raw(PIN_SVG)}</button></div>
+      <label class="form-row"><span>${A.note}</span><input type="text" name="note" placeholder="${A.noteEg}" maxlength="255"></label>
     </div>
     <div class="store-chips" id="store-chips"></div>
     <input type="hidden" name="barcode" value="">
     <input type="hidden" name="lat" value=""><input type="hidden" name="lon" value="">
     <input type="hidden" name="store_src" value="">
-    <button type="submit">Добавить</button>
+    <button type="submit">${A.addBtn}</button>
   </form>
 </div>
 
-<div class="reveal">${weekWidget(d.week, d.today, d.sym)}</div>
+<div class="reveal">${weekWidget(d.week, d.today, d.sym, d.lang)}</div>
 
-${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory, d.today, d.sym)}</div>` : ''}
+${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory, d.today, d.sym, d.lang)}</div>` : ''}
 
 <div class="card reveal">
-  <h3 style="margin-bottom:2px;">Последние записи</h3>
+  <h3 style="margin-bottom:2px;">${A.recentH}</h3>
   ${d.recent.length
     ? recentRows
-    : html`<div class="kopi-empty">${raw(mascot('sleep', 72))}<div>Пока нет записей — скажи трату голосом или отсканируй покупку.</div></div>`}
+    : html`<div class="kopi-empty">${raw(mascot('sleep', 72, '', d.lang))}<div>${A.emptyDash}</div></div>`}
 </div>
 
 <div class="sheet-back" id="voice">
   <div class="sheet">
     <div class="grip"></div>
-    <div class="voice-status" id="voice-status">Слушаю…</div>
+    <div class="voice-status" id="voice-status">${A.listening}</div>
     <canvas class="eq" id="eq"></canvas>
     <div class="voice-text" id="voice-text"></div>
     <div class="voice-hint" id="voice-hint"></div>
     <div class="sheet-actions">
-      <button type="button" class="btn-gray" id="voice-cancel">Отмена</button>
-      <button type="button" class="stop-btn" id="voice-stop"><i></i><span>Готово</span></button>
+      <button type="button" class="btn-gray" id="voice-cancel">${A.cancel}</button>
+      <button type="button" class="stop-btn" id="voice-stop"><i></i><span>${A.done}</span></button>
     </div>
   </div>
 </div>
@@ -716,34 +748,34 @@ ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory
     <div class="viewfinder" id="vf">
       <video id="scan-video" playsinline muted autoplay></video>
       <canvas id="scan-snap" class="snap" hidden></canvas>
-      <button type="button" class="vf-btn" id="scan-torch" aria-label="Вспышка">${raw(TORCH_SVG)}</button>
+      <button type="button" class="vf-btn" id="scan-torch" aria-label="${A.torch}">${raw(TORCH_SVG)}</button>
       <div class="frame"></div><div class="line"></div>
       <div class="vf-msg" id="vf-msg"></div>
     </div>
-    <button type="button" class="btn-plain" id="scan-manual-toggle">Ввести код вручную</button>
+    <button type="button" class="btn-plain" id="scan-manual-toggle">${A.enterCode}</button>
     <div class="manual-code" id="scan-manual" hidden>
-      <input type="text" id="scan-code" inputmode="numeric" placeholder="4600000000000" aria-label="Штрих-код">
-      <button type="button" id="scan-code-go">Найти</button>
+      <input type="text" id="scan-code" inputmode="numeric" placeholder="4600000000000" aria-label="${d.lang === 'en' ? 'Barcode' : 'Штрих-код'}">
+      <button type="button" id="scan-code-go">${A.find}</button>
     </div>
     <div id="scan-result" hidden>
       <div class="product" id="scan-product"></div>
       <div class="photo-ask" id="scan-photo-box" hidden>
-        <button type="button" class="btn-tinted" id="scan-photo">Определить по фото</button>
+        <button type="button" class="btn-tinted" id="scan-photo">${A.byPhoto}</button>
         <input type="file" id="scan-photo-file" accept="image/*" capture="environment" hidden>
         <div class="photo-msg" id="scan-photo-msg" hidden></div>
       </div>
       <div class="prices" id="scan-prices" hidden></div>
-      <div class="amount-wrap scan-step"><input class="amount-input" type="text" id="scan-amount" inputmode="decimal" placeholder="0" aria-label="Сумма"><span class="amount-cur">${d.sym}</span></div>
+      <div class="amount-wrap scan-step"><input class="amount-input" type="text" id="scan-amount" inputmode="decimal" placeholder="0" aria-label="${d.lang === 'en' ? 'Amount' : 'Сумма'}"><span class="amount-cur">${d.sym}</span></div>
       <div class="store-chips scan-step" id="scan-stores" style="--d:.05s"></div>
       <div class="form-rows scan-step" style="--d:.1s">
-        <label class="form-row"><span>Название</span><input type="text" id="scan-name" placeholder="Что купил" maxlength="255"></label>
-        <label class="form-row"><span>Магазин</span><input type="text" id="scan-store" placeholder="Вписать свой" maxlength="80"></label>
-        <label class="form-row"><span>Категория</span><select id="scan-cat">${catOptions('Еда')}</select></label>
+        <label class="form-row"><span>${A.name}</span><input type="text" id="scan-name" placeholder="${A.whatBought}" maxlength="255"></label>
+        <label class="form-row"><span>${A.store}</span><input type="text" id="scan-store" placeholder="${A.writeOwn}" maxlength="80"></label>
+        <label class="form-row"><span>${A.category}</span><select id="scan-cat">${catOptions('Еда')}</select></label>
       </div>
-      <div class="footnote scan-step" style="margin:-6px 6px 14px">Нет нужного магазина или товара? Впиши название — сайт запомнит его здесь, и в следующий раз он найдётся сам.</div>
+      <div class="footnote scan-step" style="margin:-6px 6px 14px">${A.storeNotFound}</div>
       <div class="sheet-actions scan-step" style="--d:.15s">
-        <button type="button" class="btn-gray" id="scan-again">Ещё раз</button>
-        <button type="button" id="scan-add">Добавить трату</button>
+        <button type="button" class="btn-gray" id="scan-again">${A.again}</button>
+        <button type="button" id="scan-add">${A.addExpense}</button>
       </div>
     </div>
   </div>
@@ -763,16 +795,19 @@ export function friendsPage(d: {
   period: string;
   board: { id: number; username: string; is_me: boolean; total: number }[];
   incoming: { id: number; user_id: number; username: string }[];
+  lang: Lang;
 }) {
+  const S = tr(d.lang);
+  const A = S.app;
   const periods: [string, string][] = [
-    ['day', 'День'],
-    ['week', 'Неделя'],
-    ['month', 'Месяц'],
+    ['day', A.pDay],
+    ['week', A.pWeek],
+    ['month', A.pMonth],
   ];
   const idx = Math.max(0, periods.findIndex(([p]) => p === d.period));
   return layout(
-    { title: 'Друзья', flashes: d.flashes, loggedIn: true, activeTab: 'friends', extraCss: FRIENDS_CSS },
-    html`${header('Друзья', undefined, 'Кто сколько потратил')}
+    { title: S.nav.friends, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'friends', extraCss: FRIENDS_CSS },
+    html`${header(S.nav.friends, undefined, A.friendsSub)}
 
 <div class="seg reveal" style="--n:3; --i:${idx}">
   <span class="seg-thumb"></span>
@@ -785,16 +820,16 @@ export function friendsPage(d: {
         (row, i) => html`<a class="board-row ${i === 0 ? 'rank-1' : ''} ${row.is_me ? 'me' : ''}" href="${row.is_me ? '/profile' : `/friends/${row.id}`}">
       <div class="rank">${i + 1}</div>
       ${av(row.id, row.username)}
-      <div class="name">${row.is_me ? 'Ты' : row.username}</div>
+      <div class="name">${row.is_me ? A.you : row.username}</div>
       <div class="amount">${fmt0(row.total)} ${d.sym}</div>
       ${CHEV}
     </a>`,
       )
-    : html`<p style="color: var(--text-2); font-size: 15px; margin:0">Пока никого нет в списке.</p>`}
+    : html`<p style="color: var(--text-2); font-size: 15px; margin:0">${A.noFriends}</p>`}
 </div>
 
 ${d.incoming.length
-  ? html`<div class="section-h">Заявки в друзья</div><div class="card reveal">
+  ? html`<div class="section-h">${A.requestsH}</div><div class="card reveal">
   ${d.incoming.map(
     (r) => html`<div class="friend-req-row">
     <div style="display:flex; align-items:center; gap:12px; min-width:0;">
@@ -802,25 +837,25 @@ ${d.incoming.length
       <div style="font-weight:500;">${r.username}</div>
     </div>
     <div class="req-actions">
-      <form method="POST" action="/friends/accept/${r.id}" style="margin:0;"><button type="submit" class="btn-accept">Принять</button></form>
-      <form method="POST" action="/friends/decline/${r.id}" style="margin:0;"><button type="submit" class="btn-gray">Отклонить</button></form>
+      <form method="POST" action="/friends/accept/${r.id}" style="margin:0;"><button type="submit" class="btn-accept">${A.accept}</button></form>
+      <form method="POST" action="/friends/decline/${r.id}" style="margin:0;"><button type="submit" class="btn-gray">${A.decline}</button></form>
     </div>
   </div>`,
   )}
 </div>`
   : ''}
 
-<div class="section-h">Добавить друга</div>
+<div class="section-h">${A.addFriendH}</div>
 <div class="card reveal">
   <form method="POST" action="/friends/add" autocomplete="off" class="add-friend">
-    <input type="search" name="friend_login" placeholder="Ник друга" required
+    <input type="search" name="friend_login" placeholder="${A.friendNick}" required
            inputmode="text" enterkeyhint="send"
            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-           data-lpignore="true" data-1p-ignore aria-label="Ник друга">
-    <button type="submit">Позвать</button>
+           data-lpignore="true" data-1p-ignore aria-label="${A.friendNick}">
+    <button type="submit">${A.invite}</button>
   </form>
 </div>
-<div class="footnote">Друг получит заявку и появится в рейтинге, когда примет её.</div>`,
+<div class="footnote">${A.friendsFoot}</div>`,
   );
 }
 
@@ -843,12 +878,17 @@ export function friendProfilePage(d: {
   week: { date: string; total: number }[];
   byCategory: { category: string; total: number }[];
   recent: ExpenseRow[];
+  lang: Lang;
 }) {
+  const S = tr(d.lang);
+  const A = S.app;
   const since = d.friendsSince.slice(0, 10);
-  const sinceText = `${Number(since.slice(8, 10))} ${MONTHS_SHORT[Number(since.slice(5, 7)) - 1]} ${since.slice(0, 4)}`;
+  const sinceText = d.lang === 'en'
+    ? `${S.months.short[Number(since.slice(5, 7)) - 1]} ${Number(since.slice(8, 10))}, ${since.slice(0, 4)}`
+    : `${Number(since.slice(8, 10))} ${S.months.short[Number(since.slice(5, 7)) - 1]} ${since.slice(0, 4)}`;
   return layout(
-    { title: d.username, flashes: d.flashes, loggedIn: true, activeTab: 'friends', extraCss: DASHBOARD_CSS + PROFILE_CSS },
-    html`<header class="nav"><a class="nav-side left nav-back" href="/friends">${raw(BACK_SVG)}Друзья</a><div class="nav-title">${d.username}</div></header>
+    { title: d.username, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'friends', extraCss: DASHBOARD_CSS + PROFILE_CSS },
+    html`<header class="nav"><a class="nav-side left nav-back" href="/friends">${raw(BACK_SVG)}${A.friendsBack}</a><div class="nav-title">${d.username}</div></header>
 <div class="profile-head reveal">
   <div class="avatar-wrap">
     ${d.avatarV !== null
@@ -856,32 +896,32 @@ export function friendProfilePage(d: {
       : html`<div class="profile-avatar">${(d.username ? [...d.username][0] : '?').toUpperCase()}</div>`}
   </div>
   <h1 class="large-title" style="font-size:28px; line-height:34px; margin:0">${d.username}</h1>
-  <div class="since">В друзьях с ${sinceText}</div>
+  <div class="since">${A.friendsSince.replace('%s', sinceText)}</div>
   ${d.bio ? html`<p class="profile-bio">${d.bio}</p>` : ''}
 </div>
 
 <div class="card reveal" style="--d:.05s; padding:10px 6px">
   <div class="profile-stats">
-    <div><div class="value">${countUp(d.todayTotal)} ${d.sym}</div><div class="label">Сегодня</div></div>
-    <div><div class="value">${countUp(d.weekTotal)} ${d.sym}</div><div class="label">Неделя</div></div>
-    <div><div class="value">${countUp(d.monthTotal)} ${d.sym}</div><div class="label">Месяц</div></div>
+    <div><div class="value">${countUp(d.todayTotal)} ${d.sym}</div><div class="label">${A.stToday}</div></div>
+    <div><div class="value">${countUp(d.weekTotal)} ${d.sym}</div><div class="label">${A.stWeek}</div></div>
+    <div><div class="value">${countUp(d.monthTotal)} ${d.sym}</div><div class="label">${A.stMonth}</div></div>
   </div>
 </div>
 
-<div class="reveal">${weekWidget(d.week, d.today, d.sym)}</div>
+<div class="reveal">${weekWidget(d.week, d.today, d.sym, d.lang)}</div>
 
-${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory, d.today, d.sym, false)}</div>` : ''}
+${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory, d.today, d.sym, d.lang, false)}</div>` : ''}
 
 <div class="card reveal">
-  <h3 style="margin-bottom:2px;">Последние траты</h3>
+  <h3 style="margin-bottom:2px;">${A.recentExp}</h3>
   ${d.recent.length
-    ? expenseRows(d.recent, d.today, d.sym, false)
-    : html`<p style="color: var(--text-2); font-size: 15px; margin:12px 0 4px;">Пока ничего не записано.</p>`}
+    ? expenseRows(d.recent, d.today, d.sym, false, d.lang)
+    : html`<p style="color: var(--text-2); font-size: 15px; margin:12px 0 4px;">${A.nothingYet}</p>`}
 </div>
 
 <form method="POST" action="/friends/remove/${d.id}" class="list reveal" style="margin-top:22px"
-      onsubmit="return confirm('Удалить из друзей?');">
-  <button type="submit" class="row danger"><span class="grow">Удалить из друзей</span></button>
+      onsubmit="return confirm('${A.removeFriendQ}');">
+  <button type="submit" class="row danger"><span class="grow">${A.removeFriend}</span></button>
 </form>`,
   );
 }
@@ -902,135 +942,120 @@ export function profilePage(d: {
   avatarV: string | null;
   apiToken: string | null;
   telegram: { bot: string; linked: boolean; tgUsername: string | null } | null;
+  lang: Lang;
 }) {
+  const S = tr(d.lang);
+  const A = S.app;
   const created = d.createdAt
-    ? `${d.createdAt.slice(8, 10)}.${d.createdAt.slice(5, 7)}.${d.createdAt.slice(0, 4)}`
+    ? d.lang === 'en'
+      ? `${S.months.short[Number(d.createdAt.slice(5, 7)) - 1]} ${Number(d.createdAt.slice(8, 10))}, ${d.createdAt.slice(0, 4)}`
+      : `${d.createdAt.slice(8, 10)}.${d.createdAt.slice(5, 7)}.${d.createdAt.slice(0, 4)}`
     : '—';
   return layout(
-    { title: 'Профиль', flashes: d.flashes, loggedIn: true, activeTab: 'profile', extraCss: PROFILE_CSS },
-    html`<header class="nav"><div class="nav-title">${d.username || 'Профиль'}</div></header>
+    { title: S.nav.profile, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'profile', extraCss: PROFILE_CSS },
+    html`<header class="nav"><div class="nav-title">${d.username || A.profileFallback}</div></header>
 <div class="profile-head reveal">
   <form id="avatar-form" method="POST" action="/profile/avatar" enctype="multipart/form-data">
     <div class="avatar-wrap">
       ${d.avatarV !== null
-        ? html`<img class="avatar-img" src="/avatar/${d.userId}?v=${d.avatarV}" alt="Фото профиля">`
+        ? html`<img class="avatar-img" src="/avatar/${d.userId}?v=${d.avatarV}" alt="${A.profilePhoto}">`
         : html`<div class="profile-avatar">${(d.username ? [...d.username][0] : '?').toUpperCase()}</div>`}
-      <label class="avatar-edit" for="avatar-input" title="Сменить фото">
+      <label class="avatar-edit" for="avatar-input" title="${A.changePhoto}">
         <svg viewBox="0 0 24 24"><path d="M4 8a2 2 0 0 1 2-2h1.5l1.2-2h6.6l1.2 2H18a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="3.5"/></svg>
       </label>
       <input id="avatar-input" type="file" name="avatar" accept="image/*" style="display:none;" onchange="uploadAvatar(this)">
     </div>
   </form>
-  <h1 class="large-title" style="font-size:28px; line-height:34px; margin:0">${d.username || 'Пользователь'}</h1>
-  <div class="since">На борту с ${created}</div>
+  <h1 class="large-title" style="font-size:28px; line-height:34px; margin:0">${d.username || A.userFallback}</h1>
+  <div class="since">${A.onboardSince.replace('%s', created)}</div>
   ${d.bio ? html`<p class="profile-bio">${d.bio}</p>` : ''}
   ${d.avatarV !== null
-    ? html`<form method="POST" action="/profile/avatar/delete"><button type="submit" class="avatar-remove">Удалить фото</button></form>`
+    ? html`<form method="POST" action="/profile/avatar/delete"><button type="submit" class="avatar-remove">${A.removePhoto}</button></form>`
     : ''}
 </div>
 
 <div class="card reveal" style="--d:.05s; padding:10px 6px">
   <div class="profile-stats">
-    <div><div class="value">${countUp(d.totalAllTime)} ${d.sym}</div><div class="label">Потрачено</div></div>
-    <div><div class="value">${countUp(d.expenseCount)}</div><div class="label">Записей</div></div>
-    <div><div class="value">${countUp(d.friendCount)}</div><div class="label">Друзей</div></div>
+    <div><div class="value">${countUp(d.totalAllTime)} ${d.sym}</div><div class="label">${A.spent}</div></div>
+    <div><div class="value">${countUp(d.expenseCount)}</div><div class="label">${A.records}</div></div>
+    <div><div class="value">${countUp(d.friendCount)}</div><div class="label">${A.friendsLabel}</div></div>
   </div>
 </div>
 
-<div class="section-h">О себе</div>
+<div class="section-h">${A.aboutH}</div>
 <div class="card reveal">
   <form method="POST" action="/profile/bio" style="margin:0">
-    <textarea name="bio" rows="3" maxlength="200" placeholder="Пара слов о себе — их увидят друзья"
+    <textarea name="bio" rows="3" maxlength="200" placeholder="${A.aboutPlaceholder}"
       style="width:100%; resize:none; box-sizing:border-box; background:var(--fill); color:var(--text); border:none; border-radius:12px; padding:12px 14px; font:inherit; font-size:15px; line-height:1.4">${d.bio ?? ''}</textarea>
-    <button type="submit" style="margin-top:10px">Сохранить</button>
+    <button type="submit" style="margin-top:10px">${A.save}</button>
   </form>
 </div>
 
 ${d.telegram
-  ? html`<div class="section-h">Telegram-бот</div>
+  ? html`<div class="section-h">${A.tgBotH}</div>
 <div class="card reveal">
   ${d.telegram.linked
     ? html`<p class="token-hint" style="margin-top:0">
-    Подключён${d.telegram.tgUsername ? html` к <b style="color:var(--text)">@${d.telegram.tgUsername}</b>` : ''}.
-    Пиши или надиктуй боту траты, например <b style="color:var(--text)">кофе 250</b>, и они сразу появятся здесь.
+    ${d.telegram.tgUsername ? `${A.tgLinkedTo.replace('%s', d.telegram.tgUsername)} ` : ''}${A.tgLinkedText}
   </p>
-  <a class="btn" href="https://t.me/${d.telegram.bot}">Открыть @${d.telegram.bot}</a>
-  <form method="POST" action="/profile/telegram/unlink" style="margin:0;" onsubmit="return confirm('Отключить Telegram-бота?');">
-    <button type="submit" class="btn-plain" style="color:var(--text-2)">Отключить</button>
+  <a class="btn" href="https://t.me/${d.telegram.bot}">${A.openBot.replace('%s', d.telegram.bot)}</a>
+  <form method="POST" action="/profile/telegram/unlink" style="margin:0;" onsubmit="return confirm('${A.disconnectQ}');">
+    <button type="submit" class="btn-plain" style="color:var(--text-2)">${A.disconnect}</button>
   </form>`
-    : html`<p class="token-hint" style="margin-top:0">
-    Записывай траты сообщением или голосовым в Telegram: <b style="color:var(--text)">кофе 250</b>, <b style="color:var(--text)">вчера такси 540</b>.
-    Бот сам угадает категорию и пришлёт сводку по команде /stats.
-  </p>
-  <form method="POST" action="/profile/telegram" style="margin:0 0 4px;"><button type="submit">Подключить Telegram</button></form>`}
+    : html`<p class="token-hint" style="margin-top:0">${A.tgUnlinkedText}</p>
+  <form method="POST" action="/profile/telegram" style="margin:0 0 4px;"><button type="submit">${A.connectTg}</button></form>`}
 </div>`
   : ''}
 
-<div class="section-h">Быстрая трата с iPhone</div>
+<div class="section-h">${A.quickH}</div>
 <div class="card reveal">
-  <p class="token-hint" style="margin-top:0">
-    Добавляй траты в два касания через приложение «Команды». Токен никому не показывай:
-    с ним можно добавлять траты от твоего имени.
-  </p>
+  <p class="token-hint" style="margin-top:0">${A.tokenHint}</p>
   ${d.apiToken
     ? html`<div class="token-box" id="token-text">${d.apiToken}</div>
     <div class="row-btns">
-      <button type="button" id="copy-btn" onclick="copyToken()">Скопировать</button>
-      <a class="btn btn-green" href="${d.shortcutUrl}">Добавить команду</a>
+      <button type="button" id="copy-btn" onclick="copyToken()">${A.copy}</button>
+      <a class="btn btn-green" href="${d.shortcutUrl}">${A.addCmd}</a>
     </div>
-    <button type="button" class="btn-plain" onclick="Sheet.open('help')">Как это работает</button>
+    <button type="button" class="btn-plain" onclick="Sheet.open('help')">${A.howWorks}</button>
     <form method="POST" action="/profile/token" style="margin:0;"
-          onsubmit="return confirm('Старый токен перестанет работать, и команду придётся обновить. Продолжить?');">
-      <button type="submit" class="btn-plain" style="color:var(--text-2)">Создать новый токен</button>
+          onsubmit="return confirm('${A.newTokenQ}');">
+      <button type="submit" class="btn-plain" style="color:var(--text-2)">${A.newTokenBtn}</button>
     </form>`
-    : html`<form method="POST" action="/profile/token" style="margin:0 0 4px;"><button type="submit">Создать токен</button></form>
-    <button type="button" class="btn-plain" onclick="Sheet.open('help')">Как это работает</button>`}
+    : html`<form method="POST" action="/profile/token" style="margin:0 0 4px;"><button type="submit">${A.createToken}</button></form>
+    <button type="button" class="btn-plain" onclick="Sheet.open('help')">${A.howWorks}</button>`}
 </div>
 
 <div class="list reveal">
-  <a class="row" href="/settings"><span class="grow">Настройки</span>${CHEV}</a>
-  <a class="row danger" href="/logout"><span class="grow">Выйти из аккаунта</span></a>
+  <a class="row" href="/settings"><span class="grow">${A.settingsRow}</span>${CHEV}</a>
+  <a class="row danger" href="/logout"><span class="grow">${A.logoutRow}</span></a>
 </div>
 
 <div class="sheet-back" id="help">
   <div class="sheet">
     <div class="grip"></div>
-    <h3>Как добавить команду</h3>
-    <div class="sub">Это нужно сделать один раз, займёт минуту.</div>
-    <div class="step"><div class="num">1</div><div>
-      <div class="t">Создай токен</div>
-      <div class="d">Нажми <b>«Создать токен»</b> в карточке «Быстрая трата». Если токен уже есть, переходи к шагу 2.</div>
-    </div></div>
-    <div class="step"><div class="num">2</div><div>
-      <div class="t">Скопируй токен</div>
-      <div class="d">Нажми <b>«Скопировать»</b>. Кнопка на секунду покажет «Скопировано».</div>
-    </div></div>
-    <div class="step"><div class="num">3</div><div>
-      <div class="t">Открой команду</div>
-      <div class="d">Нажми <b>«Добавить команду»</b>. Откроется приложение «Команды» с командой «Трата».</div>
-    </div></div>
-    <div class="step"><div class="num">4</div><div>
-      <div class="t">Вставь токен</div>
-      <div class="d">Телефон спросит токен. Нажми на поле, выбери <b>«Вставить»</b> и нажми <b>«Добавить команду»</b>.</div>
-    </div></div>
-    <div class="step"><div class="num">5</div><div>
-      <div class="t">Готово, пользуйся</div>
-      <div class="d">Запусти команду «Трата»: выбери категорию, напиши заметку и введи сумму. Трата сразу появится в приложении.</div>
-    </div></div>
-    <div class="tip"><b>Совет:</b> чтобы запускать команду с главного экрана, открой её в «Командах», нажми «Поделиться» и выбери <b>«На экран Домой»</b>.</div>
-    <button type="button" onclick="Sheet.close('help')" style="margin-top:16px;">Понятно</button>
+    <h3>${A.helpH}</h3>
+    <div class="sub">${A.helpSub}</div>
+    ${A.steps.map(
+      (step, i) => html`<div class="step"><div class="num">${i + 1}</div><div>
+      <div class="t">${step[0]}</div>
+      <div class="d">${step[1]}</div>
+    </div></div>`,
+    )}
+    <div class="tip">${A.tip}</div>
+    <button type="button" onclick="Sheet.close('help')" style="margin-top:16px;">${A.gotIt}</button>
   </div>
 </div>
 
 <script>
+  var T_COPY = ${raw(JSON.stringify(A.copy))}, T_COPIED = ${raw(JSON.stringify(A.copied))}, T_AVATAR_ERR = ${raw(JSON.stringify(A.avatarErr))};
   function copyToken() {
     var el = document.getElementById('token-text');
     if (!el) return;
     var text = el.textContent.trim();
     var btn = document.getElementById('copy-btn');
     function done() {
-      btn.textContent = 'Скопировано ✓';
-      setTimeout(function () { btn.textContent = 'Скопировать'; }, 1800);
+      btn.textContent = T_COPIED;
+      setTimeout(function () { btn.textContent = T_COPY; }, 1800);
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done);
@@ -1070,7 +1095,7 @@ ${d.telegram
     };
     img.onerror = function () {
       URL.revokeObjectURL(url);
-      alert('Не удалось обработать фото, попробуйте другое');
+      alert(T_AVATAR_ERR);
     };
     img.src = url;
   }
@@ -1089,33 +1114,33 @@ const SQ = {
   bell: '<svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>',
   unlink: '<svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 4 8"/><path d="M8 12h4"/><path d="m2 2 20 20"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"/></svg>',
 };
 const sq = (icon: keyof typeof SQ, bg: string) => raw(`<span class="sq" style="background:${bg}">${SQ[icon]}</span>`);
 
 // Telegram в настройках: привязать аккаунт (вход на сайт через Telegram) отдельно от бота —
 // бот пишет только тем, кто сам открыл его и нажал «Старт».
-function telegramSettings(t: { linked: boolean; tgUsername: string | null; bot: string | null; login: boolean }) {
+function telegramSettings(t: { linked: boolean; tgUsername: string | null; bot: string | null; login: boolean }, lang: Lang) {
+  const A = tr(lang).app;
   if (!t.login && !t.bot) return '';
   if (!t.linked) {
-    return html`<div class="section-h">Telegram</div>
+    return html`<div class="section-h">${A.tgSection}</div>
 <div class="list reveal" style="--inset:58px; --d:.03s">
   ${t.login
-    ? html`<a class="row" href="/auth/telegram?link=1&back=settings">${sq('tg', '#2aabee')}<span class="grow">Привязать Telegram</span>${CHEV}</a>`
-    : html`<form method="POST" action="/profile/telegram" style="margin:0"><button type="submit" class="row">${sq('tg', '#2aabee')}<span class="grow">Привязать Telegram</span>${CHEV}</button></form>`}
+    ? html`<a class="row" href="/auth/telegram?link=1&back=settings">${sq('tg', '#2aabee')}<span class="grow">${A.linkTg}</span>${CHEV}</a>`
+    : html`<form method="POST" action="/profile/telegram" style="margin:0"><button type="submit" class="row">${sq('tg', '#2aabee')}<span class="grow">${A.linkTg}</span>${CHEV}</button></form>`}
 </div>
-<div class="footnote">${t.login
-      ? 'После привязки можно входить на сайт кнопкой «Войти через Telegram». Бот писать не будет, пока сам не разрешишь.'
-      : 'Откроется бот: нажми «Старт», и он привяжется к аккаунту.'}</div>`;
+<div class="footnote">${t.login ? A.linkFootLogin : A.linkFootBot}</div>`;
   }
-  return html`<div class="section-h">Telegram</div>
+  return html`<div class="section-h">${A.tgSection}</div>
 <div class="list reveal" style="--inset:58px; --d:.03s">
-  <div class="row">${sq('tg', '#2aabee')}<span class="grow">Telegram</span><span class="value">${t.tgUsername ? `@${t.tgUsername}` : 'привязан'}</span></div>
+  <div class="row">${sq('tg', '#2aabee')}<span class="grow">${A.tgSection}</span><span class="value">${t.tgUsername ? `@${t.tgUsername}` : A.linked}</span></div>
   ${t.bot
-    ? html`<a class="row" href="https://t.me/${t.bot}">${sq('bell', '#ff9f0a')}<span class="grow">Разрешить боту писать</span>${CHEV}</a>`
+    ? html`<a class="row" href="https://t.me/${t.bot}">${sq('bell', '#ff9f0a')}<span class="grow">${A.allowBot}</span>${CHEV}</a>`
     : ''}
-  <form method="POST" action="/profile/telegram/unlink" style="margin:0" onsubmit="return confirm('Отвязать Telegram? Входить через Telegram и получать сообщения от бота больше не получится.');">
+  <form method="POST" action="/profile/telegram/unlink" style="margin:0" onsubmit="return confirm('${A.unlinkQ}');">
     <input type="hidden" name="back" value="settings">
-    <button type="submit" class="row danger">${sq('unlink', '#ff453a')}<span class="grow">Отвязать Telegram</span></button>
+    <button type="submit" class="row danger">${sq('unlink', '#ff453a')}<span class="grow">${A.unlinkTg}</span></button>
   </form>
 </div>
 <div class="footnote">${t.bot
@@ -1131,50 +1156,63 @@ export function settingsPage(d: {
   telegram: { linked: boolean; tgUsername: string | null; bot: string | null; login: boolean };
   currencies: Record<string, Currency>;
   currentCurrency: string;
+  lang: Lang;
 }) {
+  const S = tr(d.lang);
+  const A = S.app;
+  const curLabel = (code: string, info: Currency) => `${currencyLabel(code, d.lang, info.label)} (${currencySymbol(code, d.lang, info.symbol)})`;
   const cur = d.currencies[d.currentCurrency] ?? Object.values(d.currencies)[0];
   return layout(
-    { title: 'Настройки', flashes: d.flashes, loggedIn: true, activeTab: 'settings', extraCss: SETTINGS_CSS },
-    html`${header('Настройки', undefined, html`Логин: ${d.username}`)}
+    { title: S.nav.settings, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'settings', extraCss: SETTINGS_CSS },
+    html`${header(S.nav.settings, undefined, html`${A.setLoginLabel.replace('%s', d.username)}`)}
 
 <div class="list reveal" style="--inset:58px">
   <form method="POST" style="margin:0">
     <input type="hidden" name="action" value="change_currency">
     <label class="row" style="margin:0; font-size:17px; color:var(--text)">
-      ${sq('coins', '#30d158')}<span class="grow">Валюта</span><span class="value">${cur.label} (${cur.symbol})</span>${CHEV}
-      <select name="currency" class="overlay" onchange="this.form.submit()" aria-label="Валюта">
+      ${sq('coins', '#30d158')}<span class="grow">${A.currency}</span><span class="value">${curLabel(d.currentCurrency, cur)}</span>${CHEV}
+      <select name="currency" class="overlay" onchange="this.form.submit()" aria-label="${A.currency}">
         ${Object.entries(d.currencies).map(
-          ([code, info]) => html`<option value="${code}" ${code === d.currentCurrency ? 'selected' : ''}>${info.label} (${info.symbol})</option>`,
+          ([code, info]) => html`<option value="${code}" ${code === d.currentCurrency ? 'selected' : ''}>${curLabel(code, info)}</option>`,
         )}
       </select>
     </label>
   </form>
+  <form method="POST" style="margin:0">
+    <input type="hidden" name="action" value="change_lang">
+    <label class="row" style="margin:0; font-size:17px; color:var(--text)">
+      ${sq('globe', '#0a84ff')}<span class="grow">${A.language}</span><span class="value">${LANG_LABEL[d.lang]}</span>${CHEV}
+      <select name="lang" class="overlay" onchange="this.form.submit()" aria-label="${A.language}">
+        ${LANGS.map((code) => html`<option value="${code}" ${code === d.lang ? 'selected' : ''}>${LANG_LABEL[code]}</option>`)}
+      </select>
+    </label>
+  </form>
   <details class="row-group">
-    <summary class="row" style="cursor:pointer">${sq('key', '#8e81ff')}<span class="grow">Пароль</span>${CHEV}</summary>
+    <summary class="row" style="cursor:pointer">${sq('key', '#8e81ff')}<span class="grow">${A.password}</span>${CHEV}</summary>
     <form method="POST" autocomplete="off" class="expand">
       <input type="hidden" name="action" value="change_password">
       ${d.hasPassword
-        ? html`<input type="password" name="current_password" required autocomplete="current-password" placeholder="Текущий пароль" aria-label="Текущий пароль">`
-        : html`<p style="margin:0 0 4px; color:var(--text-2); font-size:14px">Ты входишь через Telegram. Задай пароль, чтобы входить и по логину <b>${d.username}</b>.</p>`}
-      <input type="password" name="new_password" required autocomplete="new-password" placeholder="${d.hasPassword ? 'Новый пароль' : 'Пароль'}" aria-label="Новый пароль">
-      <button type="submit">Сохранить</button>
+        ? html`<input type="password" name="current_password" required autocomplete="current-password" placeholder="${A.currentPw}" aria-label="${A.currentPw}">`
+        : html`<p style="margin:0 0 4px; color:var(--text-2); font-size:14px">${raw(A.pwHintNoTg.replace('%s', `<b>${d.username}</b>`))}</p>`}
+      <input type="password" name="new_password" required autocomplete="new-password" placeholder="${d.hasPassword ? A.newPwPlaceholder : A.pwPlaceholder}" aria-label="${A.newPwPlaceholder}">
+      <button type="submit">${A.save}</button>
     </form>
   </details>
-  <a class="row" href="/profile">${sq('bolt', '#ff9f0a')}<span class="grow">Быстрая трата с iPhone</span>${CHEV}</a>
+  <a class="row" href="/profile">${sq('bolt', '#ff9f0a')}<span class="grow">${A.quickRow}</span>${CHEV}</a>
 </div>
-${telegramSettings(d.telegram)}
+${telegramSettings(d.telegram, d.lang)}
 
 <div class="list reveal" style="--inset:58px; --d:.05s">
-  <a class="row" href="/logout">${sq('out', '#636366')}<span class="grow">Выйти</span></a>
-  <form method="POST" style="margin:0" onsubmit="return confirm('Выйти из аккаунта на всех других устройствах?');">
+  <a class="row" href="/logout">${sq('out', '#636366')}<span class="grow">${A.logout}</span></a>
+  <form method="POST" style="margin:0" onsubmit="return confirm('${A.logoutAllQ}');">
     <input type="hidden" name="action" value="logout_all">
-    <button type="submit" class="row">${sq('out', '#8e81ff')}<span class="grow">Выйти на всех устройствах</span></button>
+    <button type="submit" class="row">${sq('out', '#8e81ff')}<span class="grow">${A.logoutAll}</span></button>
   </form>
-  <form method="POST" action="/settings/delete_account" style="margin:0" onsubmit="return confirm('Точно удалить аккаунт? Это необратимо.');">
-    <button type="submit" class="row danger">${sq('trash', '#ff453a')}<span class="grow">Удалить аккаунт</span></button>
+  <form method="POST" action="/settings/delete_account" style="margin:0" onsubmit="return confirm('${A.deleteAccQ}');">
+    <button type="submit" class="row danger">${sq('trash', '#ff453a')}<span class="grow">${A.deleteAcc}</span></button>
   </form>
 </div>
-<div class="footnote">Удаление сотрёт все траты, друзей и фото без возможности восстановления.</div>`,
+<div class="footnote">${A.deleteFoot}</div>`,
   );
 }
 
@@ -1196,47 +1234,58 @@ export interface MonthCard {
 
 const CARD_COLORS = ['#8e81ff', '#5ad1c6', '#ffb35c'];
 
-export function monthCardSvg(c: MonthCard): string {
+export function monthCardSvg(c: MonthCard, lang: Lang = 'ru'): string {
+  const S = tr(lang);
+  const A = S.app;
+  const en = lang === 'en';
   const e = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const font = `-apple-system, 'SF Pro Display', 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif`;
-  const prevName = MONTHS_GEN[(c.month + 11) % 12];
+  const prevName = S.months.gen[(c.month + 11) % 12];
   const pct = c.prev > 0 ? Math.round((Math.abs(c.total - c.prev) / c.prev) * 100) : null;
   const cmp =
-    pct === null ? 'Все траты под контролем' : pct === 0 ? `Как за те же дни ${prevName}` : `На ${pct}% ${c.total < c.prev ? 'меньше' : 'больше'}, чем за те же дни ${prevName}`;
+    pct === null
+      ? A.cardAllControl
+      : pct === 0
+        ? A.cardSameAs.replace('%s', prevName)
+        : A.cardDiff.replace('%d', String(pct)).replace('%s', c.total < c.prev ? A.cardLess : A.cardMore).replace('%s', prevName);
   const mood: Mood = pct === null || pct === 0 ? 'happy' : c.total < c.prev ? 'cool' : 'worried';
   const trek = mascot(mood, 300).match(/<svg[\s\S]*<\/svg>/)![0];
   const cats = c.cats
     .map((k, i) => {
       const y = 1190 + i * 118;
       const w = Math.max(16, Math.round((k.total / c.total) * 912));
-      return `<text x="84" y="${y}" font-size="44" font-weight="700" fill="#fff">${e(k.category)}</text>
+      return `<text x="84" y="${y}" font-size="44" font-weight="700" fill="#fff">${e(categoryLabel(k.category, lang))}</text>
         <text x="996" y="${y}" font-size="44" font-weight="800" fill="#fff" text-anchor="end">${fmt0(k.total)} ${e(c.sym)}</text>
         <rect x="84" y="${y + 24}" width="912" height="18" rx="9" fill="rgba(255,255,255,.1)"/>
         <rect x="84" y="${y + 24}" width="${w}" height="18" rx="9" fill="${CARD_COLORS[i]}"/>`;
     })
     .join('');
+  const countStr = en ? `${fmt0(c.count)} ${c.count === 1 ? 'expense' : 'expenses'}` : `${fmt0(c.count)} ${plural(c.count, 'трату', 'траты', 'трат')}`;
+  const myMonth = A.cardMy.replace('%s', en ? S.months.nom[c.month] : S.months.nom[c.month].toLowerCase());
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1920" width="1080" height="1920" font-family="${font}">
   <defs>
     <radialGradient id="mc1" cx="50%" cy="22%" r="60%"><stop offset="0" stop-color="#3a2f9a"/><stop offset="1" stop-color="#3a2f9a" stop-opacity="0"/></radialGradient>
     <radialGradient id="mc2" cx="100%" cy="100%" r="55%"><stop offset="0" stop-color="#145a6e"/><stop offset="1" stop-color="#145a6e" stop-opacity="0"/></radialGradient>
   </defs>
   <rect width="1080" height="1920" fill="#08070f"/><rect width="1080" height="1920" fill="url(#mc1)"/><rect width="1080" height="1920" fill="url(#mc2)"/>
-  <text x="540" y="120" font-size="38" font-weight="800" fill="rgba(235,235,245,.7)" text-anchor="middle">СпендТрекер</text>
+  <text x="540" y="120" font-size="38" font-weight="800" fill="rgba(235,235,245,.7)" text-anchor="middle">${e(S.brand)}</text>
   <g transform="translate(390 170)">${trek}</g>
-  <text x="540" y="640" font-size="104" font-weight="900" fill="#fff" text-anchor="middle" letter-spacing="-2">Мой ${MONTHS_NOM[c.month].toLowerCase()}</text>
+  <text x="540" y="640" font-size="104" font-weight="900" fill="#fff" text-anchor="middle" letter-spacing="-2">${e(myMonth)}</text>
   <text x="540" y="705" font-size="40" font-weight="600" fill="rgba(235,235,245,.6)" text-anchor="middle">${e(c.username)}</text>
   <text x="540" y="890" font-size="150" font-weight="900" fill="#fff" text-anchor="middle" letter-spacing="-4">${fmt0(c.total)} ${e(c.sym)}</text>
-  <text x="540" y="960" font-size="44" font-weight="600" fill="rgba(235,235,245,.7)" text-anchor="middle">за ${fmt0(c.count)} ${plural(c.count, 'трату', 'траты', 'трат')}</text>
+  <text x="540" y="960" font-size="44" font-weight="600" fill="rgba(235,235,245,.7)" text-anchor="middle">${A.cardForN.replace('%s', countStr)}</text>
   <rect x="84" y="1010" width="912" height="84" rx="42" fill="rgba(255,255,255,.08)"/>
   <text x="540" y="1065" font-size="34" font-weight="700" fill="#fff" text-anchor="middle">${e(cmp)}</text>
   ${cats}
-  ${c.top ? `<text x="540" y="1600" font-size="44" font-weight="700" fill="#fff" text-anchor="middle">Чаще всего: ${e(c.top.note)} × ${c.top.n}</text>` : ''}
-  <text x="540" y="1790" font-size="36" font-weight="700" fill="rgba(235,235,245,.75)" text-anchor="middle">${c.bot ? `Считаю траты в Telegram · @${e(c.bot)}` : 'Считаю траты в СпендТрекере'}</text>
+  ${c.top ? `<text x="540" y="1600" font-size="44" font-weight="700" fill="#fff" text-anchor="middle">${e(A.cardMostOften.replace('%s', c.top.note).replace('%d', String(c.top.n)))}</text>` : ''}
+  <text x="540" y="1790" font-size="36" font-weight="700" fill="rgba(235,235,245,.75)" text-anchor="middle">${c.bot ? e(A.cardInTg.replace('%s', c.bot)) : e(A.cardInApp)}</text>
   <text x="540" y="1845" font-size="32" font-weight="700" fill="rgba(235,235,245,.5)" text-anchor="middle">traaaack.app</text>
 </svg>`;
 }
 
-export function monthPage(d: { flashes: Flash[]; card: MonthCard | null; canSend: boolean }) {
+export function monthPage(d: { flashes: Flash[]; card: MonthCard | null; canSend: boolean; lang: Lang }) {
+  const S = tr(d.lang);
+  const A = S.app;
   const css = `
   .mc { max-width: 380px; margin: 0 auto; display: grid; gap: 14px; }
   .mc-frame { border-radius: 22px; overflow: hidden; aspect-ratio: 9 / 16; max-width: 100%; background: #08070f; }
@@ -1244,18 +1293,18 @@ export function monthPage(d: { flashes: Flash[]; card: MonthCard | null; canSend
   .mc-hint { text-align: center; color: var(--text-2); font-size: 14px; margin: 0; }`;
   if (!d.card) {
     return layout(
-      { title: 'Мой месяц', flashes: d.flashes, loggedIn: true, extraCss: DASHBOARD_CSS + css },
-      html`${header('Мой месяц')}<div class="card reveal" style="text-align:center">${raw(mascot('sleep', 110))}<p style="margin:12px 0 0">В этом месяце трат пока нет. Запиши первую — и здесь появится картинка для сторис.</p><a class="btn" href="/dashboard" style="margin-top:14px">Добавить трату</a></div>`,
+      { title: A.monthTitle, flashes: d.flashes, loggedIn: true, lang: d.lang, extraCss: DASHBOARD_CSS + css },
+      html`${header(A.monthTitle)}<div class="card reveal" style="text-align:center">${raw(mascot('sleep', 110, '', d.lang))}<p style="margin:12px 0 0">${A.monthEmpty}</p><a class="btn" href="/dashboard" style="margin-top:14px">${A.addExpenseBtn}</a></div>`,
     );
   }
   return layout(
-    { title: 'Мой месяц', flashes: d.flashes, loggedIn: true, extraCss: DASHBOARD_CSS + css },
-    html`${header('Мой месяц', undefined, html`Картинка для сторис`)}
+    { title: A.monthTitle, flashes: d.flashes, loggedIn: true, lang: d.lang, extraCss: DASHBOARD_CSS + css },
+    html`${header(A.monthTitle, undefined, html`${A.monthSub}`)}
 <div class="mc reveal">
-  <div class="mc-frame" id="mc-frame">${raw(monthCardSvg(d.card))}</div>
-  <button type="button" id="mc-share" hidden>📤 Поделиться</button>
-  ${d.canSend ? html`<button type="button" id="mc-send" class="btn-tinted" disabled>📩 Прислать картинку в Telegram</button>` : ''}
-  <p class="mc-hint" id="mc-hint">Готовлю картинку…</p>
+  <div class="mc-frame" id="mc-frame">${raw(monthCardSvg(d.card, d.lang))}</div>
+  <button type="button" id="mc-share" hidden>${A.share}</button>
+  ${d.canSend ? html`<button type="button" id="mc-send" class="btn-tinted" disabled>${A.sendTg}</button>` : ''}
+  <p class="mc-hint" id="mc-hint">${A.prepImg}</p>
 </div>
 <script>
 (function () {
@@ -1270,7 +1319,7 @@ export function monthPage(d: { flashes: Flash[]; card: MonthCard | null; canSend
       c.toBlob(function (b) {
         if (!b) return fail();
         blob = b;
-        var img = document.createElement('img'); img.src = URL.createObjectURL(b); img.alt = 'Мой месяц в СпендТрекере';
+        var img = document.createElement('img'); img.src = URL.createObjectURL(b); img.alt = ${raw(JSON.stringify(A.monthTitle))};
         frame.replaceChild(img, svg);
         var file = new File([b], 'spendtracker-month.jpg', { type: 'image/jpeg' });
         if (navigator.canShare && navigator.canShare({ files: [file] })) {
@@ -1278,20 +1327,20 @@ export function monthPage(d: { flashes: Flash[]; card: MonthCard | null; canSend
           shareBtn.onclick = function () { navigator.share({ files: [file] }).catch(function () {}); };
         }
         if (sendBtn) sendBtn.disabled = false;
-        hint.textContent = 'Нажми и удерживай картинку, чтобы сохранить, — и выложи в сторис.';
+        hint.textContent = ${raw(JSON.stringify(A.holdSave))};
       }, 'image/jpeg', 0.9);
     } catch (e) { fail(); }
   };
   im.onerror = fail;
   im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(svg));
-  function fail() { hint.textContent = 'Не получилось сделать картинку — сделай скриншот карточки.'; }
+  function fail() { hint.textContent = ${raw(JSON.stringify(A.imgFail))}; }
   if (sendBtn) sendBtn.onclick = function () {
     if (!blob) return;
-    sendBtn.disabled = true; hint.textContent = 'Отправляю…';
+    sendBtn.disabled = true; hint.textContent = ${raw(JSON.stringify(A.sending))};
     fetch('/month/send', { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob, credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
-      .then(function (j) { hint.textContent = j.ok ? 'Отправил в чат с ботом — оттуда легко переслать или выложить в сторис.' : 'Не получилось отправить. Сохрани картинку вручную.'; })
-      .catch(function () { hint.textContent = 'Нет связи. Сохрани картинку вручную.'; })
+      .then(function (j) { hint.textContent = j.ok ? ${raw(JSON.stringify(A.sentChat))} : ${raw(JSON.stringify(A.sendFail))}; })
+      .catch(function () { hint.textContent = ${raw(JSON.stringify(A.noConn))}; })
       .then(function () { sendBtn.disabled = false; });
   };
 })();
