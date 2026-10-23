@@ -64,6 +64,7 @@ interface User {
   currency: string;
   created_at: string | null;
   session_ver: number;
+  bio: string | null;
 }
 
 type App = { Bindings: Env; Variables: { user: User } };
@@ -80,6 +81,13 @@ const CURRENCIES: Record<string, Currency> = {
   KGS: { label: 'Киргизский сом', symbol: 'сом' },
   UZS: { label: 'Узбекский сум', symbol: 'сум' },
 };
+
+// Курсы для сравнения трат друзей с разными валютами — сколько единиц валюты в 1 USD.
+// Прикидочные на октябрь 2026, обновляются вручную; точность до копейки тут не нужна.
+const RATES_PER_USD: Record<string, number> = { USD: 1, RUB: 82, KZT: 449, AED: 3.6725, EUR: 0.92, KGS: 87.5, UZS: 11900 };
+const rate = (cur: string) => RATES_PER_USD[cur] ?? RATES_PER_USD.RUB;
+// Перевод суммы из одной валюты в другую через USD.
+const convert = (amount: number, from: string, to: string) => (from === to ? amount : (amount / rate(from)) * rate(to));
 
 const DEFAULT_SHORTCUT_URL = 'https://www.icloud.com/shortcuts/6c88ade890e541c9b81532cfbc4cdb59';
 const SESSION_COOKIE = 'session';
@@ -696,14 +704,18 @@ async function leaderboard(db: D1Database, userId: number, since: string) {
   const ids = [...(await getFriendIds(db, userId)), userId];
   const { results } = await db
     .prepare(
-      `SELECT u.id, u.username, COALESCE(SUM(e.amount), 0) AS total
+      `SELECT u.id, u.username, u.currency, COALESCE(SUM(e.amount), 0) AS total
        FROM users u LEFT JOIN expenses e ON e.user_id = u.id AND e.expense_date >= ?
        WHERE u.id IN (SELECT value FROM json_each(?))
-       GROUP BY u.id ORDER BY total DESC`,
+       GROUP BY u.id`,
     )
     .bind(since, JSON.stringify(ids))
-    .all<{ id: number; username: string; total: number }>();
-  return results.map((r) => ({ ...r, is_me: r.id === userId }));
+    .all<{ id: number; username: string; currency: string; total: number }>();
+  // У друзей могут быть разные валюты — приводим всех к валюте того, кто смотрит, по общему курсу
+  const mine = results.find((r) => r.id === userId)?.currency ?? 'RUB';
+  return results
+    .map((r) => ({ id: r.id, username: r.username, total: convert(r.total, r.currency, mine), is_me: r.id === userId }))
+    .sort((a, b) => b.total - a.total);
 }
 
 app.get('/friends', async (c) => {
@@ -756,15 +768,27 @@ app.get('/friends/:id{[0-9]+}', async (c) => {
     spendingOverview(db, fid, 10),
     db.prepare('SELECT updated_at FROM avatars WHERE user_id = ?').bind(fid).first<{ updated_at: string }>(),
   ]);
+  // Показываем траты друга в валюте того, кто смотрит, по общему курсу
+  const k = convert(1, friend.currency, user.currency);
+  const conv = {
+    today: o.today,
+    todayTotal: o.todayTotal * k,
+    weekTotal: o.weekTotal * k,
+    monthTotal: o.monthTotal * k,
+    week: o.week.map((d) => ({ ...d, total: d.total * k })),
+    byCategory: o.byCategory.map((r) => ({ ...r, total: r.total * k })),
+    recent: o.recent.map((r) => ({ ...r, amount: r.amount * k })),
+  };
   return c.html(
     friendProfilePage({
       flashes: popFlashes(c),
-      sym: symbol(friend),
+      sym: symbol(user),
       id: fid,
       username: friend.username,
+      bio: friend.bio,
       friendsSince: fs.created_at,
       avatarV: av ? String(Date.parse(av.updated_at.replace(' ', 'T') + 'Z') / 1000 || 0) : null,
-      ...o,
+      ...conv,
     }),
   );
 });
@@ -850,6 +874,7 @@ app.get('/profile', async (c) => {
       username: user.username,
       userId: user.id,
       createdAt: user.created_at,
+      bio: user.bio,
       totalAllTime: total,
       expenseCount: count?.n ?? 0,
       friendCount: friendIds.length,
@@ -875,6 +900,14 @@ app.post('/profile/telegram', async (c) => {
     db.prepare('INSERT INTO telegram_codes (code, user_id) VALUES (?, ?)').bind(code, c.get('user').id),
   ]);
   return c.redirect(`https://t.me/${bot}?start=${code}`);
+});
+
+const MAX_BIO = 200;
+app.post('/profile/bio', async (c) => {
+  const bio = formStr(await c.req.parseBody(), 'bio').replace(/\s+/g, ' ').trim().slice(0, MAX_BIO);
+  await c.env.DB.prepare('UPDATE users SET bio = ? WHERE id = ?').bind(bio || null, c.get('user').id).run();
+  flash(c, bio ? 'Описание сохранено' : 'Описание убрано', 'success');
+  return c.redirect('/profile');
 });
 
 app.post('/profile/telegram/unlink', async (c) => {
