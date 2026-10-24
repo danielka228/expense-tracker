@@ -103,9 +103,12 @@ const ru: BotText = {
 
 В любом чате с человеком набери @ и имя бота, затем трату: <code>сигареты 250</code>. Нажми на появившуюся карточку, и трата запишется, а в чате останется сообщение о ней.
 
+Подписки (Netflix, связь, спортзал) — в меню «🔁 Подписки» или /subs. В день списания сам запишу трату, а накануне напомню, чтобы успеть отменить ненужное.
+
 /menu — меню
 /stats — статистика
 /last — мои траты
+/subs — подписки
 /undo — удалить последнюю запись
 /lang — язык
 /stickers — стикеры Трэка`,
@@ -258,9 +261,12 @@ I guess the category myself. Each entry has buttons to change the category or de
 
 In any chat with a person, type @ and the bot's name, then an expense: <code>cigarettes 250</code>. Tap the card that appears, and the expense is saved while the chat keeps a message about it.
 
+Subscriptions (Netflix, phone plan, the gym) live in «🔁 Subscriptions» in the menu or /subs. On the billing day I log the expense myself, and the day before I remind you so you can cancel what you don't need.
+
 /menu — menu
 /stats — stats
 /last — my expenses
+/subs — subscriptions
 /undo — delete the last entry
 /lang — language
 /stickers — Track stickers`,

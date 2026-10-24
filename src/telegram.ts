@@ -11,7 +11,8 @@ import { aiDayAllowed, hit } from './limits';
 import { takeAiQuota, type Guess } from './vision';
 import { fmt0, type ExpenseRow } from './views';
 import { botText, esc, langFromTg } from './botText';
-import { subsText, type Charged } from './subs';
+import { SUB_PRESETS, chargeDue, firstCharge, insertSub, parseSubInput, perMonth, subDay, subsText, type Charged, type Sub } from './subs';
+import { convert } from './money';
 import { categoryLabel, currencyLabel, currencySymbol, langOf, LANGS, LANG_LABEL, tr, type Lang } from './i18n';
 
 interface TgUser {
@@ -85,6 +86,7 @@ interface Linked {
   username: string;
   currency: string;
   pending_category: string | null; // выбрана в меню «Добавить», ждёт сумму
+  pending_sub: string | null; // выбран сервис в «Добавить подписку» ('*' — своя), ждёт сумму и число
   notify: number; // 1 — Трэк присылает вечерние и недельные итоги
   lang: Lang; // язык аккаунта (users.lang): один и для бота, и для сайта
 }
@@ -105,6 +107,13 @@ const symOf = (d: BotDeps, user: Linked) => {
   return currencySymbol(code, user.lang, d.currencies[code].symbol);
 };
 const LIST_PAGE = 6;
+/** Знак валюты по коду (у подписки валюта может отличаться от валюты аккаунта) */
+const curSym = (d: BotDeps, code: string, lang: Lang) => {
+  const c = code in d.currencies ? code : 'RUB';
+  return currencySymbol(c, lang, d.currencies[c].symbol);
+};
+/** Сумма «как в кошельке»: копейки только у небольших сумм, где они есть (9.99 $); 4010.87 ₽ → «4 011» */
+const money = (n: number) => (n >= 1000 || Math.abs(n - Math.round(n)) < 0.005 ? fmt0(n) : n.toFixed(2));
 
 /** Адрес Bot API. TELEGRAM_API можно подменить для локальной проверки без настоящего Telegram. */
 export const botApi = (token: string, base?: string) => `${base || 'https://api.telegram.org'}/bot${token}`;
@@ -250,7 +259,8 @@ async function linkedUser(d: BotDeps, chatId: number): Promise<Linked | null> {
   const row = await d.db
     .prepare(
       `SELECT u.id, u.username, u.currency, u.lang, t.notify,
-              CASE WHEN t.pending_at > datetime('now', '-10 minutes') THEN t.pending_category END AS pending_category
+              CASE WHEN t.pending_at > datetime('now', '-10 minutes') THEN t.pending_category END AS pending_category,
+              CASE WHEN t.pending_at > datetime('now', '-10 minutes') THEN t.pending_sub END AS pending_sub
        FROM telegram_links t JOIN users u ON u.id = t.user_id WHERE t.chat_id = ?`,
     )
     .bind(chatId)
@@ -259,7 +269,10 @@ async function linkedUser(d: BotDeps, chatId: number): Promise<Linked | null> {
 }
 
 const setPending = (d: BotDeps, user: Linked, cat: string | null) =>
-  d.db.prepare("UPDATE telegram_links SET pending_category = ?, pending_at = datetime('now') WHERE user_id = ?").bind(cat, user.id).run();
+  d.db.prepare("UPDATE telegram_links SET pending_category = ?, pending_sub = NULL, pending_at = datetime('now') WHERE user_id = ?").bind(cat, user.id).run();
+
+const setPendingSub = (d: BotDeps, user: Linked, name: string | null) =>
+  d.db.prepare("UPDATE telegram_links SET pending_sub = ?, pending_category = NULL, pending_at = datetime('now') WHERE user_id = ?").bind(name, user.id).run();
 
 // ---------- экраны меню ----------
 
@@ -280,13 +293,16 @@ async function homeScreen(d: BotDeps, user: Linked): Promise<Screen> {
         ],
         [
           { text: T.b.mine, callback_data: 'm:ls:0' },
-          { text: T.b.friends, callback_data: 'm:fr:month' },
+          { text: subsText(user.lang).bot.btn, callback_data: 'm:sub' },
         ],
         [
+          { text: T.b.friends, callback_data: 'm:fr:month' },
           { text: T.b.settings, callback_data: 'm:set' },
-          { text: T.b.help, callback_data: 'm:help' },
         ],
-        [{ text: T.b.stickers, callback_data: 'stk' }],
+        [
+          { text: T.b.help, callback_data: 'm:help' },
+          { text: T.b.stickers, callback_data: 'stk' },
+        ],
       ],
     },
   };
@@ -365,6 +381,118 @@ async function friendsScreen(d: BotDeps, user: Linked, period: Period): Promise<
   };
 }
 
+// ---------- подписки ----------
+
+const daysTo = (d: BotDeps, date: string) => Math.round((Date.parse(date) - Date.parse(d.today)) / 86400000);
+const SUBS_SHOWN = 20; // кнопок с подписками на экране; остальные — на сайте
+
+/** Список подписок: сколько в месяц и в год, что спишется на неделе, кнопка на каждую */
+async function subsScreen(d: BotDeps, user: Linked): Promise<Screen> {
+  const lang = user.lang;
+  const S = subsText(lang);
+  const B = S.bot;
+  await chargeDue(d.db, d.today, user.id); // как на сайте: списание, у которого наступил день, записываем сразу
+  const { results } = await d.db.prepare('SELECT * FROM subscriptions WHERE user_id = ? ORDER BY next_date, id').bind(user.id).all<Sub>();
+  if (!results.length) {
+    return { text: `${B.title}\n\n${B.empty}`, kb: { inline_keyboard: [[{ text: B.add, callback_data: 'sb:new' }], back(lang)] } };
+  }
+  const sym = esc(symOf(d, user));
+  const monthly = (s: Sub) => convert(perMonth(s), s.currency, user.currency);
+  const total = results.reduce((a, s) => a + monthly(s), 0);
+  const top = results.reduce((a, s) => (monthly(s) > monthly(a) ? s : a));
+  const soon = results.filter((s) => daysTo(d, s.next_date) <= 7);
+  const lines = [B.title, '', B.totals(`${fmt0(total)} ${sym}`, `${fmt0(total * 12)} ${sym}`)];
+  if (results.length > 1) lines.push(B.top(esc(top.name), `${fmt0(monthly(top))} ${sym}`));
+  if (soon.length) {
+    lines.push('', B.upcomingH);
+    for (const s of soon) lines.push(B.line(esc(s.name), `${money(s.amount)} ${esc(curSym(d, s.currency, lang))}`, S.when(daysTo(d, s.next_date), subDay(s.next_date, lang))));
+  }
+  lines.push('', B.tapHint);
+  const rows: Button[][] = results.slice(0, SUBS_SHOWN).map((s) => [
+    {
+      text: `${s.auto ? '' : '✋ '}${s.name} · ${money(s.amount)} ${curSym(d, s.currency, lang)}/${S.per[s.period]} · ${subDay(s.next_date, lang)}`,
+      callback_data: `sb:${s.id}`,
+    },
+  ]);
+  if (results.length > SUBS_SHOWN) rows.push([appButton(d, B.more(results.length - SUBS_SHOWN), '/subs')]);
+  rows.push([{ text: B.add, callback_data: 'sb:new' }], [appButton(d, B.openSite, '/subs')], back(lang));
+  return { text: lines.join('\n'), kb: { inline_keyboard: rows } };
+}
+
+/** Одна подписка: цена в месяц и в год в валюте человека, следующее списание, автозапись и удаление */
+async function subCard(d: BotDeps, user: Linked, id: number): Promise<Screen | null> {
+  const s = await d.db.prepare('SELECT * FROM subscriptions WHERE id = ? AND user_id = ?').bind(id, user.id).first<Sub>();
+  if (!s) return null;
+  const lang = user.lang;
+  const S = subsText(lang);
+  const B = S.bot;
+  const sym = esc(symOf(d, user));
+  const m = convert(perMonth(s), s.currency, user.currency);
+  // «399 ₽ в месяц · ≈ 4 788 ₽ в год», «20 $ в месяц ≈ 1 640 ₽ · ≈ 19 680 ₽ в год», «1 490 ₽ в год ≈ 124 ₽ в месяц»
+  let amountLine = `${money(s.amount)} ${esc(curSym(d, s.currency, lang))} ${B.per[s.period]}`;
+  if (s.period !== 'month') amountLine += ` ≈ ${fmt0(m)} ${sym} ${B.per.month}`;
+  else if (s.currency !== user.currency) amountLine += ` ≈ ${fmt0(m)} ${sym}`;
+  if (s.period !== 'year') amountLine += ` · ≈ ${fmt0(m * 12)} ${sym} ${B.per.year}`;
+  return {
+    text: B.card({
+      name: esc(s.name),
+      amountLine,
+      next: subDay(s.next_date, lang),
+      when: B.inDays(daysTo(d, s.next_date)),
+      category: `${emoji(s.category)} ${esc(categoryLabel(s.category, lang))}`,
+      auto: !!s.auto,
+    }),
+    kb: {
+      inline_keyboard: [
+        [{ text: s.auto ? B.autoOffBtn : B.autoOnBtn, callback_data: `sb:a:${s.id}` }],
+        [{ text: B.delBtn, callback_data: `sb:d:${s.id}` }],
+        [appButton(d, B.editSite, '/subs')],
+        back(lang, 'm:sub', B.toList),
+      ],
+    },
+  };
+}
+
+/** «Добавить подписку»: популярные сервисы и своя */
+function subPickScreen(user: Linked): Screen {
+  const B = subsText(user.lang).bot;
+  const buttons = SUB_PRESETS[user.lang].map((p, i) => ({ text: p.name, callback_data: `sb:p:${i}` }));
+  return { text: B.pickTitle, kb: { inline_keyboard: [...grid(buttons), [{ text: B.custom, callback_data: 'sb:c' }], back(user.lang, 'm:sub')] } };
+}
+
+/** Ждём сумму и число: для выбранного сервиса или для своей подписки ('*') */
+function subPromptScreen(d: BotDeps, user: Linked, name: string): Screen {
+  const B = subsText(user.lang).bot;
+  const sym = esc(symOf(d, user));
+  return {
+    text: name === '*' ? B.promptCustom(sym) : B.promptPreset(esc(name), sym),
+    kb: { inline_keyboard: [back(user.lang, 'sb:x', botText(user.lang).b.cancel)] },
+  };
+}
+
+/** Сообщение после выбора сервиса: «399 15», «Бассейн 3000 5», «ChatGPT $20 3 числа» */
+async function addSubFromText(d: BotDeps, user: Linked, chatId: number, text: string) {
+  const lang = user.lang;
+  const B = subsText(lang).bot;
+  const cancel = { inline_keyboard: [back(lang, 'sb:x', botText(lang).b.cancel)] };
+  const p = parseSubInput(text);
+  const presetName = user.pending_sub === '*' ? null : user.pending_sub;
+  const name = (presetName ?? p.name).slice(0, 60);
+  if (!p.amount || p.amount <= 0 || p.amount > 1e9) return send(d, chatId, B.needAmount, cancel);
+  if (!name) return send(d, chatId, B.needName, cancel);
+  const preset = Object.values(SUB_PRESETS).flat().find((x) => x.name.toLowerCase() === name.toLowerCase());
+  const currency = p.currency && p.currency in d.currencies ? p.currency : user.currency;
+  const { next, anchor } = firstCharge(p.day, d.today, p.period);
+  const id = await insertSub(d.db, user.id, { name, amount: p.amount, currency, period: p.period, next, anchor, category: preset?.category ?? parseExpense(name, null, CATEGORY_RULES).category ?? 'Развлечения', auto: 1 });
+  await setPendingSub(d, user, null);
+  if (id === null) return send(d, chatId, B.tooMany);
+  const charged = await chargeDue(d.db, d.today, user.id); // число — сегодня: списание записываем сразу
+  const row = await d.db.prepare('SELECT next_date FROM subscriptions WHERE id = ?').bind(id).first<{ next_date: string }>();
+  return send(d, chatId, B.added(esc(name), `${money(p.amount)} ${esc(curSym(d, currency, lang))} ${B.per[p.period]}`, subDay(row?.next_date ?? next, lang), charged.length > 0), {
+    inline_keyboard: [[{ text: `🔁 ${name}`, callback_data: `sb:${id}` }], [{ text: B.add, callback_data: 'sb:new' }], back(lang, 'm:sub', B.toList)],
+  });
+}
+
 function settingsScreen(d: BotDeps, user: Linked): Screen {
   const T = botText(user.lang);
   const code = user.currency in d.currencies ? user.currency : 'RUB';
@@ -434,6 +562,8 @@ function screen(d: BotDeps, user: Linked, route: string): Promise<Screen> | Scre
       return listScreen(d, user, Math.max(0, Number(arg) || 0));
     case 'fr':
       return friendsScreen(d, user, period);
+    case 'sub':
+      return subsScreen(d, user);
     case 'set':
       return settingsScreen(d, user);
     case 'cur':
@@ -490,7 +620,10 @@ export async function handleUpdate(d: BotDeps, u: TgUpdate) {
 
   const T = botText(user.lang);
   const cmd = text.match(/^\/(\w+)/)?.[1];
+  // Любая команда отменяет ожидание суммы для подписки
+  if (cmd && user.pending_sub) await setPendingSub(d, user, null);
   if (cmd === 'start' || cmd === 'menu') return sendScreen(d, chatId, homeScreen(d, user));
+  if (cmd === 'subs') return sendScreen(d, chatId, subsScreen(d, user));
   if (cmd === 'help') return sendScreen(d, chatId, screen(d, user, 'help'));
   if (cmd === 'stats') return sendScreen(d, chatId, screen(d, user, 'st:month'));
   if (cmd === 'last') return sendScreen(d, chatId, screen(d, user, 'ls:0'));
@@ -549,6 +682,8 @@ async function addFromVoice(d: BotDeps, user: Linked, chatId: number, voice: { f
 }
 
 async function addFromText(d: BotDeps, user: Linked, chatId: number, text: string) {
+  // Выбран сервис в «Добавить подписку» — сообщение (или голосовое) про подписку, а не про трату
+  if (user.pending_sub) return addSubFromText(d, user, chatId, text);
   // Каждая строка или фраза — отдельная трата. Кусок без суммы («Кофе.» из «Кофе. 250 рублей.»)
   // приклеиваем к следующему: так распознавание речи нередко расставляет точки.
   const parts = text.split(/\n|(?<=[.!?;])\s+/).map((l) => l.trim()).filter(Boolean).slice(0, 20);
@@ -867,9 +1002,61 @@ async function onCallback(d: BotDeps, q: TgCallback) {
   const T = botText(lang);
 
   if (data.startsWith('m:')) {
+    // Ушли из «Добавить подписку» в меню — следующее сообщение снова трата, а не подписка
+    if (user.pending_sub) await setPendingSub(d, user, null);
     await show(screen(d, user, data.slice(2)));
     return answer();
   }
+  // Подписки: sb:new — выбор сервиса, sb:p:<i> — сервис из списка, sb:c — своя, sb:x — отмена,
+  // sb:<id> — карточка, sb:a:<id> — автозапись вкл/выкл, sb:d:<id> — спросить про удаление, sb:D:<id> — удалить
+  if (data.startsWith('sb:')) {
+    const B = subsText(lang).bot;
+    const [, op, arg] = data.split(':');
+    if (op === 'new') {
+      await show(subPickScreen(user));
+      return answer();
+    }
+    if (op === 'p' || op === 'c') {
+      const name = op === 'c' ? '*' : SUB_PRESETS[lang][Number(arg)]?.name;
+      if (!name) return answer();
+      await setPendingSub(d, user, name);
+      await show(subPromptScreen(d, user, name));
+      return answer(name === '*' ? undefined : `🔁 ${name}`);
+    }
+    if (op === 'x') {
+      await setPendingSub(d, user, null);
+      await show(subsScreen(d, user));
+      return answer();
+    }
+    const id = Number(op === 'a' || op === 'd' || op === 'D' ? arg : op);
+    if (!Number.isInteger(id) || id <= 0) return answer();
+    if (op === 'D') {
+      const res = await d.db.prepare('DELETE FROM subscriptions WHERE id = ? AND user_id = ?').bind(id, user.id).run();
+      await show(subsScreen(d, user));
+      return answer(res.meta.changes ? B.toastDeleted : B.toastGone);
+    }
+    if (op === 'd') {
+      const row = await d.db.prepare('SELECT name FROM subscriptions WHERE id = ? AND user_id = ?').bind(id, user.id).first<{ name: string }>();
+      if (!row) {
+        await show(subsScreen(d, user));
+        return answer(B.toastGone);
+      }
+      await show({ text: B.delQ(esc(row.name)), kb: { inline_keyboard: [[{ text: B.yesDel, callback_data: `sb:D:${id}` }, { text: T.b.no, callback_data: `sb:${id}` }]] } });
+      return answer();
+    }
+    const toggled =
+      op === 'a'
+        ? await d.db.prepare('UPDATE subscriptions SET auto = 1 - auto WHERE id = ? AND user_id = ? RETURNING auto').bind(id, user.id).first<{ auto: number }>()
+        : null;
+    const card = await subCard(d, user, id);
+    if (!card) {
+      await show(subsScreen(d, user));
+      return answer(B.toastGone);
+    }
+    await show(card);
+    return answer(toggled ? (toggled.auto ? B.toastAutoOn : B.toastAutoOff) : undefined);
+  }
+
   if (data.startsWith('pc:')) {
     const cat = d.categories[Number(data.slice(3))];
     await setPending(d, user, cat ?? null);
@@ -1044,7 +1231,6 @@ export async function sendSubReminders(d: BotDeps, charged: Charged[]) {
     .bind(shiftDay(d.today, 1))
     .all<{ user_id: number; name: string; amount: number; currency: string }>();
   if (!charged.length && !soon.length) return;
-  const money = (n: number) => (Math.abs(n - Math.round(n)) < 0.005 ? fmt0(n) : n.toFixed(2));
   for (const u of await subscribers(d)) {
     const today = charged.filter((x) => x.user_id === u.id);
     const tomorrow = soon.filter((x) => x.user_id === u.id);
@@ -1052,10 +1238,7 @@ export async function sendSubReminders(d: BotDeps, charged: Charged[]) {
     try {
       const lang = langOf(u.lang);
       const T = subsText(lang);
-      const sym = (code: string) => {
-        const c = code in d.currencies ? code : 'RUB';
-        return esc(currencySymbol(c, lang, d.currencies[c].symbol));
-      };
+      const sym = (code: string) => esc(curSym(d, code, lang));
       // Если cron пропускал дни, одно и то же списание могло пройти несколько раз — показываем «×3»
       const lines = new Map<string, number>();
       for (const x of today) {

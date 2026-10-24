@@ -8,7 +8,7 @@ import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProdu
 import { checkPassword, hashPassword, needsRehash } from './passwords';
 import { categoryId, currencySymbol, tr, langOf, type Lang } from './i18n';
 import { convert } from './money';
-import { SUB_PERIODS, chargeDue, perMonth, rollForward, subColor, subsText, type Sub, type SubPeriod } from './subs';
+import { SUB_PERIODS, chargeDue, insertSub, perMonth, rollForward, subColor, subsText, type Sub, type SubPeriod } from './subs';
 import { authorizeUrl, finishLogin, newLoginState, type TgIdentity, type TgLoginConfig, type TgLoginState } from './tglogin';
 import {
   botApi,
@@ -613,16 +613,10 @@ app.post('/subs', async (c) => {
     flash(c, T.fl.bad, 'error');
     return c.redirect('/subs');
   }
-  const count = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM subscriptions WHERE user_id = ?').bind(user.id).first<{ n: number }>();
-  if ((count?.n ?? 0) >= 100) {
+  if ((await insertSub(c.env.DB, user.id, s)) === null) {
     flash(c, T.fl.bad, 'error');
     return c.redirect('/subs');
   }
-  await c.env.DB.prepare(
-    'INSERT INTO subscriptions (user_id, name, amount, currency, period, next_date, anchor_day, category, auto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-  )
-    .bind(user.id, s.name, s.amount, s.currency, s.period, s.next, s.anchor, s.category, s.auto)
-    .run();
   // Списание на сегодня записываем сразу, чтобы трата появилась без ожидания утра
   const charged = await chargeDue(c.env.DB, periodStart('day'), user.id);
   flash(c, charged.length ? `${T.fl.added}. ${T.fl.charged(charged.length)}` : T.fl.added, 'success');

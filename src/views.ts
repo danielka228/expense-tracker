@@ -807,15 +807,15 @@ function shortDay(iso: string, lang: Lang) {
 
 const CUR_CHEV = '<svg class="cur-chev" viewBox="0 0 12 8"><path d="M1.5 1.5 6 6l4.5-4.5"/></svg>';
 
-/** Сумма «как в кошельке»: копейки показываем, только если они есть (9.99 $) */
-const money = (n: number) => (Math.abs(n - Math.round(n)) < 0.005 ? fmt0(n) : n.toFixed(2));
+/** Сумма «как в кошельке»: копейки только у небольших сумм, где они есть (9.99 $) */
+const money = (n: number) => (n >= 1000 || Math.abs(n - Math.round(n)) < 0.005 ? fmt0(n) : n.toFixed(2));
 
 function subForm(d: { lang: Lang; today: string; currencies: Record<string, Currency>; userCurrency: string; categories: string[] }, s?: SubView) {
   const T = subsText(d.lang);
   const cur = s?.currency ?? d.userCurrency;
   return html`<form method="POST" action="${s ? `/subs/${s.id}` : '/subs'}" class="sub-form" autocomplete="off">
     <div class="amount-wrap">
-      <input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0" required value="${s ? money(s.amount) : ''}" aria-label="${T.amount}">
+      <input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0" required value="${s ? (Number.isInteger(s.amount) ? String(s.amount) : s.amount.toFixed(2)) : ''}" aria-label="${T.amount}">
       <label class="cur-pick">
         <span class="amount-cur">${currencySymbol(cur, d.lang, (d.currencies[cur] ?? Object.values(d.currencies)[0]).symbol)}</span>${raw(CUR_CHEV)}
         <select name="currency" aria-label="${T.currency}">

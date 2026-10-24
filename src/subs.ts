@@ -3,7 +3,7 @@
 // следующего списания сдвигается на период. Списывает утренний cron, а на всякий случай — и открытие
 // страниц: так трата появляется, даже если cron в этот день не сработал.
 
-import type { Lang } from './i18n';
+import { tr, type Lang } from './i18n';
 import { convert } from './money';
 
 export type SubPeriod = 'month' | 'year' | 'week';
@@ -157,6 +157,137 @@ export async function chargeDue(db: D1Database, today: string, userId?: number):
 
 const fmtAmount = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 
+export const MAX_SUBS = 100; // подписок на человека — с запасом, чтобы никто не забил базу
+
+export interface NewSub {
+  name: string;
+  amount: number;
+  currency: string;
+  period: SubPeriod;
+  next: string;
+  anchor: number;
+  category: string;
+  auto: number;
+}
+
+/** Записывает подписку и возвращает её id; null — если у человека уже MAX_SUBS подписок */
+export async function insertSub(db: D1Database, userId: number, s: NewSub): Promise<number | null> {
+  const row = await db
+    .prepare(
+      `INSERT INTO subscriptions (user_id, name, amount, currency, period, next_date, anchor_day, category, auto)
+       SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9 WHERE (SELECT COUNT(*) FROM subscriptions WHERE user_id = ?1) < ?10 RETURNING id`,
+    )
+    .bind(userId, s.name, s.amount, s.currency, s.period, s.next, s.anchor, s.category, s.auto, MAX_SUBS)
+    .first<{ id: number }>();
+  return row?.id ?? null;
+}
+
+/**
+ * Первое списание по числу месяца из сообщения боту: ближайшее такое число, начиная с сегодня
+ * (сегодня — значит, списание сегодня и трата запишется сразу). Без числа считаем, что сегодня
+ * уже заплачено, и следующее списание — через период. У недельных число месяца не используется.
+ */
+export function firstCharge(day: number | null, today: string, period: SubPeriod): { next: string; anchor: number } {
+  const t = new Date(today + 'T00:00:00Z');
+  if (day === null || period === 'week') {
+    const anchor = t.getUTCDate();
+    return { next: addPeriod(today, period, anchor), anchor };
+  }
+  const y = t.getUTCFullYear();
+  const m = t.getUTCMonth();
+  const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  const thisMonth = iso(Date.UTC(y, m, Math.min(day, last)));
+  return { next: thisMonth >= today ? thisMonth : addPeriod(thisMonth, 'month', day), anchor: day };
+}
+
+/** «25 окт» / «Oct 25» */
+export function subDay(date: string, lang: Lang) {
+  const month = tr(lang).months.short[Number(date.slice(5, 7)) - 1];
+  const day = Number(date.slice(8, 10));
+  return lang === 'en' ? `${month} ${day}` : `${day} ${month}`;
+}
+
+// Разбор сообщения боту про подписку: «Бассейн 3000 5», «Netflix 799 15-го», «ChatGPT $20 3 числа»,
+// «iCloud 1490 в год 21», «Spotify 11,99 eur on the 1st». Сумма — число при знаке валюты или самое
+// «денежное» из чисел, число месяца — с «-го»/«числа»/«th» или второе число от 1 до 31.
+const CURRENCY_WORDS: Record<string, string> = {};
+for (const [code, words] of Object.entries({
+  USD: ['$', 'usd', 'доллар', 'доллара', 'долларов', 'бакс', 'бакса', 'баксов', 'dollar', 'dollars', 'buck', 'bucks'],
+  EUR: ['€', 'eur', 'евро', 'euro', 'euros'],
+  RUB: ['₽', 'р', 'р.', 'руб', 'руб.', 'рубль', 'рубля', 'рублей', 'rub', 'ruble', 'rubles', 'rouble', 'roubles'],
+  KZT: ['₸', 'тенге', 'kzt', 'tenge'],
+  AED: ['aed', 'дирхам', 'дирхама', 'дирхамов', 'dirham', 'dirhams'],
+  KGS: ['kgs', 'сом', 'сома', 'сомов', 'som'],
+  UZS: ['uzs', 'сум', 'сума', 'сумов', "so'm", 'sum'],
+})) {
+  for (const w of words) CURRENCY_WORDS[w] = code;
+}
+const PERIOD_WORDS: Record<string, SubPeriod> = {
+  год: 'year', года: 'year', году: 'year', годовая: 'year', годовой: 'year', ежегодно: 'year', year: 'year', yearly: 'year', annual: 'year', annually: 'year', yr: 'year',
+  неделю: 'week', неделя: 'week', недели: 'week', недельная: 'week', еженедельно: 'week', week: 'week', weekly: 'week', wk: 'week',
+  месяц: 'month', мес: 'month', месяца: 'month', ежемесячно: 'month', month: 'month', monthly: 'month', mo: 'month',
+};
+const DAY_SUFFIX = new Set(['го', 'е', 'числа', 'число', 'th', 'st', 'nd', 'rd']);
+const FILLER = new Set(['в', 'во', 'за', 'по', 'на', 'раз', 'каждый', 'каждое', 'каждого', 'каждую', 'каждые', 'числа', 'число', 'every', 'each', 'on', 'the', 'of', 'a', 'an', 'per', 'once', 'a', '/', '-', '—', '–', ',']);
+
+export interface SubInput {
+  name: string;
+  amount: number | null;
+  currency: string | null;
+  period: SubPeriod;
+  day: number | null;
+}
+
+export function parseSubInput(text: string): SubInput {
+  let t = String(text || '').replace(/ё/g, 'е').replace(/Ё/g, 'Е');
+  t = t.replace(/(\d)\s+(?=\d{3}(\D|$))/g, '$1'); // «2 900» → «2900»
+  t = t.replace(/([$€₽₸/])/g, ' $1 ').replace(/(\d)-?(?=[a-zа-я])/gi, '$1 ').replace(/,(?!\d)/g, ' ');
+  const tokens = t.split(/\s+/).filter(Boolean);
+  const nums: { value: number; i: number; day: boolean; cur: boolean }[] = [];
+  const kind: ('num' | 'cur' | 'period' | 'skip' | 'word')[] = [];
+  let currency: string | null = null;
+  let period: SubPeriod = 'month';
+  tokens.forEach((tok, i) => {
+    const low = tok.toLowerCase();
+    if (/^\d+(?:[.,]\d{1,2})?$/.test(tok)) {
+      nums.push({ value: parseFloat(tok.replace(',', '.')), i, day: false, cur: false });
+      kind.push('num');
+    } else if (CURRENCY_WORDS[low]) {
+      currency = CURRENCY_WORDS[low];
+      kind.push('cur');
+    } else if (PERIOD_WORDS[low]) {
+      period = PERIOD_WORDS[low];
+      kind.push('period');
+    } else if (DAY_SUFFIX.has(low) && kind[i - 1] === 'num') {
+      nums[nums.length - 1].day = true;
+      kind.push('skip');
+    } else if (FILLER.has(low)) {
+      kind.push('skip');
+    } else {
+      kind.push('word');
+    }
+  });
+  // Знак валюты рядом с числом — это сумма
+  for (const n of nums) n.cur = kind[n.i + 1] === 'cur' || kind[n.i - 1] === 'cur';
+  const plain = nums.filter((n) => !n.day);
+  const amount =
+    nums.find((n) => n.cur && !n.day) ??
+    (plain.length > 1 ? plain.find((n) => n.value > 31 || !Number.isInteger(n.value)) ?? plain[0] : plain[0]);
+  const dayNum =
+    nums.find((n) => n.day && n !== amount) ?? nums.find((n) => n !== amount && Number.isInteger(n.value) && n.value >= 1 && n.value <= 31);
+  let name = tokens.filter((_, i) => kind[i] === 'word').join(' ').replace(/^[-—:,.\s]+|[-—:,.\s]+$/g, '').slice(0, 60);
+  // «бассейн» → «Бассейн», но «iCloud» и «eSIM» остаются как написаны
+  const first = name.split(' ')[0];
+  if (first && first === first.toLowerCase()) name = name.charAt(0).toUpperCase() + name.slice(1);
+  return {
+    name,
+    amount: amount ? Math.round(amount.value * 100) / 100 : null,
+    currency,
+    period,
+    day: dayNum && dayNum.value >= 1 && dayNum.value <= 31 && Number.isInteger(dayNum.value) ? dayNum.value : null,
+  };
+}
+
 // ---------- тексты ----------
 
 export interface SubsText {
@@ -197,7 +328,43 @@ export interface SubsText {
   teaserNext: (name: string, when: string) => string;
   teaserEmpty: string;
   fl: { added: string; updated: string; deleted: string; bad: string; charged: (n: number) => string };
-  bot: { today: (lines: string[]) => string; tomorrow: (lines: string[]) => string };
+  bot: {
+    today: (lines: string[]) => string;
+    tomorrow: (lines: string[]) => string;
+    btn: string; // кнопка в главном меню
+    title: string;
+    totals: (month: string, year: string) => string;
+    top: (name: string, monthly: string) => string;
+    upcomingH: string;
+    line: (name: string, amount: string, when: string) => string;
+    tapHint: string;
+    empty: string;
+    more: (n: number) => string;
+    add: string;
+    openSite: string;
+    editSite: string;
+    toList: string;
+    pickTitle: string;
+    custom: string;
+    promptPreset: (name: string, sym: string) => string;
+    promptCustom: (sym: string) => string;
+    needAmount: string;
+    needName: string;
+    tooMany: string;
+    per: Record<SubPeriod, string>; // «в месяц»
+    added: (name: string, amount: string, next: string, chargedToday: boolean) => string;
+    card: (o: { name: string; amountLine: string; next: string; when: string; category: string; auto: boolean }) => string;
+    autoOffBtn: string;
+    autoOnBtn: string;
+    delBtn: string;
+    delQ: (name: string) => string;
+    yesDel: string;
+    toastAutoOn: string;
+    toastAutoOff: string;
+    toastDeleted: string;
+    toastGone: string;
+    inDays: (days: number) => string;
+  };
 }
 
 const ruPlural = (n: number, one: string, few: string, many: string) => {
@@ -255,6 +422,44 @@ const ru: SubsText = {
   bot: {
     today: (lines) => `🔁 <b>Сегодня списание по подпискам</b>\n${lines.join('\n')}\n\nЗаписал в траты.`,
     tomorrow: (lines) => `⏰ <b>Завтра спишется</b>\n${lines.join('\n')}\n\nЕсли что-то уже не нужно — отмени сегодня.`,
+    btn: '🔁 Подписки',
+    title: '🔁 <b>Подписки</b>',
+    totals: (month, year) => `В месяц: <b>${month}</b> · в год: <b>${year}</b>`,
+    top: (name, monthly) => `Дороже всех — ${name}, ${monthly} в месяц.`,
+    upcomingH: '⏰ <b>Ближайшие списания</b>',
+    line: (name, amount, when) => `• ${name} — ${amount}, ${when}`,
+    tapHint: 'Нажми на подписку, чтобы выключить автозапись в траты или удалить её.',
+    empty:
+      'Подписок пока нет.\n\nДобавь Netflix, музыку, связь, спортзал — посчитаю, сколько они съедают за год. В день списания сам запишу трату, а накануне напомню, чтобы успеть отменить ненужное.',
+    more: (n) => `Ещё ${n} — на сайте`,
+    add: '➕ Добавить подписку',
+    openSite: '📱 Подписки на сайте',
+    editSite: '✏️ Изменить на сайте',
+    toList: '‹ К подпискам',
+    pickTitle: '➕ <b>Новая подписка</b>\n\nВыбери сервис или добавь свою.',
+    custom: '✏️ Своя подписка',
+    promptPreset: (name, sym) =>
+      `🔁 <b>${name}</b>\n\nНапиши сумму и число месяца, когда списывается. Например: <code>399 15</code> — 399 ${sym} каждый месяц 15-го.\n\nМожно в другой валюте (<code>$20 3</code>) и раз в год (<code>1490 в год 21</code>).`,
+    promptCustom: (sym) =>
+      `✏️ <b>Своя подписка</b>\n\nНапиши название, сумму и число списания. Например: <code>Бассейн 3000 5</code> — 3 000 ${sym} каждый месяц 5-го.\n\nМожно в другой валюте (<code>ChatGPT $20 3</code>) и раз в год (<code>iCloud 1490 в год 21</code>).`,
+    needAmount: 'Не вижу суммы. Напиши, например: <code>399 15</code>',
+    needName: 'Напиши ещё и название, например: <code>Бассейн 3000 5</code>',
+    tooMany: 'Подписок уже очень много — удали лишние, чтобы добавить новую.',
+    per: { month: 'в месяц', year: 'в год', week: 'в неделю' },
+    added: (name, amount, next, chargedToday) =>
+      `✅ Подписка <b>${name}</b> добавлена: ${amount}.\nСледующее списание — ${next}.${chargedToday ? '\n\nСписание за сегодня записал в траты.' : ''}`,
+    card: (o) =>
+      `🔁 <b>${o.name}</b>\n${o.amountLine}\nСледующее списание: ${o.next} (${o.when})\n${o.category}\n\n${o.auto ? '✅ В день списания запишу трату сам.' : '✋ В траты не записываю — только напоминаю накануне.'}`,
+    autoOffBtn: '✋ Не записывать в траты',
+    autoOnBtn: '✅ Записывать в траты',
+    delBtn: '🗑 Удалить',
+    delQ: (name) => `Удалить подписку <b>${name}</b>? Уже записанные траты останутся.`,
+    yesDel: 'Да, удалить',
+    toastAutoOn: 'Буду записывать в траты',
+    toastAutoOff: 'Не буду записывать в траты',
+    toastDeleted: 'Подписка удалена',
+    toastGone: 'Этой подписки уже нет',
+    inDays: (days) => (days <= 0 ? 'сегодня' : days === 1 ? 'завтра' : `через ${days} ${ruPlural(days, 'день', 'дня', 'дней')}`),
   },
 };
 
@@ -307,6 +512,44 @@ const en: SubsText = {
   bot: {
     today: (lines) => `🔁 <b>Subscriptions charged today</b>\n${lines.join('\n')}\n\nLogged as expenses.`,
     tomorrow: (lines) => `⏰ <b>Renewing tomorrow</b>\n${lines.join('\n')}\n\nIf you don't need something anymore, cancel it today.`,
+    btn: '🔁 Subscriptions',
+    title: '🔁 <b>Subscriptions</b>',
+    totals: (month, year) => `Per month: <b>${month}</b> · per year: <b>${year}</b>`,
+    top: (name, monthly) => `The priciest is ${name}, ${monthly} a month.`,
+    upcomingH: '⏰ <b>Upcoming charges</b>',
+    line: (name, amount, when) => `• ${name} — ${amount}, ${when}`,
+    tapHint: 'Tap a subscription to stop logging it as an expense or delete it.',
+    empty:
+      "No subscriptions yet.\n\nAdd Netflix, music, your phone plan, the gym — I'll show what they cost you in a year. On the billing day I'll log the expense myself, and the day before I'll remind you so you can cancel what you don't need.",
+    more: (n) => `${n} more — on the website`,
+    add: '➕ Add subscription',
+    openSite: '📱 Subscriptions on the website',
+    editSite: '✏️ Edit on the website',
+    toList: '‹ To subscriptions',
+    pickTitle: '➕ <b>New subscription</b>\n\nPick a service or add your own.',
+    custom: '✏️ Custom subscription',
+    promptPreset: (name, sym) =>
+      `🔁 <b>${name}</b>\n\nSend the amount and the day of the month it renews. For example: <code>15 3</code> — 15 ${sym} every month on the 3rd.\n\nOther currencies work too (<code>$20 3</code>), and yearly plans (<code>99 yearly 21</code>).`,
+    promptCustom: (sym) =>
+      `✏️ <b>Custom subscription</b>\n\nSend the name, amount and billing day. For example: <code>Gym 45 1</code> — 45 ${sym} every month on the 1st.\n\nOther currencies work too (<code>ChatGPT $20 3</code>), and yearly plans (<code>iCloud 99 yearly 21</code>).`,
+    needAmount: "I don't see an amount. Send, for example: <code>15 3</code>",
+    needName: 'Add a name too, for example: <code>Gym 45 1</code>',
+    tooMany: 'You already have a lot of subscriptions — delete some to add a new one.',
+    per: { month: 'a month', year: 'a year', week: 'a week' },
+    added: (name, amount, next, chargedToday) =>
+      `✅ <b>${name}</b> added: ${amount}.\nNext charge — ${next}.${chargedToday ? "\n\nToday's charge is logged as an expense." : ''}`,
+    card: (o) =>
+      `🔁 <b>${o.name}</b>\n${o.amountLine}\nNext charge: ${o.next} (${o.when})\n${o.category}\n\n${o.auto ? "✅ On the billing day I'll log the expense myself." : "✋ Not logged as an expense — I'll only remind you the day before."}`,
+    autoOffBtn: "✋ Don't log as expense",
+    autoOnBtn: '✅ Log as expense',
+    delBtn: '🗑 Delete',
+    delQ: (name) => `Delete <b>${name}</b>? Expenses already logged will stay.`,
+    yesDel: 'Yes, delete',
+    toastAutoOn: "I'll log it as an expense",
+    toastAutoOff: "I won't log it as an expense",
+    toastDeleted: 'Subscription deleted',
+    toastGone: 'This subscription is gone',
+    inDays: (days) => (days <= 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${days} days`),
   },
 };
 
