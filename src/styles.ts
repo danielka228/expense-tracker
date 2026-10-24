@@ -621,3 +621,39 @@ export const LANDING_CSS = `
   .l-cta { text-align: center; padding: 120px 0 calc(80px + env(safe-area-inset-bottom)); }
   .l-foot { text-align: center; color: var(--text-3); font-size: 13px; padding-bottom: 40px; }
 `;
+
+// Подписки: значки сервисов, полоска «на что уходит», переключатель как в iOS
+export const SUBS_CSS = `
+  .sub-logo {
+    width: 38px; height: 38px; border-radius: 11px; flex: none; color: #fff; font-size: 17px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center; box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, .18);
+  }
+  .sub-name { display: block; font-size: 17px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub-meta { display: block; font-size: 13px; color: var(--text-2); margin-top: 1px; }
+  .sub-meta.soon { color: var(--gold); }
+  .sub-stack { display: flex; gap: 3px; height: 8px; border-radius: 999px; overflow: hidden; margin: -6px 0 16px; }
+  .sub-stack i { min-width: 4px; transform-origin: left; animation: stack-in 1s var(--ease) both; }
+  @keyframes stack-in { from { transform: scaleX(0); } }
+  .cur-pick { position: relative; display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+  .cur-pick select { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
+  .cur-chev { width: 12px; height: 8px; fill: none; stroke: var(--text-2); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .form-row.switch-row > span { width: auto; flex: 1; color: var(--text); font-size: 17px; }
+  .form-row .switch {
+    -webkit-appearance: none; appearance: none; position: relative; flex: none; width: 51px; height: 31px; padding: 0; margin: 0 6px 0 0;
+    border-radius: 999px; background: var(--fill-2) !important; cursor: pointer; transition: background .25s ease;
+  }
+  .form-row .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, .3); transition: transform .35s var(--spring);
+  }
+  .form-row .switch:checked { background: var(--green) !important; }
+  .form-row .switch:checked::after { transform: translateX(20px); }
+  .sub-presets { margin: -2px -2px 8px; }
+  .sub-del { width: 100%; color: var(--red); margin-top: 2px; }
+  .sub-teaser { display: flex; align-items: center; gap: 12px; color: var(--text); padding: 14px 16px; }
+  .sub-teaser:active { background: var(--surface-2); }
+  .sub-teaser .sq { width: 38px; height: 38px; border-radius: 11px; }
+  .sub-teaser .sq svg { width: 20px; height: 20px; }
+  .sub-teaser .grow { flex: 1; min-width: 0; }
+  .sub-teaser .chev { width: 8px; height: 13px; flex: none; opacity: .35; }
+`;

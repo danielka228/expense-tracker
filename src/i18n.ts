@@ -36,7 +36,7 @@ export interface Dict {
   ogLocale: string;
   shareTitle: string;
   shareText: string;
-  nav: { dashboard: string; friends: string; profile: string; settings: string };
+  nav: { dashboard: string; subs: string; friends: string; profile: string; settings: string };
   months: { in: string[]; nom: string[]; gen: string[]; short: string[] };
   weekdays: string[];
   today: string;
@@ -429,7 +429,7 @@ const ru: Dict = {
   ogLocale: 'ru_RU',
   shareTitle: 'СпендТрекер — траты под контролем',
   shareText: 'Записывай траты за пару касаний: на сайте, в Telegram-боте или голосом. Сканер штрихкодов, друзья и сводки от Трэка.',
-  nav: { dashboard: 'Траты', friends: 'Друзья', profile: 'Профиль', settings: 'Настройки' },
+  nav: { dashboard: 'Траты', subs: 'Подписки', friends: 'Друзья', profile: 'Профиль', settings: 'Настройки' },
   months: {
     in: ['январе', 'феврале', 'марте', 'апреле', 'мае', 'июне', 'июле', 'августе', 'сентябре', 'октябре', 'ноябре', 'декабре'],
     nom: ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'],
@@ -760,7 +760,7 @@ const en: Dict = {
   ogLocale: 'en_US',
   shareTitle: 'SpendTracker — your money, under control',
   shareText: 'Log expenses in a couple of taps: on the web, in the Telegram bot or by voice. Barcode scanner, friends and recaps from Track.',
-  nav: { dashboard: 'Expenses', friends: 'Friends', profile: 'Profile', settings: 'Settings' },
+  nav: { dashboard: 'Expenses', subs: 'Subs', friends: 'Friends', profile: 'Profile', settings: 'Settings' },
   months: {
     in: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
     nom: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
