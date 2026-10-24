@@ -1,9 +1,10 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
-import { COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, VOICE_JS } from './client';
-import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS } from './styles';
+import { COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, SUBS_JS, VOICE_JS } from './client';
+import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS, SUBS_CSS } from './styles';
 import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
 import { plural } from './trek';
+import { SUB_PERIODS, SUB_PRESETS, subsText, type Sub } from './subs';
 import { tr, categoryLabel, clientScript, currencyLabel, currencySymbol, LANGS, LANG_LABEL, type Lang } from './i18n';
 
 type H = HtmlEscapedString | Promise<HtmlEscapedString>;
@@ -26,6 +27,7 @@ const countUp = (n: number) => html`<span data-count="${Math.round(Number(n) || 
 
 const TAB_ICONS = {
   dashboard: '<svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h13v4"/><path d="M3 7v11a2 2 0 0 0 2 2h14a1 1 0 0 0 1-1v-9a1 1 0 0 0-1-1H5a2 2 0 0 1-2-2z"/><circle cx="16.5" cy="14.5" r="1" fill="currentColor"/></svg>',
+  subs: '<svg viewBox="0 0 24 24"><path d="m17 2 3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12"/><path d="m7 22-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg>',
   friends: '<svg viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8"/><path d="M18 14.3c2.2.6 3.5 2.5 3.5 5.7"/></svg>',
   profile: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 3.6-6.5 8-6.5s8 2.5 8 6.5"/></svg>',
   settings: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3h0a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5h0a1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8v0a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>',
@@ -655,6 +657,7 @@ export function dashboardPage(d: {
   week: { date: string; total: number }[];
   byCategory: { category: string; total: number }[];
   recent: ExpenseRow[];
+  subs: { count: number; monthly: number; next: { name: string; days: number; date: string } | null };
   lang: Lang;
 }) {
   const S = tr(d.lang);
@@ -674,7 +677,7 @@ export function dashboardPage(d: {
       loggedIn: true,
       lang: d.lang,
       activeTab: 'dashboard',
-      extraCss: DASHBOARD_CSS,
+      extraCss: DASHBOARD_CSS + SUBS_CSS,
       scripts: PARSE_JS + DASH_JS + VOICE_JS + SCAN_JS,
     },
     html`${header(
@@ -718,6 +721,8 @@ ${kopiCard(d)}
 </div>
 
 <div class="reveal">${weekWidget(d.week, d.today, d.sym, d.lang)}</div>
+
+${subsTeaser(d.subs, d.sym, d.lang)}
 
 ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory, d.today, d.sym, d.lang)}</div>` : ''}
 
@@ -781,6 +786,159 @@ ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory
   </div>
 </div>`,
   );
+}
+
+// ---------- подписки ----------
+
+export interface SubView extends Sub {
+  monthly: number; // сколько в месяц, в валюте человека
+  sym: string; // знак валюты самой подписки
+  color: string;
+  days: number; // дней до списания
+}
+
+const subLogo = (name: string, color: string) => html`<span class="sub-logo" style="background:${color}">${([...name.trim()][0] ?? '?').toUpperCase()}</span>`;
+
+function shortDay(iso: string, lang: Lang) {
+  const S = tr(lang);
+  const d = new Date(iso + 'T00:00:00Z');
+  return lang === 'en' ? `${S.months.short[d.getUTCMonth()]} ${d.getUTCDate()}` : `${d.getUTCDate()} ${S.months.short[d.getUTCMonth()]}`;
+}
+
+const CUR_CHEV = '<svg class="cur-chev" viewBox="0 0 12 8"><path d="M1.5 1.5 6 6l4.5-4.5"/></svg>';
+
+/** Сумма «как в кошельке»: копейки показываем, только если они есть (9.99 $) */
+const money = (n: number) => (Math.abs(n - Math.round(n)) < 0.005 ? fmt0(n) : n.toFixed(2));
+
+function subForm(d: { lang: Lang; today: string; currencies: Record<string, Currency>; userCurrency: string; categories: string[] }, s?: SubView) {
+  const T = subsText(d.lang);
+  const cur = s?.currency ?? d.userCurrency;
+  return html`<form method="POST" action="${s ? `/subs/${s.id}` : '/subs'}" class="sub-form" autocomplete="off">
+    <div class="amount-wrap">
+      <input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0" required value="${s ? money(s.amount) : ''}" aria-label="${T.amount}">
+      <label class="cur-pick">
+        <span class="amount-cur">${currencySymbol(cur, d.lang, (d.currencies[cur] ?? Object.values(d.currencies)[0]).symbol)}</span>${raw(CUR_CHEV)}
+        <select name="currency" aria-label="${T.currency}">
+          ${Object.entries(d.currencies).map(([code, info]) => html`<option value="${code}" ${code === cur ? 'selected' : ''}>${currencySymbol(code, d.lang, info.symbol)}</option>`)}
+        </select>
+      </label>
+    </div>
+    <div class="form-rows">
+      <label class="form-row"><span>${T.name}</span><input type="text" name="name" required maxlength="60" placeholder="${T.namePh}" value="${s?.name ?? ''}"></label>
+      <label class="form-row"><span>${T.period}</span><select name="period">${SUB_PERIODS.map((p) => html`<option value="${p}" ${p === (s?.period ?? 'month') ? 'selected' : ''}>${T.periods[p]}</option>`)}</select></label>
+      <label class="form-row"><span>${T.nextDate}</span><input type="date" name="next_date" required min="${d.today}" value="${s?.next_date ?? d.today}"></label>
+      <label class="form-row"><span>${T.category}</span><select name="category">${d.categories.map((c) => html`<option value="${c}" ${c === (s?.category ?? 'Развлечения') ? 'selected' : ''}>${categoryLabel(c, d.lang)}</option>`)}</select></label>
+      <label class="form-row switch-row"><span class="grow-label">${T.auto}</span><input type="checkbox" class="switch" name="auto" value="1" ${!s || s.auto ? 'checked' : ''}></label>
+    </div>
+    <button type="submit">${s ? T.save : T.add}</button>
+  </form>`;
+}
+
+export function subsPage(d: {
+  flashes: Flash[];
+  lang: Lang;
+  sym: string;
+  userCurrency: string;
+  subs: SubView[];
+  monthTotal: number; // все траты за текущий месяц, для доли подписок
+  today: string;
+  currencies: Record<string, Currency>;
+  categories: string[];
+}) {
+  const T = subsText(d.lang);
+  const total = d.subs.reduce((a, s) => a + s.monthly, 0);
+  const year = total * 12;
+  const byCost = [...d.subs].sort((a, b) => b.monthly - a.monthly);
+  const upcoming = d.subs.filter((s) => s.days <= 7);
+  // Сумма со знаком валюты в реплике Трэка — без переносов внутри («2 900 ₽» не разрывается)
+  const nb = (n: number) => `${fmt0(n).replace(/ /g, '&nbsp;')}&nbsp;${escText(d.sym)}`;
+
+  let mood: Mood = 'wave';
+  let text = T.trekEmpty;
+  if (d.subs.length) {
+    const pct = d.monthTotal > 0 ? Math.round((total / d.monthTotal) * 100) : 0;
+    mood = pct >= 20 ? 'worried' : 'wink';
+    const top = byCost[0];
+    text = [
+      T.trekYear(nb(year)),
+      d.subs.length > 1 ? T.trekTop(escText(top.name), nb(top.monthly)) : '',
+      pct > 0 && pct <= 100 ? T.trekShare(pct) : '',
+    ].filter(Boolean).join(' ');
+  }
+
+  return layout(
+    { title: T.title, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'subs', extraCss: DASHBOARD_CSS + SETTINGS_CSS + SUBS_CSS, scripts: SUBS_JS },
+    html`${header(T.title, undefined, d.subs.length ? T.subtitle(d.subs.length) : T.emptySub)}
+
+<div class="card hero reveal">
+  <div class="label">${T.perMonth}</div>
+  <div class="big">${countUp(total)}<span class="cur">${d.sym}</span></div>
+  ${byCost.length
+    ? html`<div class="sub-stack">${byCost.map((s) => html`<i style="flex:${Math.max(s.monthly, total * 0.02).toFixed(2)};background:${s.color}" title="${s.name}"></i>`)}</div>`
+    : ''}
+  <div class="chips">
+    <div class="chip"><div class="k">${T.perYear}</div><div class="v">${countUp(year)} ${d.sym}</div></div>
+    <div class="chip"><div class="k">${T.count}</div><div class="v">${d.subs.length}</div></div>
+  </div>
+</div>
+
+<div class="kopi-card reveal" style="--d:.03s" data-tips="${JSON.stringify([text, ...T.tips])}" data-i="0">
+  ${raw(mascot(mood, 64, '', d.lang))}
+  <div class="kopi-bubble"><span class="who">${d.lang === 'en' ? 'Track' : 'Трэк'}</span><span class="kopi-text">${raw(text)}</span></div>
+</div>
+
+${upcoming.length
+  ? html`<div class="section-h">${T.upcomingH}</div>
+<div class="list reveal" style="--inset:62px">
+  ${upcoming.map(
+    (s) => html`<div class="row">${subLogo(s.name, s.color)}<span class="grow"><span class="sub-name">${s.name}</span><small class="sub-meta ${s.days <= 1 ? 'soon' : ''}">${T.when(s.days, shortDay(s.next_date, d.lang))}</small></span><span class="value">${money(s.amount)} ${s.sym}</span></div>`,
+  )}
+</div>`
+  : ''}
+
+${byCost.length
+  ? html`<div class="section-h">${T.allH}</div>
+<div class="list reveal" style="--inset:62px">
+  ${byCost.map(
+    (s) => html`<details class="row-group">
+    <summary class="row" style="cursor:pointer">${subLogo(s.name, s.color)}<span class="grow"><span class="sub-name">${s.name}</span><small class="sub-meta">${money(s.amount)} ${s.sym} / ${T.per[s.period]} · ${shortDay(s.next_date, d.lang)}${s.auto ? '' : ' · ✋'}</small></span><span class="value">${s.period === 'month' && s.sym === d.sym ? '' : `≈ ${fmt0(s.monthly)} ${d.sym}/${T.per.month}`}</span>${CHEV}</summary>
+    <div class="expand">
+      ${subForm(d, s)}
+      <form method="POST" action="/subs/${s.id}/delete" style="margin:0" onsubmit="return confirm('${T.delQ}');">
+        <button type="submit" class="btn-plain sub-del">${T.del}</button>
+      </form>
+    </div>
+  </details>`,
+  )}
+</div>`
+  : ''}
+
+<div class="section-h">${T.addRow}</div>
+<div class="card reveal" id="sub-add">
+  <div class="sub-presets store-chips">
+    ${SUB_PRESETS[d.lang].map(
+      (p, k) => html`<button type="button" class="schip" style="--d:${(k * 0.03).toFixed(2)}s" data-name="${p.name}" data-cat="${p.category}"><span class="logo" style="background:${p.color}">${[...p.name][0]}</span>${p.name}</button>`,
+    )}
+  </div>
+  ${subForm(d)}
+</div>
+<div class="footnote">${T.autoFoot}</div>`,
+  );
+}
+
+/** Карточка на главной: сколько уходит на подписки и что спишется ближе всего */
+function subsTeaser(t: { count: number; monthly: number; next: { name: string; days: number; date: string } | null }, sym: string, lang: Lang) {
+  const T = subsText(lang);
+  return html`<a class="card sub-teaser reveal" href="/subs">
+  <span class="sq" style="background:var(--grad)">${raw(TAB_ICONS.subs)}</span>
+  <span class="grow">
+    <span class="sub-name">${T.teaserH}</span>
+    <small class="sub-meta">${t.count
+      ? html`${T.teaserLine(t.count, `${fmt0(t.monthly)} ${sym}`)}${t.next ? html`<br>${T.teaserNext(t.next.name, T.when(t.next.days, shortDay(t.next.date, lang)))}` : ''}`
+      : T.teaserEmpty}</small>
+  </span>
+  ${CHEV}
+</a>`;
 }
 
 // ---------- друзья ----------

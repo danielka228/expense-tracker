@@ -7,6 +7,8 @@ import { cleanupLimits, hit } from './limits';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
 import { categoryId, currencySymbol, tr, langOf, type Lang } from './i18n';
+import { convert } from './money';
+import { SUB_PERIODS, chargeDue, perMonth, rollForward, subColor, subsText, type Sub, type SubPeriod } from './subs';
 import { authorizeUrl, finishLogin, newLoginState, type TgIdentity, type TgLoginConfig, type TgLoginState } from './tglogin';
 import {
   botApi,
@@ -15,6 +17,7 @@ import {
   handleUpdate,
   sendAdminReport,
   sendEveningDigests,
+  sendSubReminders,
   sendPhoto,
   sendWeeklyDigests,
   tg,
@@ -36,9 +39,11 @@ import {
   monthPage,
   profilePage,
   settingsPage,
+  subsPage,
   type Currency,
   type ExpenseRow,
   type Flash,
+  type SubView,
 } from './views';
 
 type Env = {
@@ -82,13 +87,6 @@ const CURRENCIES: Record<string, Currency> = {
   KGS: { label: 'Киргизский сом', symbol: 'сом' },
   UZS: { label: 'Узбекский сум', symbol: 'сум' },
 };
-
-// Курсы для сравнения трат друзей с разными валютами — сколько единиц валюты в 1 USD.
-// Прикидочные на октябрь 2026, обновляются вручную; точность до копейки тут не нужна.
-const RATES_PER_USD: Record<string, number> = { USD: 1, RUB: 82, KZT: 449, AED: 3.6725, EUR: 0.92, KGS: 87.5, UZS: 11900 };
-const rate = (cur: string) => RATES_PER_USD[cur] ?? RATES_PER_USD.RUB;
-// Перевод суммы из одной валюты в другую через USD.
-const convert = (amount: number, from: string, to: string) => (from === to ? amount : (amount / rate(from)) * rate(to));
 
 const DEFAULT_SHORTCUT_URL = 'https://www.icloud.com/shortcuts/6c88ade890e541c9b81532cfbc4cdb59';
 const SESSION_COOKIE = 'session';
@@ -291,7 +289,7 @@ const loginRequired = async (c: C, next: () => Promise<void>) => {
   await next();
 };
 
-for (const p of ['/dashboard', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/api/product/*', '/api/stores']) {
+for (const p of ['/dashboard', '/subs', '/subs/*', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/api/product/*', '/api/stores']) {
   app.use(p, loginRequired);
 }
 
@@ -492,7 +490,8 @@ async function spendingOverview(db: D1Database, userId: number, recentLimit: num
 
 app.get('/dashboard', async (c) => {
   const user = c.get('user');
-  const o = await spendingOverview(c.env.DB, user.id, 15);
+  await chargeDue(c.env.DB, periodStart('day'), user.id);
+  const [o, subs] = await Promise.all([spendingOverview(c.env.DB, user.id, 15), loadSubs(c.env.DB, user)]);
 
   return c.html(
     dashboardPage({
@@ -503,6 +502,11 @@ app.get('/dashboard', async (c) => {
       demo: c.env.DEMO === '1',
       categories: CATEGORIES,
       ...o,
+      subs: {
+        count: subs.length,
+        monthly: subs.reduce((a, x) => a + x.monthly, 0),
+        next: subs[0] ? { name: subs[0].name, days: subs[0].days, date: subs[0].next_date } : null,
+      },
     }),
   );
 });
@@ -538,6 +542,118 @@ app.post('/dashboard', async (c) => {
   ]);
   flash(c, flashT(c).expenseAdded, 'success');
   return c.redirect('/dashboard');
+});
+
+// ---------- подписки ----------
+
+/** Подписки человека по дате ближайшего списания, с ценой в месяц в его валюте */
+async function loadSubs(db: D1Database, user: User): Promise<SubView[]> {
+  const { results } = await db.prepare('SELECT * FROM subscriptions WHERE user_id = ? ORDER BY next_date, id').bind(user.id).all<Sub>();
+  const lang = langOf(user.lang);
+  const today = Date.parse(periodStart('day') + 'T00:00:00Z');
+  return results.map((s) => {
+    const code = s.currency in CURRENCIES ? s.currency : 'RUB';
+    return {
+      ...s,
+      monthly: convert(perMonth(s), s.currency, user.currency),
+      sym: currencySymbol(code, lang, CURRENCIES[code].symbol),
+      color: subColor(s.name),
+      days: Math.round((Date.parse(s.next_date + 'T00:00:00Z') - today) / 86400000),
+    };
+  });
+}
+
+/** Поля подписки из формы; null — если что-то не так */
+function subFromForm(form: Record<string, unknown>, user: User) {
+  const name = formStr(form, 'name').trim().slice(0, 60);
+  let amount: number;
+  try {
+    amount = Math.round(parseAmount(formStr(form, 'amount')) * 100) / 100;
+  } catch {
+    return null;
+  }
+  const date = formStr(form, 'next_date');
+  // Дата должна существовать: «2026-02-30» JavaScript молча превратил бы в 2 марта
+  const realDate = /^\d{4}-\d{2}-\d{2}$/.test(date) && isoDate(new Date(Date.parse(date + 'T00:00:00Z') || 0)) === date;
+  if (!name || !(amount > 0) || amount > 1e9 || !realDate) return null;
+  const period = (SUB_PERIODS as string[]).includes(formStr(form, 'period')) ? (formStr(form, 'period') as SubPeriod) : 'month';
+  const currency = formStr(form, 'currency') in CURRENCIES ? formStr(form, 'currency') : user.currency;
+  const category = CATEGORIES.includes(formStr(form, 'category')) ? formStr(form, 'category') : 'Развлечения';
+  const anchor = Number(date.slice(8, 10));
+  // Прошедшую дату сдвигаем вперёд без записи трат: прошлые списания человек, скорее всего, уже записал сам
+  const next = rollForward(date, period, anchor, periodStart('day'));
+  return { name, amount, currency, period, next, anchor, category, auto: form.auto ? 1 : 0 };
+}
+
+app.get('/subs', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  await chargeDue(db, periodStart('day'), user.id);
+  const [subs, month] = await Promise.all([loadSubs(db, user), spentSince(db, user.id, periodStart('month'))]);
+  return c.html(
+    subsPage({
+      flashes: popFlashes(c),
+      lang: langOf(user.lang),
+      sym: symbol(user),
+      userCurrency: user.currency,
+      subs,
+      monthTotal: month,
+      today: periodStart('day'),
+      currencies: CURRENCIES,
+      categories: CATEGORIES,
+    }),
+  );
+});
+
+app.post('/subs', async (c) => {
+  const user = c.get('user');
+  const T = subsText(langOf(user.lang));
+  const s = subFromForm(await c.req.parseBody(), user);
+  if (!s) {
+    flash(c, T.fl.bad, 'error');
+    return c.redirect('/subs');
+  }
+  const count = await c.env.DB.prepare('SELECT COUNT(*) AS n FROM subscriptions WHERE user_id = ?').bind(user.id).first<{ n: number }>();
+  if ((count?.n ?? 0) >= 100) {
+    flash(c, T.fl.bad, 'error');
+    return c.redirect('/subs');
+  }
+  await c.env.DB.prepare(
+    'INSERT INTO subscriptions (user_id, name, amount, currency, period, next_date, anchor_day, category, auto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+  )
+    .bind(user.id, s.name, s.amount, s.currency, s.period, s.next, s.anchor, s.category, s.auto)
+    .run();
+  // Списание на сегодня записываем сразу, чтобы трата появилась без ожидания утра
+  const charged = await chargeDue(c.env.DB, periodStart('day'), user.id);
+  flash(c, charged.length ? `${T.fl.added}. ${T.fl.charged(charged.length)}` : T.fl.added, 'success');
+  return c.redirect('/subs');
+});
+
+app.post('/subs/:id{[0-9]+}', async (c) => {
+  const user = c.get('user');
+  const T = subsText(langOf(user.lang));
+  const s = subFromForm(await c.req.parseBody(), user);
+  if (!s) {
+    flash(c, T.fl.bad, 'error');
+    return c.redirect('/subs');
+  }
+  await c.env.DB.prepare(
+    // Дату не трогали — число списания остаётся прежним (подписка на 31-е, сейчас стоящая на 30 ноября, не съезжает на 30-е)
+    `UPDATE subscriptions SET name = ?1, amount = ?2, currency = ?3, period = ?4, anchor_day = CASE WHEN next_date = ?5 THEN anchor_day ELSE ?6 END,
+       next_date = ?5, category = ?7, auto = ?8 WHERE id = ?9 AND user_id = ?10`,
+  )
+    .bind(s.name, s.amount, s.currency, s.period, s.next, s.anchor, s.category, s.auto, Number(c.req.param('id')), user.id)
+    .run();
+  const charged = await chargeDue(c.env.DB, periodStart('day'), user.id);
+  flash(c, charged.length ? `${T.fl.updated}. ${T.fl.charged(charged.length)}` : T.fl.updated, 'success');
+  return c.redirect('/subs');
+});
+
+app.post('/subs/:id{[0-9]+}/delete', async (c) => {
+  const user = c.get('user');
+  await c.env.DB.prepare('DELETE FROM subscriptions WHERE id = ? AND user_id = ?').bind(Number(c.req.param('id')), user.id).run();
+  flash(c, subsText(langOf(user.lang)).fl.deleted, 'success');
+  return c.redirect('/subs');
 });
 
 // ---------- «Мой месяц»: картинка для сторис ----------
@@ -707,6 +823,24 @@ app.post('/demo', async (c) => {
   const [me, anya, max] = ids;
   await db.batch([
     db.prepare('DELETE FROM expenses WHERE user_id IN (?, ?, ?)').bind(me, anya, max),
+    db.prepare('DELETE FROM subscriptions WHERE user_id IN (?, ?, ?)').bind(me, anya, max),
+    // Подписки демо-пользователя: [название, сумма, валюта, период, через сколько дней, категория]
+    ...(
+      [
+        [en ? 'Netflix' : 'Кинопоиск', en ? 899 : 399, 'RUB', 'month', 1, 'Развлечения'],
+        ['Spotify', 299, 'RUB', 'month', 4, 'Развлечения'],
+        ['ChatGPT Plus', 20, 'USD', 'month', 9, 'Прочее'],
+        [en ? 'Gym' : 'Спортзал', 2900, 'RUB', 'month', 16, 'Здоровье'],
+        ['iCloud+', 1490, 'RUB', 'year', 120, 'Прочее'],
+      ] as const
+    ).map(([name, amount, cur, period, days, cat]) =>
+      db
+        .prepare(
+          `INSERT INTO subscriptions (user_id, name, amount, currency, period, next_date, anchor_day, category)
+           VALUES (?, ?, ?, ?, ?, date('now', ?), CAST(strftime('%d', date('now', ?)) AS INTEGER), ?)`,
+        )
+        .bind(me, name, amount, cur, period, `+${days} days`, `+${days} days`, cat),
+    ),
     db.prepare('DELETE FROM friendships WHERE from_user_id IN (?1, ?2, ?3) OR to_user_id IN (?1, ?2, ?3)').bind(me, anya, max),
     db.prepare("INSERT INTO friendships (from_user_id, to_user_id, status) VALUES (?, ?, 'accepted')").bind(anya, me),
     db.prepare("INSERT INTO friendships (from_user_id, to_user_id, status) VALUES (?, ?, 'accepted')").bind(me, max),
@@ -1387,6 +1521,7 @@ app.post('/settings/delete_account', async (c) => {
     db.prepare('DELETE FROM telegram_links WHERE user_id = ?').bind(id),
     db.prepare('DELETE FROM telegram_codes WHERE user_id = ?').bind(id),
     db.prepare('DELETE FROM ai_usage WHERE user_id = ?').bind(id),
+    db.prepare('DELETE FROM subscriptions WHERE user_id = ?').bind(id),
     db.prepare('DELETE FROM users WHERE id = ?').bind(id),
   ]);
   logout(c);
@@ -1398,15 +1533,21 @@ app.post('/settings/delete_account', async (c) => {
 // В рассылке нет ссылок на сайт, поэтому адрес сайта не нужен.
 const EVENING_CRON = '0 18 * * *'; // 21:00 по Москве
 const WEEKLY_CRON = '0 7 * * 1'; // понедельник, 10:00 по Москве
-const ADMIN_CRON = '0 6 * * *'; // 9:00 по Москве — утренняя сводка владельцу
+const ADMIN_CRON = '0 6 * * *'; // 9:00 по Москве — утренняя сводка владельцу и списания по подпискам
 
 export default {
   fetch: app.fetch,
   async scheduled(event, env, ctx) {
     if (event.cron === EVENING_CRON) ctx.waitUntil(cleanupLimits(env.DB));
     const token = env.TELEGRAM_BOT_TOKEN;
-    if (!token) return;
-    const d = botDeps(env, token, '');
+    const d = token ? botDeps(env, token, '') : null;
+    // Утром проводим списания по подпискам (и без бота), затем бот сообщает о сегодняшних и завтрашних
+    if (event.cron === ADMIN_CRON) {
+      ctx.waitUntil(
+        chargeDue(env.DB, periodStart('day')).then((charged) => (d ? sendSubReminders(d, charged) : undefined)),
+      );
+    }
+    if (!d) return;
     if (event.cron === EVENING_CRON) ctx.waitUntil(sendEveningDigests(d));
     if (event.cron === WEEKLY_CRON) ctx.waitUntil(sendWeeklyDigests(d));
     if (event.cron === ADMIN_CRON) ctx.waitUntil(sendAdminReport(d));

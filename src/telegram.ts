@@ -11,6 +11,7 @@ import { aiDayAllowed, hit } from './limits';
 import { takeAiQuota, type Guess } from './vision';
 import { fmt0, type ExpenseRow } from './views';
 import { botText, esc, langFromTg } from './botText';
+import { subsText, type Charged } from './subs';
 import { categoryLabel, currencyLabel, currencySymbol, langOf, LANGS, LANG_LABEL, tr, type Lang } from './i18n';
 
 interface TgUser {
@@ -1032,6 +1033,42 @@ export async function sendWeeklyDigests(d: BotDeps) {
       await send(d, u.chat_id, weeklyText({ sym, ...week, prevTotal: prev.total }, lang), digestKeyboard('m:st:week', lang));
     } catch (e) {
       console.error('weekly digest failed', u.chat_id, e);
+    }
+  }
+}
+
+/** Утро: что списалось сегодня по подпискам (уже записано в траты) и что спишется завтра — чтобы успеть отменить */
+export async function sendSubReminders(d: BotDeps, charged: Charged[]) {
+  const { results: soon } = await d.db
+    .prepare('SELECT user_id, name, amount, currency FROM subscriptions WHERE next_date = ?')
+    .bind(shiftDay(d.today, 1))
+    .all<{ user_id: number; name: string; amount: number; currency: string }>();
+  if (!charged.length && !soon.length) return;
+  const money = (n: number) => (Math.abs(n - Math.round(n)) < 0.005 ? fmt0(n) : n.toFixed(2));
+  for (const u of await subscribers(d)) {
+    const today = charged.filter((x) => x.user_id === u.id);
+    const tomorrow = soon.filter((x) => x.user_id === u.id);
+    if (!today.length && !tomorrow.length) continue;
+    try {
+      const lang = langOf(u.lang);
+      const T = subsText(lang);
+      const sym = (code: string) => {
+        const c = code in d.currencies ? code : 'RUB';
+        return esc(currencySymbol(c, lang, d.currencies[c].symbol));
+      };
+      // Если cron пропускал дни, одно и то же списание могло пройти несколько раз — показываем «×3»
+      const lines = new Map<string, number>();
+      for (const x of today) {
+        const line = `• ${esc(x.name)} — ${money(x.amount)} ${sym(u.currency)}`;
+        lines.set(line, (lines.get(line) ?? 0) + 1);
+      }
+      const parts = [
+        lines.size ? T.bot.today([...lines].map(([line, n]) => (n > 1 ? `${line} ×${n}` : line))) : '',
+        tomorrow.length ? T.bot.tomorrow(tomorrow.map((x) => `• ${esc(x.name)} — ${money(x.amount)} ${sym(x.currency)}`)) : '',
+      ];
+      await send(d, u.chat_id, parts.filter(Boolean).join('\n\n'));
+    } catch (e) {
+      console.error('subscription reminder failed', u.chat_id, e);
     }
   }
 }

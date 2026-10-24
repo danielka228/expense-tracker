@@ -753,3 +753,26 @@ export const LANDING_JS = `
   frame();
 })();
 `;
+
+// Подписки: знак валюты рядом с суммой следует за выбором, а нажатие на популярный сервис
+// заполняет название и категорию
+export const SUBS_JS = `
+(function () {
+  document.querySelectorAll('.cur-pick select').forEach(function (s) {
+    s.addEventListener('change', function () { s.parentNode.querySelector('.amount-cur').textContent = s.options[s.selectedIndex].text; });
+  });
+  var box = document.getElementById('sub-add');
+  if (!box) return;
+  var f = box.querySelector('form');
+  box.querySelectorAll('.schip').forEach(function (b) {
+    b.addEventListener('click', function () {
+      box.querySelectorAll('.schip.on').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      f.elements.namedItem('name').value = b.getAttribute('data-name');
+      f.elements.namedItem('category').value = b.getAttribute('data-cat');
+      f.elements.namedItem('amount').focus();
+      if (navigator.vibrate) navigator.vibrate(8);
+    });
+  });
+})();
+`;
