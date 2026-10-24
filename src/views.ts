@@ -826,7 +826,7 @@ function subForm(d: { lang: Lang; today: string; currencies: Record<string, Curr
     <div class="form-rows">
       <label class="form-row"><span>${T.name}</span><input type="text" name="name" required maxlength="60" placeholder="${T.namePh}" value="${s?.name ?? ''}"></label>
       <label class="form-row"><span>${T.period}</span><select name="period">${SUB_PERIODS.map((p) => html`<option value="${p}" ${p === (s?.period ?? 'month') ? 'selected' : ''}>${T.periods[p]}</option>`)}</select></label>
-      <label class="form-row"><span>${T.nextDate}</span><input type="date" name="next_date" required min="${d.today}" value="${s?.next_date ?? d.today}"></label>
+      <label class="form-row"><span>${T.nextDate}</span><input type="date" name="next_date" required value="${s?.next_date ?? d.today}"></label>
       <label class="form-row"><span>${T.category}</span><select name="category">${d.categories.map((c) => html`<option value="${c}" ${c === (s?.category ?? 'Развлечения') ? 'selected' : ''}>${categoryLabel(c, d.lang)}</option>`)}</select></label>
       <label class="form-row switch-row"><span class="grow-label">${T.auto}</span><input type="checkbox" class="switch" name="auto" value="1" ${!s || s.auto ? 'checked' : ''}></label>
     </div>
