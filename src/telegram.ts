@@ -1267,6 +1267,7 @@ async function adminScreen(d: BotDeps, view: 'main' | 'new'): Promise<Screen> {
         { text: '🔄 Обновить', callback_data: 'adm' },
         { text: '🆕 Новые пользователи', callback_data: 'adm:new' },
       ],
+      [appButton(d, '📊 Дашборд пользователей', '/admin')],
     ],
   };
   if (view === 'new') {
