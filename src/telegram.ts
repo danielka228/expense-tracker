@@ -13,6 +13,7 @@ import { fmt0, type ExpenseRow } from './views';
 import { botText, esc, langFromTg } from './botText';
 import { SUB_PRESETS, chargeDue, firstCharge, insertSub, parseSubInput, perMonth, subDay, subsText, type Charged, type Sub } from './subs';
 import { convert } from './money';
+import { monthBounds, wrappedText } from './wrapped';
 import { categoryLabel, currencyLabel, currencySymbol, langOf, LANGS, LANG_LABEL, tr, type Lang } from './i18n';
 
 interface TgUser {
@@ -334,7 +335,7 @@ async function statsScreen(d: BotDeps, user: Linked, period: Period): Promise<Sc
   });
   return {
     text: T.stats(T.periodTitle(period, monthName(d, user.lang)), sum, sym, rows),
-    kb: { inline_keyboard: [periodRow('m:st', period, user.lang), [appButton(d, T.b.charts)], [appButton(d, T.b.monthCard, '/month')], back(user.lang)] },
+    kb: { inline_keyboard: [periodRow('m:st', period, user.lang), [appButton(d, T.b.charts)], [appButton(d, T.b.monthCard, '/month')], [appButton(d, wrappedText(user.lang).botBtn, '/wrapped')], back(user.lang)] },
   };
 }
 
@@ -1252,6 +1253,28 @@ export async function sendSubReminders(d: BotDeps, charged: Charged[]) {
       await send(d, u.chat_id, parts.filter(Boolean).join('\n\n'));
     } catch (e) {
       console.error('subscription reminder failed', u.chat_id, e);
+    }
+  }
+}
+
+/** Первое число месяца: «Твой октябрь готов 🎁» тем, кто за прошлый месяц записал хотя бы 3 траты */
+export async function sendWrappedInvites(d: BotDeps) {
+  const { prevStart, prevEnd } = monthBounds(d.today.slice(0, 7));
+  const month = prevStart.slice(0, 7);
+  const { results: active } = await d.db
+    .prepare('SELECT user_id FROM expenses WHERE expense_date BETWEEN ? AND ? GROUP BY user_id HAVING COUNT(*) >= 3')
+    .bind(prevStart, prevEnd)
+    .all<{ user_id: number }>();
+  const ids = new Set(active.map((r) => r.user_id));
+  for (const u of await subscribers(d)) {
+    if (!ids.has(u.id)) continue;
+    try {
+      const lang = langOf(u.lang);
+      const T = wrappedText(lang);
+      const nom = tr(lang).months.nom[Number(month.slice(5, 7)) - 1];
+      await send(d, u.chat_id, T.bot(lang === 'en' ? nom : nom.toLowerCase()), { inline_keyboard: [[appButton(d, T.botBtn, `/wrapped?m=${month}`)]] });
+    } catch (e) {
+      console.error('wrapped invite failed', u.chat_id, e);
     }
   }
 }

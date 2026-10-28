@@ -694,3 +694,77 @@ export const ADMIN_CSS = `
   .adm-table td { padding: 8px 8px 8px 0; border-bottom: 0.5px solid var(--sep); white-space: nowrap; }
   .adm-table tr[hidden] { display: none; }
 `;
+
+// «Итоги месяца»: полноэкранные слайды-сторис с градиентами, крупными цифрами и Трэком
+export const WRAPPED_CSS = `
+  body { overflow: hidden; }
+  .wr { position: fixed; inset: 0; background: #000; color: #fff; overflow: hidden; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+  .wr-slide {
+    position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center;
+    padding: calc(84px + env(safe-area-inset-top)) 28px calc(120px + env(safe-area-inset-bottom));
+    background: radial-gradient(120% 80% at 100% 0%, rgba(255,255,255,.18), transparent 60%), linear-gradient(160deg, var(--c1), var(--c2));
+    opacity: 0; visibility: hidden; transition: opacity .5s ease, visibility 0s .5s;
+  }
+  .wr-slide.on { opacity: 1; visibility: visible; transition: opacity .5s ease; z-index: 1; }
+  .wr-body { width: 100%; max-width: 520px; margin: 0 auto; }
+  .wr-in { opacity: 0; transform: translateY(26px); }
+  .wr-slide.on .wr-in { animation: wr-rise .9s var(--spring) both; animation-delay: calc(var(--k) * .2s + .15s); }
+  @keyframes wr-rise { from { opacity: 0; transform: translateY(26px) scale(.96); } to { opacity: 1; transform: none; } }
+  .wr-kicker { font-size: 15px; font-weight: 700; letter-spacing: .6px; text-transform: uppercase; opacity: .8; margin-bottom: 10px; }
+  .wr-label { font-size: 19px; font-weight: 600; opacity: .85; margin: 0 0 8px; }
+  .wr-h { font-size: clamp(38px, 11vw, 56px); line-height: 1.04; font-weight: 800; letter-spacing: -1.2px; margin: 0 0 14px; overflow-wrap: anywhere; }
+  .wr-h-sm { font-size: clamp(28px, 8vw, 40px); letter-spacing: -.6px; }
+  .wr-big { font-size: clamp(64px, 21vw, 104px); line-height: 1; font-weight: 800; letter-spacing: -3px; margin: 4px 0 14px; font-variant-numeric: tabular-nums; }
+  .wr-cur { font-size: .42em; letter-spacing: 0; opacity: .85; }
+  .wr-p { font-size: 21px; line-height: 1.35; opacity: .95; margin: 0 0 10px; }
+  .wr-small { font-size: 15px; opacity: .8; margin: 6px 0 0; }
+  .wr-emoji { font-size: 120px; line-height: 1.1; margin-bottom: 8px; display: inline-block; animation: wr-float 3s ease-in-out infinite; }
+  @keyframes wr-float { 50% { transform: translateY(-10px) rotate(-4deg); } }
+  .wr-pill { display: inline-block; margin-top: 18px; padding: 12px 22px; border-radius: 999px; background: #fff; color: #111; font-weight: 700; font-size: 17px; }
+  .wr-cats { display: grid; gap: 10px; margin-top: 18px; }
+  .wr-cat { display: grid; grid-template-columns: 96px 1fr auto; align-items: center; gap: 10px; font-size: 15px; }
+  .wr-cat span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .9; }
+  .wr-cat i { height: 10px; border-radius: 999px; background: rgba(255,255,255,.9); width: var(--w); transform-origin: left; }
+  .wr-slide.on .wr-cat i { animation: wr-grow 1.2s var(--ease) .9s both; }
+  @keyframes wr-grow { from { transform: scaleX(0); } }
+  .wr-cat b { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .wr-trek { position: absolute; right: 14px; bottom: calc(26px + env(safe-area-inset-bottom)); }
+  .wr-bars { position: absolute; z-index: 5; left: 12px; right: 12px; top: calc(10px + env(safe-area-inset-top)); display: flex; gap: 4px; }
+  .wr-bars i { flex: 1; height: 3px; border-radius: 2px; background: rgba(255,255,255,.3); overflow: hidden; }
+  .wr-bars b { display: block; height: 100%; width: 0; background: #fff; }
+  .wr-bars i.done b { width: 100%; }
+  .wr-bars i.cur b { animation: wr-fill var(--dur, 6500ms) linear forwards; }
+  @keyframes wr-fill { to { width: 100%; } }
+  .wr-close { position: absolute; z-index: 6; right: 12px; top: calc(22px + env(safe-area-inset-top)); width: 36px; height: 36px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,.25); color: #fff; }
+  .wr-close svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2.6; stroke-linecap: round; }
+  .wr-tap { position: absolute; z-index: 4; top: 60px; bottom: 0; background: transparent; border: 0; border-radius: 0; min-height: 0; padding: 0; box-shadow: none; }
+  .wr-tap:active { transform: none; filter: none; }
+  .wr-tap-prev { left: 0; width: 30%; }
+  .wr-tap-next { right: 0; width: 70%; }
+  .wr.last .wr-tap-next { display: none; }
+  .wr.last .wr-tap-prev { width: 14%; }
+  .wr-hint { position: absolute; z-index: 5; left: 0; right: 0; bottom: calc(12px + env(safe-area-inset-bottom)); text-align: center; font-size: 13px; opacity: .7; transition: opacity .6s; pointer-events: none; }
+  .wr-hint.gone { opacity: 0; }
+  .wr-outro { text-align: center; }
+  .wr-card { width: min(56vw, 260px, 34vh); aspect-ratio: 9 / 16; margin: 6px auto 16px; border-radius: 18px; overflow: hidden; box-shadow: 0 24px 60px rgba(0,0,0,.45); }
+  .wr-card svg, .wr-card img { display: block; width: 100%; height: 100%; }
+  .wr-actions { display: grid; gap: 8px; max-width: 320px; margin: 0 auto; text-align: center; }
+  .wr-actions button:not(.btn-plain):not(.btn-tinted) { background: #fff; color: #111; }
+  .wr-actions .btn-plain { color: #fff; }
+  @media (prefers-reduced-motion: reduce) {
+    .wr-slide.on .wr-in, .wr-emoji, .wr-slide.on .wr-cat i { animation: none; opacity: 1; transform: none; }
+  }
+`;
+
+// Баннер «Твой октябрь готов 🎁» на главной
+export const WRAPPED_BANNER_CSS = `
+  .wr-banner { display: flex; align-items: center; gap: 12px; padding: 14px 16px; color: var(--text);
+    background: linear-gradient(var(--surface), var(--surface)) padding-box, linear-gradient(135deg, #a194ff, #ec4899, #4fd6c7) border-box; border: 1.5px solid transparent; }
+  .wr-banner .grow { flex: 1; min-width: 0; }
+  .wr-banner b { display: block; font-size: 17px; }
+  .wr-banner small { display: block; font-size: 13px; color: var(--text-2); margin-top: 2px; }
+  .wr-banner .chev { width: 8px; height: 13px; flex: none; opacity: .35; }
+  .wr-banner-emoji { font-size: 32px; animation: wr-wiggle 2.4s ease-in-out infinite; }
+  @keyframes wr-wiggle { 0%, 70%, 100% { transform: none; } 80% { transform: rotate(-12deg) scale(1.1); } 90% { transform: rotate(10deg) scale(1.1); } }
+`;
