@@ -1,7 +1,7 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
-import { COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, SUBS_JS, VOICE_JS } from './client';
-import { BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS, SUBS_CSS } from './styles';
+import { ADMIN_JS, COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, SUBS_JS, VOICE_JS } from './client';
+import { ADMIN_CSS, BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS, SUBS_CSS } from './styles';
 import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
 import { plural } from './trek';
 import { SUB_PERIODS, SUB_PRESETS, subsText, type Sub } from './subs';
@@ -1272,6 +1272,7 @@ const SQ = {
   bell: '<svg viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.9 1.9 0 0 0 3.4 0"/></svg>',
   unlink: '<svg viewBox="0 0 24 24"><path d="M9 17H7A5 5 0 0 1 7 7h2"/><path d="M15 7h2a5 5 0 0 1 4 8"/><path d="M8 12h4"/><path d="m2 2 20 20"/></svg>',
   trash: '<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
+  chart: '<svg viewBox="0 0 24 24"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>',
   globe: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z"/></svg>',
 };
 const sq = (icon: keyof typeof SQ, bg: string) => raw(`<span class="sq" style="background:${bg}">${SQ[icon]}</span>`);
@@ -1315,6 +1316,7 @@ export function settingsPage(d: {
   currencies: Record<string, Currency>;
   currentCurrency: string;
   lang: Lang;
+  owner?: boolean; // владелец сайта: строка «Дашборд пользователей»
 }) {
   const S = tr(d.lang);
   const A = S.app;
@@ -1357,6 +1359,7 @@ export function settingsPage(d: {
     </form>
   </details>
   <a class="row" href="/profile">${sq('bolt', '#ff9f0a')}<span class="grow">${A.quickRow}</span>${CHEV}</a>
+  ${d.owner ? html`<a class="row" href="/admin">${sq('chart', '#5e5ce6')}<span class="grow">${d.lang === 'en' ? 'Users dashboard' : 'Дашборд пользователей'}</span>${CHEV}</a>` : ''}
 </div>
 ${telegramSettings(d.telegram, d.lang)}
 
@@ -1371,6 +1374,124 @@ ${telegramSettings(d.telegram, d.lang)}
   </form>
 </div>
 <div class="footnote">${A.deleteFoot}</div>`,
+  );
+}
+
+// ---------- дашборд владельца (только на русском, как админ-панель бота) ----------
+
+export interface AdminData {
+  totals: Record<string, number>;
+  signups: { d: string; n: number }[]; // по дням, 30 дней
+  active: { d: string; n: number }[];
+  funnel: { total: number; first: number; five: number; returned: number };
+  retention: { base: number; kept: number };
+  sources: { source: string; n: number; linked: number }[];
+  langs: { k: string; n: number }[];
+  currencies: { k: string; n: number }[];
+  users: { id: number; username: string; created_at: string; lang: string; currency: string; n: number; last: string | null; subs: number; tg: number; source: string | null }[];
+}
+
+const pct = (a: number, b: number) => (b ? Math.round((a / b) * 100) : 0);
+const ddmm = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}`;
+
+/** Столбики по дням за 30 дней: одна серия, подпись — заголовок карточки, значение — в подсказке и в таблице */
+function dayBars(title: string, sum: string, rows: { d: string; n: number }[], unit: string) {
+  const max = Math.max(1, ...rows.map((r) => r.n));
+  return html`<div class="card adm-chart">
+  <div class="card-head"><h3>${title}</h3><span class="hint">${sum}</span></div>
+  <div class="adm-bars" role="img" aria-label="${title} по дням за 30 дней">
+    ${rows.map(
+      (r) => html`<div class="adm-col" tabindex="0" data-tip="${ddmm(r.d)}: ${r.n} ${unit}"><i style="height:${r.n ? Math.max(4, Math.round((r.n / max) * 100)) : 0}%"></i></div>`,
+    )}
+  </div>
+  <div class="adm-axis"><span>${ddmm(rows[0].d)}</span><span>макс. ${max}</span><span>${ddmm(rows[rows.length - 1].d)}</span></div>
+  <details class="adm-table-toggle"><summary>Таблицей</summary>
+    <table class="adm-mini"><tbody>${[...rows].reverse().map((r) => html`<tr><td>${ddmm(r.d)}</td><td>${r.n}</td></tr>`)}</tbody></table>
+  </details>
+</div>`;
+}
+
+export function adminPage(d: { flashes: Flash[]; lang: Lang; today: string; data: AdminData }) {
+  const t = d.data.totals;
+  const v = (k: string) => fmt0(t[k] ?? 0);
+  const f = d.data.funnel;
+  const r = d.data.retention;
+  const steps: [string, number][] = [
+    ['Зарегистрировались', f.total ?? 0],
+    ['Записали первую трату', f.first ?? 0],
+    ['Записали 5+ трат', f.five ?? 0],
+    ['Вернулись в другой день', f.returned ?? 0],
+    ['Подключили бота', t.tg ?? 0],
+  ];
+  const tile = (k: string, label: string, sub?: string) =>
+    html`<div class="adm-tile"><div class="v">${k}</div><div class="k">${label}</div>${sub ? html`<div class="s">${sub}</div>` : ''}</div>`;
+  const ago = (iso: string | null) => {
+    if (!iso) return '—';
+    const days = Math.floor((Date.parse(d.today + 'T00:00:00Z') - Date.parse(iso.slice(0, 10) + 'T00:00:00Z')) / 86400000);
+    return days <= 0 ? 'сегодня' : days === 1 ? 'вчера' : `${days} дн. назад`;
+  };
+  const chips = (rows: { k: string; n: number }[]) => rows.map((x) => html`<span class="adm-chip">${x.k} <b>${x.n}</b></span>`);
+
+  return layout(
+    { title: 'Дашборд', flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'settings', extraCss: DASHBOARD_CSS + ADMIN_CSS, scripts: ADMIN_JS },
+    html`${header('Дашборд', undefined, 'Пользователи СпендТрекера · видно только тебе')}
+
+<div class="adm-grid">
+  ${tile(v('users'), 'пользователей', `+${v('new7')} за неделю · +${v('new30')} за месяц`)}
+  ${tile(v('active7'), 'активных за 7 дней', `сегодня ${v('active1')}`)}
+  ${tile(`${pct(r.kept ?? 0, r.base ?? 0)}%`, 'остаются', `из старше недели активны ${fmt0(r.kept ?? 0)} из ${fmt0(r.base ?? 0)}`)}
+  ${tile(v('expenses'), 'трат всего', `+${v('expenses7')} за неделю`)}
+  ${tile(v('tg'), 'с ботом', `${pct(t.tg ?? 0, t.users ?? 0)}% пользователей`)}
+  ${tile(v('subs_users'), 'с подписками', `подписок всего ${v('subs')}`)}
+</div>
+
+${dayBars('Регистрации', `${fmt0(d.data.signups.reduce((a, x) => a + x.n, 0))} за 30 дней`, d.data.signups, 'чел.')}
+${dayBars('Активные по дням', 'записали трату', d.data.active, 'чел.')}
+
+<div class="card">
+  <div class="card-head"><h3>Воронка</h3><span class="hint">от регистрации</span></div>
+  ${steps.map(
+    ([label, n]) => html`<div class="adm-step">
+    <div class="top"><span>${label}</span><span><b>${fmt0(n)}</b> · ${pct(n, f.total ?? 0)}%</span></div>
+    <div class="cat-bar"><div class="track"><div class="fill" style="width:${pct(n, f.total ?? 0)}%"></div></div></div>
+  </div>`,
+  )}
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Откуда пришли в бота</h3><span class="hint">метка ?start=</span></div>
+  ${d.data.sources.length
+    ? d.data.sources.map(
+        (x) => html`<div class="adm-src"><span>${x.source}</span><span><b>${fmt0(x.n)}</b> · с аккаунтом ${fmt0(x.linked)} (${pct(x.linked, x.n)}%)</span></div>`,
+      )
+    : html`<div class="footnote" style="margin:0">Пока нет переходов с меткой. Ссылка для TikTok: t.me/бот?start=tt</div>`}
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Языки и валюты</h3></div>
+  <div class="adm-chips">${chips(d.data.langs)}</div>
+  <div class="adm-chips">${chips(d.data.currencies)}</div>
+  <div class="adm-chips"><span class="adm-chip">пар друзей <b>${v('friends')}</b></span><span class="adm-chip">с аватаркой <b>${v('avatars')}</b></span><span class="adm-chip">с «О себе» <b>${v('bios')}</b></span></div>
+</div>
+
+<div class="section-h">Пользователи · по последней активности</div>
+<div class="card adm-users">
+  <input type="search" id="adm-q" placeholder="Поиск по имени" aria-label="Поиск по имени">
+  <div class="adm-scroll">
+    <table class="adm-table">
+      <thead><tr><th>Имя</th><th>Регистрация</th><th>Активность</th><th>Трат</th><th>Подп.</th><th>Бот</th><th>Источник</th><th>Яз./вал.</th></tr></thead>
+      <tbody>
+        ${d.data.users.map(
+          (u) => html`<tr data-name="${u.username.toLowerCase()}">
+          <td><b>${u.username}</b></td><td>${ddmm(u.created_at)}.${u.created_at.slice(2, 4)}</td><td>${ago(u.last)}</td>
+          <td>${fmt0(u.n)}</td><td>${u.subs || ''}</td><td>${u.tg ? '🤖' : ''}</td><td>${u.source ?? ''}</td><td>${u.lang}/${u.currency}</td>
+        </tr>`,
+        )}
+      </tbody>
+    </table>
+  </div>
+  <div class="footnote" style="margin:8px 0 0">Только счётчики: суммы и заметки людей здесь не показываются.</div>
+</div>`,
   );
 }
 

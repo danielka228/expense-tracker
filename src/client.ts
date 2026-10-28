@@ -776,3 +776,29 @@ export const SUBS_JS = `
   });
 })();
 `;
+
+// Дашборд владельца: подсказка над столбиком и поиск по таблице пользователей
+export const ADMIN_JS = `
+(function () {
+  document.querySelectorAll('.adm-bars').forEach(function (bars) {
+    var tip = document.createElement('div'); tip.className = 'adm-tip'; tip.hidden = true; bars.appendChild(tip);
+    function show(col) {
+      tip.textContent = col.getAttribute('data-tip'); tip.hidden = false;
+      // Подсказка не вылезает за края графика у крайних столбиков
+      var half = tip.offsetWidth / 2, x = col.offsetLeft + col.offsetWidth / 2;
+      tip.style.left = Math.min(Math.max(x, half), bars.clientWidth - half) + 'px';
+    }
+    bars.querySelectorAll('.adm-col').forEach(function (col) {
+      col.addEventListener('pointerenter', function () { show(col); });
+      col.addEventListener('focus', function () { show(col); });
+      col.addEventListener('click', function () { show(col); });
+    });
+    bars.addEventListener('pointerleave', function () { tip.hidden = true; });
+  });
+  var q = document.getElementById('adm-q');
+  if (q) q.addEventListener('input', function () {
+    var s = q.value.trim().toLowerCase();
+    document.querySelectorAll('.adm-table tbody tr').forEach(function (tr) { tr.hidden = s && tr.getAttribute('data-name').indexOf(s) === -1; });
+  });
+})();
+`;

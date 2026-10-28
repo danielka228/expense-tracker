@@ -40,6 +40,8 @@ import {
   profilePage,
   settingsPage,
   subsPage,
+  adminPage,
+  type AdminData,
   type Currency,
   type ExpenseRow,
   type Flash,
@@ -289,7 +291,7 @@ const loginRequired = async (c: C, next: () => Promise<void>) => {
   await next();
 };
 
-for (const p of ['/dashboard', '/subs', '/subs/*', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/api/product/*', '/api/stores']) {
+for (const p of ['/dashboard', '/subs', '/subs/*', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/admin', '/api/product/*', '/api/stores']) {
   app.use(p, loginRequired);
 }
 
@@ -1463,6 +1465,7 @@ app.get('/settings', async (c) => {
       telegram: { linked: !!tgLink, tgUsername: tgLink?.tg_username ?? null, bot: tgBot, login: !!tgLoginConfig(c) },
       currencies: CURRENCIES,
       currentCurrency: user.currency,
+      owner: await isOwner(c, user),
     }),
   );
 });
@@ -1521,6 +1524,84 @@ app.post('/settings/delete_account', async (c) => {
   logout(c);
   flash(c, flashT(c).accountDeleted, 'success');
   return c.redirect('/login');
+});
+
+// ---------- дашборд владельца: статистика по пользователям ----------
+
+// Владелец — тот, чей аккаунт привязан к Telegram с ID из секрета TELEGRAM_ADMIN_ID (как /admin в боте).
+// Остальным страницы как будто нет.
+async function isOwner(c: C, user: User): Promise<boolean> {
+  const admin = Number(c.env.TELEGRAM_ADMIN_ID ?? '');
+  if (!Number.isInteger(admin) || admin <= 0) return false;
+  return !!(await c.env.DB.prepare('SELECT 1 FROM telegram_links WHERE user_id = ? AND chat_id = ?').bind(user.id, admin).first());
+}
+
+app.get('/admin', async (c) => {
+  const user = c.get('user');
+  if (!(await isOwner(c, user))) return c.notFound();
+  const db = c.env.DB;
+  // Активность — когда трата записана (created_at), а не на какую дату
+  const [totals, signups, active, funnel, retention, sources, langs, currencies, users] = await db.batch([
+    db.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM users) AS users,
+         (SELECT COUNT(*) FROM users WHERE created_at >= datetime('now', '-7 days')) AS new7,
+         (SELECT COUNT(*) FROM users WHERE created_at >= datetime('now', '-30 days')) AS new30,
+         (SELECT COUNT(DISTINCT user_id) FROM expenses WHERE created_at >= datetime('now', '-1 day')) AS active1,
+         (SELECT COUNT(DISTINCT user_id) FROM expenses WHERE created_at >= datetime('now', '-7 days')) AS active7,
+         (SELECT COUNT(*) FROM expenses) AS expenses,
+         (SELECT COUNT(*) FROM expenses WHERE created_at >= datetime('now', '-7 days')) AS expenses7,
+         (SELECT COUNT(*) FROM telegram_links) AS tg,
+         (SELECT COUNT(*) FROM subscriptions) AS subs,
+         (SELECT COUNT(DISTINCT user_id) FROM subscriptions) AS subs_users,
+         (SELECT COUNT(*) FROM friendships WHERE status = 'accepted') AS friends,
+         (SELECT COUNT(*) FROM avatars) AS avatars,
+         (SELECT COUNT(*) FROM users WHERE bio IS NOT NULL AND bio <> '') AS bios`,
+    ),
+    db.prepare(`SELECT date(created_at) AS d, COUNT(*) AS n FROM users WHERE created_at >= date('now', '-29 days') GROUP BY d`),
+    db.prepare(`SELECT date(created_at) AS d, COUNT(DISTINCT user_id) AS n FROM expenses WHERE created_at >= date('now', '-29 days') GROUP BY d`),
+    db.prepare(
+      `SELECT COUNT(*) AS total, SUM(n >= 1) AS first, SUM(n >= 5) AS five, SUM(days >= 2) AS returned FROM
+         (SELECT u.id, COUNT(e.id) AS n, COUNT(DISTINCT date(e.created_at)) AS days FROM users u LEFT JOIN expenses e ON e.user_id = u.id GROUP BY u.id)`,
+    ),
+    db.prepare(
+      `SELECT COUNT(*) AS base, SUM(EXISTS(SELECT 1 FROM expenses e WHERE e.user_id = u.id AND e.created_at >= datetime('now', '-7 days'))) AS kept
+       FROM users u WHERE u.created_at < datetime('now', '-7 days')`,
+    ),
+    db.prepare(
+      `SELECT s.source, COUNT(*) AS n, SUM(t.user_id IS NOT NULL) AS linked FROM tg_sources s
+       LEFT JOIN telegram_links t ON t.chat_id = s.chat_id GROUP BY s.source ORDER BY n DESC LIMIT 12`,
+    ),
+    db.prepare('SELECT lang AS k, COUNT(*) AS n FROM users GROUP BY lang ORDER BY n DESC'),
+    db.prepare('SELECT currency AS k, COUNT(*) AS n FROM users GROUP BY currency ORDER BY n DESC'),
+    db.prepare(
+      `SELECT u.id, u.username, u.created_at, u.lang, u.currency,
+         (SELECT COUNT(*) FROM expenses WHERE user_id = u.id) AS n,
+         (SELECT MAX(created_at) FROM expenses WHERE user_id = u.id) AS last,
+         (SELECT COUNT(*) FROM subscriptions WHERE user_id = u.id) AS subs,
+         EXISTS(SELECT 1 FROM telegram_links WHERE user_id = u.id) AS tg,
+         (SELECT s.source FROM tg_sources s JOIN telegram_links t ON t.chat_id = s.chat_id WHERE t.user_id = u.id) AS source
+       FROM users u ORDER BY COALESCE((SELECT MAX(created_at) FROM expenses WHERE user_id = u.id), u.created_at) DESC LIMIT 300`,
+    ),
+  ]);
+  const today = periodStart('day');
+  const days = Array.from({ length: 30 }, (_, i) => isoDate(new Date(Date.parse(today) - (29 - i) * 86400000)));
+  const series = (r: D1Result) => {
+    const m = new Map((r.results as { d: string; n: number }[]).map((x) => [x.d, x.n]));
+    return days.map((d) => ({ d, n: m.get(d) ?? 0 }));
+  };
+  const data: AdminData = {
+    totals: totals.results[0] as Record<string, number>,
+    signups: series(signups),
+    active: series(active),
+    funnel: funnel.results[0] as AdminData['funnel'],
+    retention: retention.results[0] as AdminData['retention'],
+    sources: sources.results as AdminData['sources'],
+    langs: langs.results as AdminData['langs'],
+    currencies: currencies.results as AdminData['currencies'],
+    users: users.results as AdminData['users'],
+  };
+  return c.html(adminPage({ flashes: popFlashes(c), lang: langOf(user.lang), today, data }));
 });
 
 // Расписание (triggers.crons в wrangler.jsonc): итоги от Трэка в Telegram.

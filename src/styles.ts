@@ -657,3 +657,40 @@ export const SUBS_CSS = `
   .sub-teaser .grow { flex: 1; min-width: 0; }
   .sub-teaser .chev { width: 8px; height: 13px; flex: none; opacity: .35; }
 `;
+
+// Дашборд владельца: плитки-цифры, столбики по дням, воронка, таблица пользователей
+export const ADMIN_CSS = `
+  .adm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 14px; }
+  .adm-tile { background: var(--surface); border: 0.5px solid var(--hair); border-radius: 18px; padding: 14px; min-width: 0; }
+  .adm-tile .v { font-size: 28px; font-weight: 700; letter-spacing: -0.8px; font-variant-numeric: tabular-nums; }
+  .adm-tile .k { font-size: 14px; color: var(--text); margin-top: 1px; }
+  .adm-tile .s { font-size: 12px; color: var(--text-2); margin-top: 4px; line-height: 1.3; }
+  .adm-bars { position: relative; display: flex; align-items: flex-end; gap: 2px; height: 120px; border-bottom: 0.5px solid var(--sep); }
+  .adm-col { flex: 1; height: 100%; display: flex; align-items: flex-end; cursor: default; outline: none; }
+  .adm-col i { display: block; width: 100%; background: var(--accent); border-radius: 4px 4px 0 0; }
+  .adm-col:hover i, .adm-col:focus i { background: #b3a9ff; }
+  .adm-tip { position: absolute; top: -6px; transform: translate(-50%, -100%); background: var(--surface-2); border: 0.5px solid var(--hair);
+    border-radius: 8px; padding: 4px 8px; font-size: 13px; white-space: nowrap; pointer-events: none; z-index: 2; }
+  .adm-axis { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-2); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .adm-table-toggle { margin-top: 8px; font-size: 13px; color: var(--text-2); }
+  .adm-table-toggle summary { cursor: pointer; }
+  .adm-mini { width: 100%; margin-top: 6px; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .adm-mini td { padding: 3px 0; border-bottom: 0.5px solid var(--sep); }
+  .adm-mini td:last-child { text-align: right; }
+  .adm-step { margin-bottom: 12px; }
+  .adm-step .top { display: flex; justify-content: space-between; gap: 10px; font-size: 15px; margin-bottom: 6px; }
+  .adm-step .top span:last-child { color: var(--text-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .adm-step .cat-bar .fill { transform: none; }
+  .adm-src { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 0.5px solid var(--sep); font-size: 15px; }
+  .adm-src:last-child { border-bottom: 0; }
+  .adm-src span:last-child { color: var(--text-2); text-align: right; }
+  .adm-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+  .adm-chip { background: var(--fill); border-radius: 999px; padding: 5px 11px; font-size: 14px; color: var(--text-2); }
+  .adm-chip b { color: var(--text); }
+  .adm-users input { margin-bottom: 10px; }
+  .adm-scroll { overflow-x: auto; margin: 0 -18px; padding: 0 18px; }
+  .adm-table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  .adm-table th { text-align: left; font-weight: 600; color: var(--text-2); font-size: 12px; padding: 6px 8px 6px 0; border-bottom: 0.5px solid var(--sep); }
+  .adm-table td { padding: 8px 8px 8px 0; border-bottom: 0.5px solid var(--sep); white-space: nowrap; }
+  .adm-table tr[hidden] { display: none; }
+`;
