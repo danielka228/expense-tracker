@@ -1,10 +1,11 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
-import { ADMIN_JS, COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, SUBS_JS, VOICE_JS } from './client';
-import { ADMIN_CSS, BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS, SUBS_CSS } from './styles';
+import { ADMIN_JS, WRAPPED_JS, COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, SUBS_JS, VOICE_JS } from './client';
+import { ADMIN_CSS, WRAPPED_BANNER_CSS, WRAPPED_CSS, BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS, SUBS_CSS } from './styles';
 import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
 import { plural } from './trek';
 import { SUB_PERIODS, SUB_PRESETS, subsText, type Sub } from './subs';
+import { persona, whatIf, wrappedText, type WrappedData } from './wrapped';
 import { tr, categoryLabel, clientScript, currencyLabel, currencySymbol, LANGS, LANG_LABEL, type Lang } from './i18n';
 
 type H = HtmlEscapedString | Promise<HtmlEscapedString>;
@@ -658,6 +659,7 @@ export function dashboardPage(d: {
   byCategory: { category: string; total: number }[];
   recent: ExpenseRow[];
   subs: { count: number; monthly: number; next: { name: string; days: number; date: string } | null };
+  wrapped: string | null; // YYYY-MM — в первую неделю месяца показываем баннер «Итоги месяца»
   lang: Lang;
 }) {
   const S = tr(d.lang);
@@ -677,7 +679,7 @@ export function dashboardPage(d: {
       loggedIn: true,
       lang: d.lang,
       activeTab: 'dashboard',
-      extraCss: DASHBOARD_CSS + SUBS_CSS,
+      extraCss: DASHBOARD_CSS + SUBS_CSS + WRAPPED_BANNER_CSS,
       scripts: PARSE_JS + DASH_JS + VOICE_JS + SCAN_JS,
     },
     html`${header(
@@ -695,6 +697,7 @@ export function dashboardPage(d: {
   </div>
 </div>
 
+${d.wrapped ? wrappedBanner(d.wrapped, d.lang) : ''}
 ${kopiCard(d)}
 
 <div class="actions reveal" style="--d:.06s">
@@ -1377,6 +1380,222 @@ ${telegramSettings(d.telegram, d.lang)}
   );
 }
 
+// ---------- «Итоги месяца» (как Spotify Wrapped): полноэкранные слайды ----------
+
+const xml = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+/** Картинка 1080×1920 для сторис: тип трат, сколько потрачено и на что больше всего */
+function wrappedCardSvg(o: { title: string; emoji: string; name: string; colors: [string, string]; total: string; spentLabel: string; top: string | null; topLabel: string; username: string }) {
+  const font = '-apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif';
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1920" width="1080" height="1920">
+  <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${o.colors[0]}"/><stop offset="1" stop-color="${o.colors[1]}"/></linearGradient></defs>
+  <rect width="1080" height="1920" fill="#07060c"/>
+  <rect x="60" y="60" width="960" height="1800" rx="64" fill="url(#g)"/>
+  <circle cx="900" cy="300" r="260" fill="#fff" opacity=".08"/><circle cx="160" cy="1560" r="300" fill="#000" opacity=".12"/>
+  <text x="140" y="250" font-family="${font}" font-size="56" font-weight="600" fill="#fff" opacity=".85">${xml(o.title)}</text>
+  <text x="540" y="720" text-anchor="middle" font-size="300">${o.emoji}</text>
+  <text x="540" y="900" text-anchor="middle" font-family="${font}" font-size="92" font-weight="800" fill="#fff">${xml(o.name)}</text>
+  <text x="140" y="1180" font-family="${font}" font-size="44" fill="#fff" opacity=".75">${xml(o.spentLabel)}</text>
+  <text x="140" y="1290" font-family="${font}" font-size="120" font-weight="800" fill="#fff">${xml(o.total)}</text>
+  ${o.top ? `<text x="140" y="1420" font-family="${font}" font-size="44" fill="#fff" opacity=".75">${xml(o.topLabel)}</text>
+  <text x="140" y="1500" font-family="${font}" font-size="64" font-weight="700" fill="#fff">${xml(o.top)}</text>` : ''}
+  <text x="140" y="1760" font-family="${font}" font-size="44" font-weight="600" fill="#fff">@${xml(o.username)}</text>
+  <text x="940" y="1760" text-anchor="end" font-family="${font}" font-size="44" font-weight="700" fill="#fff">traaaack.app</text>
+</svg>`;
+}
+
+export function wrappedPage(d: { flashes: Flash[]; lang: Lang; sym: string; currency: string; username: string; w: WrappedData; canSend: boolean }) {
+  const lang = d.lang;
+  const S = tr(lang);
+  const T = wrappedText(lang);
+  const w = d.w;
+  const mIdx = Number(w.month.slice(5, 7)) - 1;
+  const monthNom = lang === 'en' ? S.months.nom[mIdx] : S.months.nom[mIdx].toLowerCase();
+  const prevIn = S.months.in[(mIdx + 11) % 12];
+  const money = (n: number) => `${fmt0(n)} ${d.sym}`;
+  const css = DASHBOARD_CSS + WRAPPED_CSS;
+  if (!w.count) {
+    return layout(
+      { title: T.title(monthNom), flashes: d.flashes, loggedIn: true, lang, extraCss: css },
+      html`${header(T.title(monthNom))}<div class="card reveal" style="text-align:center">${raw(mascot('sleep', 110, '', lang))}<p style="margin:12px 0 0">${T.empty}</p><a class="btn" href="/dashboard" style="margin-top:14px">${T.emptyBtn}</a></div>`,
+    );
+  }
+  const p = persona(w, lang);
+  const catLabel = (c: string) => categoryLabel(c, lang);
+  const wi = whatIf(w, lang, d.currency, catLabel);
+  const top = w.cats[0];
+  const num = (n: number, suffix = '') => html`<span class="wr-num" data-to="${Math.round(n)}" data-suffix="${suffix}">${fmt0(n)}${suffix}</span>`;
+  const it = (k: number, body: H | string) => html`<div class="wr-in" style="--k:${k}">${body}</div>`;
+  type Slide = { bg: [string, string]; body: H; mood?: Mood };
+  const slides: Slide[] = [];
+
+  slides.push({
+    bg: ['#4f46e5', '#4fd6c7'],
+    mood: 'wave',
+    body: html`${it(0, html`<div class="wr-kicker">${S.brand} · ${w.month.slice(0, 4)}</div>`)}
+      ${it(1, html`<h1 class="wr-h">${T.title(monthNom)}</h1>`)}
+      ${it(2, html`<p class="wr-p">${T.intro}</p>`)}
+      ${w.partial ? it(3, html`<p class="wr-small">${T.partial(w.daysInPeriod)}</p>`) : ''}
+      ${it(4, html`<span class="wr-pill">${T.start}</span>`)}`,
+  });
+
+  const diff = w.prevTotal > 0 ? Math.round(((w.total - w.prevTotal) / w.prevTotal) * 100) : null;
+  slides.push({
+    bg: ['#7c3aed', '#ec4899'],
+    mood: !w.partial && diff !== null && diff < 0 ? 'happy' : 'wink', // месяц ещё идёт — сравнивать с прошлым рано
+    body: html`${it(0, html`<p class="wr-label">${T.spent}</p>`)}
+      ${it(1, html`<div class="wr-big">${num(w.total)}<span class="wr-cur"> ${d.sym}</span></div>`)}
+      ${it(2, html`<p class="wr-p">${T.entries(w.count)}</p>`)}
+      ${w.partial ? '' : it(3, html`<p class="wr-p">${diff === null ? T.firstMonth : T.vsPrev(Math.abs(diff), diff < 0, prevIn)}</p>`)}`,
+  });
+  if (top) {
+    const pct = Math.round((top.total / w.total) * 100);
+    slides.push({
+      bg: ['#c2410c', '#f59e0b'],
+      body: html`${it(0, html`<p class="wr-label">${T.topCat}</p>`)}
+        ${it(1, html`<h2 class="wr-h">${catLabel(top.category)}</h2>`)}
+        ${it(2, html`<div class="wr-big">${num(pct, '%')}</div>`)}
+        ${it(3, html`<p class="wr-p">${T.ofAll(pct)} · ${money(top.total)}</p>`)}
+        ${it(4, html`<div class="wr-cats">${w.cats.slice(0, 5).map(
+          (c) => html`<div class="wr-cat"><span>${catLabel(c.category)}</span><i style="--w:${Math.max(3, Math.round((c.total / top.total) * 100))}%"></i><b>${fmt0(c.total)}</b></div>`,
+        )}</div>`)}`,
+    });
+  }
+
+  slides.push({
+    bg: p.colors,
+    body: html`${it(0, html`<p class="wr-label">${T.persona}</p>`)}
+      ${it(1, html`<div class="wr-emoji">${p.emoji}</div>`)}
+      ${it(2, html`<h2 class="wr-h">${p.name}</h2>`)}
+      ${it(3, html`<p class="wr-p">${p.line}</p>`)}`,
+  });
+
+  if (w.topNote) {
+    slides.push({
+      bg: ['#0f766e', '#22d3ee'],
+      mood: 'happy',
+      body: html`${it(0, html`<p class="wr-label">${T.favorite}</p>`)}
+        ${it(1, html`<h2 class="wr-h">${lang === 'en' ? `“${w.topNote.note}”` : `«${w.topNote.note}»`}</h2>`)}
+        ${it(2, html`<div class="wr-big">${num(w.topNote.n, '×')}</div>`)}
+        ${it(3, html`<p class="wr-p">${T.favTimes(w.topNote.n, money(w.topNote.total))}</p>`)}`,
+    });
+  }
+
+  if (w.bigDay) {
+    const bd = w.bigDay;
+    const dd = new Date(bd.date + 'T00:00:00Z');
+    const dateLabel = lang === 'en' ? `${S.months.nom[dd.getUTCMonth()]} ${dd.getUTCDate()}` : `${dd.getUTCDate()} ${S.months.gen[dd.getUTCMonth()]}`;
+    slides.push({
+      bg: ['#be123c', '#fb7185'],
+      mood: 'worried',
+      body: html`${it(0, html`<p class="wr-label">${T.bigDay}</p>`)}
+        ${it(1, html`<h2 class="wr-h">${dateLabel}</h2>`)}
+        ${it(2, html`<div class="wr-big">${num(bd.total)}<span class="wr-cur"> ${d.sym}</span></div>`)}
+        ${it(3, html`<p class="wr-p">${T.bigDayWhat(`${bd.note || catLabel(bd.category)} — ${money(bd.amount)}`)}</p>`)}
+        ${w.weekday ? it(4, html`<p class="wr-small">${T.weekday(T.weekdays[w.weekday.day])}</p>`) : ''}`,
+    });
+  }
+
+  if (wi) {
+    slides.push({
+      bg: ['#1d4ed8', '#a855f7'],
+      mood: 'worried',
+      body: html`${it(0, html`<p class="wr-p">${T.whatIf(wi.label, money(wi.yearly))}</p>`)}
+        ${it(1, html`<div class="wr-emoji">${wi.emoji}</div>`)}
+        ${it(2, html`<div class="wr-big">${num(wi.count, '×')}</div>`)}
+        ${it(3, html`<h2 class="wr-h wr-h-sm">${T.whatIfThing(wi.count, wi.thing)}</h2>`)}`,
+    });
+  }
+
+  slides.push({
+    bg: ['#047857', '#a3e635'],
+    mood: w.zeroDays ? 'happy' : 'wink',
+    body: w.zeroDays
+      ? html`${it(0, html`<div class="wr-big">${num(w.zeroDays)}</div>`)}
+        ${it(1, html`<h2 class="wr-h wr-h-sm">${T.zero(w.zeroDays)}</h2>`)}
+        ${w.streak > 1 ? it(2, html`<p class="wr-p">${T.streak(w.streak)}</p>`) : ''}`
+      : html`${it(0, html`<div class="wr-emoji">💸</div>`)}${it(1, html`<h2 class="wr-h wr-h-sm">${T.zeroNone}</h2>`)}`,
+  });
+
+  if (w.friends) {
+    slides.push({
+      bg: ['#a16207', '#facc15'],
+      mood: w.friends.rank === 1 ? 'happy' : 'wink',
+      body: html`${it(0, html`<div class="wr-emoji">${w.friends.rank === 1 ? '🏆' : w.friends.rank === 2 ? '🥈' : w.friends.rank === 3 ? '🥉' : '👥'}</div>`)}
+        ${it(1, html`<h2 class="wr-h wr-h-sm">${T.friends(w.friends.rank, w.friends.of)}</h2>`)}
+        ${it(2, html`<p class="wr-p">${T.friendsLine(w.friends.rank)}</p>`)}`,
+    });
+  }
+
+  if (w.subsMonthly > 0) {
+    slides.push({
+      bg: ['#312e81', '#6366f1'],
+      body: html`${it(0, html`<div class="wr-emoji">🔁</div>`)}
+        ${it(1, html`<h2 class="wr-h wr-h-sm">${T.subs(money(w.subsMonthly), money(w.subsMonthly * 12))}</h2>`)}`,
+    });
+  }
+
+  const card = wrappedCardSvg({
+    title: `${T.cardTitle(monthNom)} · ${S.brand}`,
+    emoji: p.emoji,
+    name: p.name,
+    colors: p.colors,
+    total: money(w.total),
+    spentLabel: T.cardSpent,
+    top: top ? catLabel(top.category) : null,
+    topLabel: T.cardTop,
+    username: d.username,
+  });
+  slides.push({
+    bg: ['#111827', '#4f46e5'],
+    body: html`${it(0, html`<p class="wr-p wr-outro">${T.outro}</p>`)}
+      ${it(1, html`<div class="wr-card" id="wr-card">${raw(card)}</div>`)}
+      ${it(2, html`<div class="wr-actions">
+        <button type="button" id="wr-share" hidden>${T.share}</button>
+        ${d.canSend ? html`<button type="button" id="wr-send" class="btn-tinted" disabled>${T.sendTg}</button>` : ''}
+        <p class="wr-small" id="wr-hint">${T.prep}</p>
+        <button type="button" class="btn-plain" id="wr-again">${T.again}</button>
+      </div>`)}`,
+  });
+
+  return layout(
+    {
+      title: T.title(monthNom),
+      flashes: d.flashes,
+      loggedIn: false,
+      lang,
+      bare: true,
+      extraCss: WRAPPED_CSS,
+      scripts: WRAPPED_JS,
+    },
+    html`<div class="wr" id="wr" data-month="${w.month}" data-t="${JSON.stringify({ holdSave: T.holdSave, imgFail: T.imgFail, sending: T.sending, sent: T.sent, sendFail: T.sendFail })}">
+  <div class="wr-bars">${slides.map(() => html`<i><b></b></i>`)}</div>
+  <a class="wr-close" href="/dashboard" aria-label="${T.close}">${raw(X_SVG)}</a>
+  ${slides.map(
+    (sl, i) => html`<section class="wr-slide${i === 0 ? ' on' : ''}" style="--c1:${sl.bg[0]};--c2:${sl.bg[1]}" aria-roledescription="slide">
+    <div class="wr-body">${sl.body}</div>
+    ${sl.mood ? html`<div class="wr-trek">${raw(mascot(sl.mood, 92, '', lang))}</div>` : ''}
+  </section>`,
+  )}
+  <button type="button" class="wr-tap wr-tap-prev" aria-label="‹"></button>
+  <button type="button" class="wr-tap wr-tap-next" aria-label="›"></button>
+  <div class="wr-hint">${T.tapHint}</div>
+</div>`,
+  );
+}
+
+/** Баннер на главной в первую неделю месяца: «Твой октябрь готов 🎁» */
+export function wrappedBanner(month: string, lang: Lang) {
+  const T = wrappedText(lang);
+  const S = tr(lang);
+  const idx = Number(month.slice(5, 7)) - 1;
+  const name = lang === 'en' ? S.months.nom[idx] : S.months.nom[idx].toLowerCase();
+  return html`<a class="card wr-banner reveal" href="/wrapped?m=${month}">
+  <span class="wr-banner-emoji">🎁</span>
+  <span class="grow"><b>${T.banner(name)}</b><small>${T.bannerSub}</small></span>${CHEV}
+</a>`;
+}
+
 // ---------- дашборд владельца (только на русском, как админ-панель бота) ----------
 
 export interface AdminData {
@@ -1580,6 +1799,7 @@ export function monthPage(d: { flashes: Flash[]; card: MonthCard | null; canSend
     { title: A.monthTitle, flashes: d.flashes, loggedIn: true, lang: d.lang, extraCss: DASHBOARD_CSS + css },
     html`${header(A.monthTitle, undefined, html`${A.monthSub}`)}
 <div class="mc reveal">
+  <a class="btn wr-open" href="/wrapped">${d.lang === 'en' ? '✨ Watch your month wrap-up' : '✨ Смотреть итоги месяца'}</a>
   <div class="mc-frame" id="mc-frame">${raw(monthCardSvg(d.card, d.lang))}</div>
   <button type="button" id="mc-share" hidden>${A.share}</button>
   ${d.canSend ? html`<button type="button" id="mc-send" class="btn-tinted" disabled>${A.sendTg}</button>` : ''}

@@ -8,6 +8,7 @@ import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProdu
 import { checkPassword, hashPassword, needsRehash } from './passwords';
 import { categoryId, currencySymbol, tr, langOf, type Lang } from './i18n';
 import { convert } from './money';
+import { loadWrapped, monthBounds, pickMonth } from './wrapped';
 import { SUB_PERIODS, chargeDue, insertSub, perMonth, rollForward, subColor, subsText, type Sub, type SubPeriod } from './subs';
 import { authorizeUrl, finishLogin, newLoginState, type TgIdentity, type TgLoginConfig, type TgLoginState } from './tglogin';
 import {
@@ -18,6 +19,7 @@ import {
   sendAdminReport,
   sendEveningDigests,
   sendSubReminders,
+  sendWrappedInvites,
   sendPhoto,
   sendWeeklyDigests,
   tg,
@@ -40,6 +42,7 @@ import {
   profilePage,
   settingsPage,
   subsPage,
+  wrappedPage,
   adminPage,
   type AdminData,
   type Currency,
@@ -291,7 +294,7 @@ const loginRequired = async (c: C, next: () => Promise<void>) => {
   await next();
 };
 
-for (const p of ['/dashboard', '/subs', '/subs/*', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/admin', '/api/product/*', '/api/stores']) {
+for (const p of ['/dashboard', '/subs', '/subs/*', '/wrapped', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/admin', '/api/product/*', '/api/stores']) {
   app.use(p, loginRequired);
 }
 
@@ -493,7 +496,16 @@ async function spendingOverview(db: D1Database, userId: number, recentLimit: num
 app.get('/dashboard', async (c) => {
   const user = c.get('user');
   await chargeDue(c.env.DB, periodStart('day'), user.id);
-  const [o, subs] = await Promise.all([spendingOverview(c.env.DB, user.id, 15), loadSubs(c.env.DB, user)]);
+  const today = periodStart('day');
+  // Первая неделя месяца — баннер «Итоги прошлого месяца», если было что подводить
+  const prevMonth = Number(today.slice(8, 10)) <= 7 ? monthBounds(today.slice(0, 7)) : null;
+  const [o, subs, prevCount] = await Promise.all([
+    spendingOverview(c.env.DB, user.id, 15),
+    loadSubs(c.env.DB, user),
+    prevMonth
+      ? c.env.DB.prepare('SELECT COUNT(*) AS n FROM expenses WHERE user_id = ? AND expense_date BETWEEN ? AND ?').bind(user.id, prevMonth.prevStart, prevMonth.prevEnd).first<{ n: number }>()
+      : null,
+  ]);
 
   return c.html(
     dashboardPage({
@@ -509,6 +521,7 @@ app.get('/dashboard', async (c) => {
         monthly: subs.reduce((a, x) => a + x.monthly, 0),
         next: subs[0] ? { name: subs[0].name, days: subs[0].days, date: subs[0].next_date } : null,
       },
+      wrapped: prevMonth && (prevCount?.n ?? 0) >= 3 ? prevMonth.prevStart.slice(0, 7) : null,
     }),
   );
 });
@@ -652,6 +665,29 @@ app.post('/subs/:id{[0-9]+}/delete', async (c) => {
   return c.redirect('/subs');
 });
 
+// ---------- «Итоги месяца» в духе Spotify Wrapped ----------
+
+app.get('/wrapped', async (c) => {
+  const user = c.get('user');
+  const today = periodStart('day');
+  const month = pickMonth(c.req.query('m'), today);
+  const [w, link] = await Promise.all([
+    loadWrapped(c.env.DB, user, month, today),
+    c.env.DB.prepare('SELECT 1 FROM telegram_links WHERE user_id = ?').bind(user.id).first(),
+  ]);
+  return c.html(
+    wrappedPage({
+      flashes: popFlashes(c),
+      lang: langOf(user.lang),
+      sym: symbol(user),
+      currency: user.currency in CURRENCIES ? user.currency : 'RUB',
+      username: user.username,
+      w,
+      canSend: !!c.env.TELEGRAM_BOT_TOKEN && !!link,
+    }),
+  );
+});
+
 // ---------- «Мой месяц»: картинка для сторис ----------
 
 app.get('/month', async (c) => {
@@ -712,7 +748,9 @@ app.post('/month/send', async (c) => {
   const api = botApi(token, c.env.TELEGRAM_API);
   const bot = await botUsername(api);
   const lang = uiLang(c);
-  const monthNom = tr(lang).months.nom[Number(periodStart('month').slice(5, 7)) - 1];
+  // ?m=YYYY-MM — картинка из «Итогов месяца» за прошлый месяц
+  const m = c.req.query('m');
+  const monthNom = tr(lang).months.nom[Number((m && /^\d{4}-(0[1-9]|1[0-2])$/.test(m) ? m : periodStart('month')).slice(5, 7)) - 1];
   const month = lang === 'en' ? monthNom : monthNom.toLowerCase();
   const r = await sendPhoto(
     api,
@@ -1246,7 +1284,8 @@ app.post('/auth/telegram/new', async (c) => {
 // мы проверяем подпись Telegram и входим в привязанный аккаунт без пароля.
 app.get('/tg/app', (c) => {
   const next = c.req.query('next') ?? '';
-  return c.html(tgAppPage(/^\/[a-z0-9_/-]*$/i.test(next) && !next.startsWith('//') ? next : '/dashboard', pageLang(c)));
+  // Путь внутри сайта, можно с простыми параметрами (/wrapped?m=2026-10)
+  return c.html(tgAppPage(/^\/[a-z0-9_/-]*(\?[a-z0-9_=&-]*)?$/i.test(next) && !next.startsWith('//') ? next : '/dashboard', pageLang(c)));
 });
 
 app.post('/tg/auth', async (c) => {
@@ -1621,6 +1660,8 @@ export default {
       ctx.waitUntil(
         chargeDue(env.DB, periodStart('day')).then((charged) => (d ? sendSubReminders(d, charged) : undefined)),
       );
+      // Первое число: приглашение посмотреть «Итоги прошлого месяца»
+      if (d && periodStart('day').endsWith('-01')) ctx.waitUntil(sendWrappedInvites(d));
     }
     if (!d) return;
     if (event.cron === EVENING_CRON) ctx.waitUntil(sendEveningDigests(d));

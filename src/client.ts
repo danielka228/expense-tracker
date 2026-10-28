@@ -802,3 +802,94 @@ export const ADMIN_JS = `
   });
 })();
 `;
+
+// «Итоги месяца»: слайды листаются сами, касание справа — дальше, слева — назад; цифры докручиваются;
+// на последнем слайде картинка для сторис: поделиться или отправить в чат с ботом
+export const WRAPPED_JS = `
+(function () {
+  var root = document.getElementById('wr');
+  if (!root) return;
+  var slides = [].slice.call(root.querySelectorAll('.wr-slide'));
+  var bars = [].slice.call(root.querySelectorAll('.wr-bars i'));
+  var t = JSON.parse(root.getAttribute('data-t'));
+  var i = 0, timer = null, DUR = 6500;
+  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function fmt(n, suf) { return String(Math.round(n)).replace(/\\B(?=(\\d{3})+(?!\\d))/g, ' ') + suf; }
+  function count(sl) {
+    sl.querySelectorAll('.wr-num').forEach(function (el) {
+      var to = Number(el.getAttribute('data-to')), suf = el.getAttribute('data-suffix') || '';
+      if (reduce) { el.textContent = fmt(to, suf); return; }
+      var start = performance.now() + 300;
+      el.textContent = fmt(0, suf);
+      (function step(now) {
+        var p = Math.max(0, Math.min(1, (now - start) / 1300)); p = 1 - Math.pow(1 - p, 3);
+        el.textContent = fmt(to * p, suf);
+        if (p < 1) requestAnimationFrame(step);
+      })(performance.now());
+    });
+  }
+  function go(n) {
+    if (n < 0 || n >= slides.length) return;
+    i = n;
+    slides.forEach(function (s, k) { s.classList.toggle('on', k === i); });
+    bars.forEach(function (b, k) { b.className = k < i ? 'done' : ''; });
+    void bars[i].offsetWidth;
+    var last = i === slides.length - 1;
+    bars[i].className = last ? 'done' : 'cur';
+    bars[i].style.setProperty('--dur', DUR + 'ms');
+    root.classList.toggle('last', last);
+    count(slides[i]);
+    clearTimeout(timer);
+    if (!last) timer = setTimeout(function () { go(i + 1); }, DUR);
+  }
+  function tap(n) { if (navigator.vibrate) navigator.vibrate(6); go(n); }
+  root.querySelector('.wr-tap-prev').addEventListener('click', function () { tap(i - 1); });
+  root.querySelector('.wr-tap-next').addEventListener('click', function () { tap(i + 1); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowRight' || e.key === ' ') go(i + 1);
+    else if (e.key === 'ArrowLeft') go(i - 1);
+    else if (e.key === 'Escape') location.href = '/dashboard';
+  });
+  var again = document.getElementById('wr-again');
+  if (again) again.addEventListener('click', function () { go(0); });
+  setTimeout(function () { var h = root.querySelector('.wr-hint'); if (h) h.classList.add('gone'); }, 4000);
+  go(0);
+
+  // Картинка для сторис из SVG через canvas
+  var frame = document.getElementById('wr-card'), hint = document.getElementById('wr-hint');
+  var shareBtn = document.getElementById('wr-share'), sendBtn = document.getElementById('wr-send');
+  if (!frame) return;
+  var svg = frame.querySelector('svg'), blob = null, im = new Image();
+  function fail() { hint.textContent = t.imgFail; }
+  im.onload = function () {
+    var c = document.createElement('canvas'); c.width = 1080; c.height = 1920;
+    try {
+      c.getContext('2d').drawImage(im, 0, 0, 1080, 1920);
+      c.toBlob(function (b) {
+        if (!b) return fail();
+        blob = b;
+        var img = document.createElement('img'); img.src = URL.createObjectURL(b); img.alt = '';
+        frame.replaceChild(img, svg);
+        var file = new File([b], 'spendtracker-wrapped.jpg', { type: 'image/jpeg' });
+        if (navigator.canShare && navigator.canShare({ files: [file] })) {
+          shareBtn.hidden = false;
+          shareBtn.onclick = function () { navigator.share({ files: [file] }).catch(function () {}); };
+        }
+        if (sendBtn) sendBtn.disabled = false;
+        hint.textContent = t.holdSave;
+      }, 'image/jpeg', 0.9);
+    } catch (e) { fail(); }
+  };
+  im.onerror = fail;
+  im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(new XMLSerializer().serializeToString(svg));
+  if (sendBtn) sendBtn.onclick = function () {
+    if (!blob) return;
+    sendBtn.disabled = true; hint.textContent = t.sending;
+    fetch('/month/send?m=' + root.getAttribute('data-month'), { method: 'POST', headers: { 'Content-Type': 'image/jpeg' }, body: blob, credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) { hint.textContent = j.ok ? t.sent : t.sendFail; })
+      .catch(function () { hint.textContent = t.sendFail; })
+      .then(function () { sendBtn.disabled = false; });
+  };
+})();
+`;
