@@ -254,7 +254,14 @@ export const VOICE_JS = `
     actx = null;
   }
 
+  // На телефонах (Safari, мини-приложение Telegram, Chrome на Android) микрофон нельзя делить между
+  // распознаванием речи и эквалайзером: отдельный поток getUserMedia забирает его себе, и со второго
+  // нажатия распознавание больше не слышит звук — помогала только перезагрузка. Поэтому там эквалайзер
+  // рисуется по событиям распознавания, а настоящий звук берём только на компьютере.
+  var sharedMic = !(navigator.maxTouchPoints > 0 && window.matchMedia && matchMedia('(pointer: coarse)').matches);
+
   function startMeter() {
+    if (!sharedMic) return;
     var AC = window.AudioContext || window.webkitAudioContext;
     if (!AC || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return;
     try { actx = new AC(); if (actx.resume) actx.resume(); } catch (e) { return; }
@@ -303,6 +310,11 @@ export const VOICE_JS = `
   }
 
   function start() {
+    // Прошлое распознавание могло не успеть закончиться (быстрое повторное нажатие) — гасим его,
+    // иначе браузер не даст запустить новое
+    var old = rec; rec = null;
+    if (old) { try { old.abort(); } catch (e) {} }
+    cleanup();
     finalText = ''; interim = ''; errorCode = ''; retried = false; speaking = 0;
     renderText();
     setStop(T.done, false);
