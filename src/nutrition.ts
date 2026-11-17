@@ -56,8 +56,8 @@ nutritionRoutes.post('/analyze', async c => {
   const bytes = new Uint8Array(await file.arrayBuffer());
   if (bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) return c.json({ error: 'bad_image' }, 400);
   const context = typeof f.context === 'string' ? f.context : '';
-  if (context.length > 3000 || !['food','label'].includes(String(f.kind))) return c.json({ error: 'invalid' }, 400);
+  if (context.length > 3000) return c.json({ error: 'invalid' }, 400);
   if (!(await takeAiQuota(c.env.DB, c.get('user').id))) return c.json({ error: 'limit' }, 429);
-  const guess = await recognizeFood(c.env.AI, bytes, String(f.kind), context, langOf(c.get('user').lang));
+  const guess = await recognizeFood(c.env.AI, bytes, context, langOf(c.get('user').lang));
   return guess ? c.json({ ok: true, guess }) : c.json({ error: 'unknown' }, 422);
 });

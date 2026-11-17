@@ -88,13 +88,14 @@
         if (version !== imageVersion) return;
         if (!blob || blob.size > 3 * 1024 * 1024) throw new Error(errors.too_large);
         jpeg = blob; if (previewUrl) URL.revokeObjectURL(previewUrl); previewUrl = URL.createObjectURL(blob); preview.src = previewUrl; preview.hidden = false;
+        await analyzePhoto();
       } catch (e) { show(e.message || errors.bad_image); }
       finally { analyze.disabled = false; }
     });
-    analyze.addEventListener('click', async () => {
+    async function analyzePhoto() {
       if (!jpeg) { show(t('Сначала выбери фото. Если HEIC не открывается, используй JPEG или снимок экрана.', 'Choose a photo first. If HEIC cannot open, use JPEG or a screenshot.')); return; }
       const version = imageVersion;
-      const body = new FormData(); body.set('photo', jpeg, 'food.jpg'); body.set('kind', document.getElementById('food-photo-kind').value);
+      const body = new FormData(); body.set('photo', jpeg, 'food.jpg');
       body.set('context', (questions.join('\n') + '\n' + document.getElementById('food-context').value + '\n' + t('Указанный вес: ', 'Entered weight: ') + field('grams').value + ' g').slice(0,3000));
       analyze.disabled = true; photo.disabled = true; result.textContent = t('Изучаю фото…','Analyzing photo…');
       try {
@@ -109,7 +110,8 @@
         calculation();
       } catch (e) { result.textContent = e.message; }
       finally { analyze.disabled = false; photo.disabled = false; }
-    });
+    }
+    analyze.addEventListener('click', analyzePhoto);
   }
   calculation();
 })();

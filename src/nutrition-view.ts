@@ -31,9 +31,8 @@ export function nutritionPage(d: { entries: Food[]; date: string; lang: Lang; ai
 <input type="hidden" name="id" value="">
 <label>${t('Тип записи','Entry type')}<select name="kind"><option value="meal">${t('Приём пищи','Meal')}</option><option value="purchase">${t('Покупка продукта','Food purchase')}</option></select></label>
 <details class="food-photo"><summary>${t('Заполнить по фото с ИИ','Fill from a photo with AI')}</summary>
-<p>${t('Сфотографируй еду или таблицу пищевой ценности. ИИ может ошибаться: проверь оценку и вес перед сохранением.','Photograph food or its nutrition label. AI can make mistakes: check the estimate and weight before saving.')}</p>
+<p>${t('Выбери фото — ИИ сам распознает еду или этикетку и предложит калории и вес. Проверь примерную оценку перед сохранением.','Choose a photo — AI automatically recognizes food or a nutrition label and suggests calories and weight. Review the approximate estimate before saving.')}</p>
 ${d.ai ? html`
-<label>${t('Что на фото','Photo type')}<select id="food-photo-kind"><option value="food">${t('Еда на тарелке','Food on a plate')}</option><option value="label">${t('Этикетка: ккал на 100 г','Label: kcal per 100 g')}</option></select></label>
 <label>${t('Фото еды или этикетки','Food or label photo')}<input id="food-photo" type="file" accept="image/*"></label>
 <img id="food-preview" alt="${t('Выбранное фото','Selected photo')}" hidden>
 <label>${t('Состав, вес и ответы на вопросы ИИ','Ingredients, weight and answers to AI questions')}<textarea id="food-context" maxlength="2200" rows="3" placeholder="${t('Например: 150 г риса, курица, чайная ложка масла','For example: 150 g rice, chicken, one teaspoon of oil')}"></textarea></label>
