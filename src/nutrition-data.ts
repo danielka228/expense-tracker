@@ -1,7 +1,7 @@
 export const MEALS = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 export interface Food {
   id: number; name: string; grams: number; kcal_per_100: number;
-  meal: typeof MEALS[number]; entry_date: string; kind: 'meal' | 'purchase'; expense_id: number | null;
+  meal: typeof MEALS[number]; entry_date: string; kind: 'meal' | 'purchase'; expense_id: number | null; source?: 'manual' | 'estimate' | 'label';
 }
 export function foodNumber(value: unknown, max: number, zero = false): number | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
@@ -20,10 +20,11 @@ export function readFood(f: Record<string, unknown>) {
   const kcal = foodNumber(f.kcal_per_100, 1000, true);
   const meal = MEALS.find(m => m === f.meal);
   if (!name || name.length > 120 || grams === null || kcal === null || !meal || !validDate(f.entry_date) || !['meal','purchase'].includes(String(f.kind))) return null;
-  return { name, grams, kcal, meal, date: f.entry_date, kind: String(f.kind) };
+  const source = ['estimate', 'label'].includes(String(f.source)) ? String(f.source) : 'manual';
+  return { name, grams, kcal, meal, date: f.entry_date, kind: String(f.kind), source };
 }
 export interface FoodGuess {
-  name: string; grams: number | null; kcal_per_100: number | null; questions: string[]; note: string;
+  name: string; grams: number | null; kcal_per_100: number | null; questions: string[]; note: string; source: 'estimate' | 'label';
 }
 const clean = (x: unknown, max: number) => typeof x === 'string' ? x.replace(/[<>\u0000-\u001f]/g, ' ').trim().slice(0, max) : '';
 export function parseFoodGuess(raw: string): FoodGuess | null {
@@ -35,6 +36,6 @@ export function parseFoodGuess(raw: string): FoodGuess | null {
     const name = clean(j.name, 120);
     const questions = Array.isArray(j.questions) ? j.questions.map((q: unknown) => clean(q, 250)).filter(Boolean).slice(0, 4) : [];
     if (!name && !questions.length) return null;
-    return { name, grams: foodNumber(j.grams, 100000), kcal_per_100: foodNumber(j.kcal_per_100, 1000, true), questions, note: clean(j.note, 500) };
+    return { name, source: j.source === 'label' ? 'label' : 'estimate', grams: foodNumber(j.grams, 100000), kcal_per_100: foodNumber(j.kcal_per_100, 1000, true), questions, note: clean(j.note, 500) };
   } catch { return null; }
 }

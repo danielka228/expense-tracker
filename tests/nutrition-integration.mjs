@@ -32,6 +32,12 @@ assert.ok((await (await get('/nutrition?date=2026-11-17',a)).text()).includes('<
 assert.equal((await post('/nutrition/save',{...food,kind:'purchase',name:'Integration purchase',grams:'1000',amount:'199'},a)).status,200);
 page = await (await get('/nutrition?date=2026-11-17',a)).text(); assert.ok(page.includes('<strong>50</strong>'));
 assert.ok((await (await get('/dashboard?view=expenses',a)).text()).includes('Integration purchase'));
+const repeat = {...food, name:'Retry-safe purchase', kind:'purchase', amount:'77', request_key:crypto.randomUUID()};
+assert.equal((await post('/nutrition/save',repeat,a)).status,200);
+assert.equal((await post('/nutrition/save',repeat,a)).status,200);
+assert.equal((await post('/nutrition/save',{...repeat,amount:'88'},a)).status,409);
+const repeatedPage = await (await get('/nutrition?date=2026-11-17',a)).text();
+assert.equal((repeatedPage.match(/<strong>Retry-safe purchase<\/strong>/g) || []).length,1);
 assert.equal((await post('/nutrition/analyze',{},a)).status,503);
 assert.equal((await get('/nutrition?date=2026-02-30',a)).status,400);
 assert.equal((await fetch(base+'/nutrition/save',{method:'POST',headers:{cookie:a,Origin:'https://evil.example'},body:new URLSearchParams(food)})).status,403);

@@ -7,7 +7,9 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc",
     "db:migrate": "wrangler d1 migrations apply expense-tracker --remote",
-    "db:migrate:local": "wrangler d1 migrations apply expense-tracker --local"
+    "db:migrate:local": "wrangler d1 migrations apply expense-tracker --local",
+    "test:nutrition": "node --test tests/nutrition.test.mjs",
+    "test:nutrition:browser": "node tests/nutrition-browser.cjs"
   },
   "repository": {
     "type": "git",
@@ -24,6 +26,8 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20261018.1",
     "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.65.1",
     "typescript": "^7.0.2",
     "wrangler": "^4.151.1"
   },

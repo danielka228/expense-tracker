@@ -26,3 +26,11 @@ test('untrusted AI answers preserve missing values and clarification questions',
   assert.equal(parseFoodGuess('{"name":"Water","kcal_per_100":0}').kcal_per_100,0);
   assert.equal(parseFoodGuess('{"name":"Oil","kcal_per_100":9999}').kcal_per_100,null);
 });
+
+test('AI provenance is conservative and saved entries preserve it', () => {
+  assert.equal(parseFoodGuess('{"name":"Rice","source":"invented"}').source, 'estimate');
+  assert.equal(parseFoodGuess('{"name":"Milk","source":"label"}').source, 'label');
+  const entry = {name:'Rice', grams:'100', kcal_per_100:'130', meal:'lunch',kind:'meal',entry_date:'2026-11-17',source:'estimate'};
+  assert.equal(readFood(entry).source,'estimate');
+  assert.equal(readFood({...entry, source:'unknown'}).source,'manual');
+});

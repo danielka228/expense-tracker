@@ -30,6 +30,7 @@
     "preview": {
       "name": "expense-tracker-preview",
       "vars": { "DEMO": "1" },
+      "ai": { "binding": "AI" },
       "d1_databases": [
         {
           "binding": "DB",
