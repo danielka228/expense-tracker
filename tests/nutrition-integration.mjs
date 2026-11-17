@@ -1,0 +1,43 @@
+// Run against an isolated local Worker (no production data or remote AI).
+import assert from 'node:assert/strict';
+const base = process.env.TEST_URL || 'http://localhost:8787';
+assert.ok(['localhost','127.0.0.1'].includes(new URL(base).hostname), 'Integration checks require an isolated local Worker');
+const post = (path, values, cookie = '') => fetch(base + path, { method:'POST', body: new URLSearchParams(values), headers:{ cookie }, redirect:'manual' });
+const get = (path,cookie='') => fetch(base + path,{headers:{cookie},redirect:'manual'});
+async function account(suffix) {
+  const r = await post('/register',{username:'nutrition_'+Date.now()+suffix,password:'test-nutrition-password'});
+  assert.equal(r.status,302);
+  return r.headers.getSetCookie().map(c=>c.split(';')[0]).join('; ');
+}
+const a = await account('a'), b = await account('b');
+assert.equal((await get('/nutrition')).status,302);
+assert.equal((await post('/nutrition/save',{})).status,302);
+let r = await post('/settings',{action:'change_mode',app_mode:'nutrition'},a); assert.equal(r.status,302);
+assert.equal((await get('/dashboard',a)).headers.get('location'),'/nutrition');
+assert.equal((await get('/dashboard?view=expenses',a)).status,200);
+assert.equal((await get('/dashboard',b)).status,200);
+assert.equal((await post('/settings',{action:'change_mode',app_mode:'bad'},a)).status,400);
+const food = { name:'Integration rice',grams:'250',kcal_per_100:'50',meal:'lunch',kind:'meal',entry_date:'2026-11-17' };
+assert.equal((await post('/nutrition/save',{...food,grams:'-1'},a)).status,400);
+assert.equal((await post('/nutrition/save',food,a)).status,200);
+let page = await (await get('/nutrition?date=2026-11-17',a)).text();
+assert.ok(page.includes('Integration rice')); assert.ok(page.includes('<strong>125</strong>'));
+assert.ok(!(await (await get('/nutrition?date=2026-11-17',b)).text()).includes('Integration rice'));
+const id = page.match(/data-delete="(\d+)"/)[1];
+assert.equal((await post('/nutrition/save',{...food,id,name:'stolen'},b)).status,404);
+await post('/nutrition/delete/'+id,{},b);
+assert.ok((await (await get('/nutrition?date=2026-11-17',a)).text()).includes('Integration rice'));
+assert.equal((await post('/nutrition/save',{...food,id,grams:'100'},a)).status,200);
+assert.ok((await (await get('/nutrition?date=2026-11-17',a)).text()).includes('<strong>50</strong>'));
+assert.equal((await post('/nutrition/save',{...food,kind:'purchase',name:'Integration purchase',grams:'1000',amount:'199'},a)).status,200);
+page = await (await get('/nutrition?date=2026-11-17',a)).text(); assert.ok(page.includes('<strong>50</strong>'));
+assert.ok((await (await get('/dashboard?view=expenses',a)).text()).includes('Integration purchase'));
+assert.equal((await post('/nutrition/analyze',{},a)).status,503);
+assert.equal((await get('/nutrition?date=2026-02-30',a)).status,400);
+assert.equal((await fetch(base+'/nutrition/save',{method:'POST',headers:{cookie:a,Origin:'https://evil.example'},body:new URLSearchParams(food)})).status,403);
+assert.equal((await fetch(base+'/nutrition/save',{method:'POST',headers:{cookie:a},body:'x'.repeat(4*1024*1024+1)})).status,413);
+await post('/nutrition/delete/'+id,{},a);
+assert.ok(!(await (await get('/nutrition?date=2026-11-17',a)).text()).includes('Integration rice'));
+await post('/settings',{action:'change_mode',app_mode:'expenses'},a);
+assert.equal((await get('/dashboard',a)).status,200);
+console.log('PASS: auth, mode persistence, validation, calories, user isolation, edit/delete, purchase expense, AI unavailable, CSRF and upload size');

@@ -44,6 +44,7 @@ interface LayoutOpts {
   loggedIn: boolean;
   lang?: Lang;
   activeTab?: Tab;
+  nutrition?: boolean;
   center?: boolean;
   bare?: boolean; // без общей обёртки (страница-презентация)
   extraCss?: string;
@@ -57,7 +58,7 @@ export function layout(o: LayoutOpts, content: H) {
   const tabs = (Object.keys(TAB_ICONS) as Tab[]).map(
     (t) => html`
     <a class="tab ${o.activeTab === t ? 'active' : ''}" href="/${t}">
-      <span class="icon">${raw(TAB_ICONS[t])}</span><span>${tabLabels[t]}</span>
+      <span class="icon">${raw(TAB_ICONS[t])}</span><span>${t === 'dashboard' && o.nutrition ? (o.lang === 'en' ? 'Nutrition' : 'Питание') : tabLabels[t]}</span>
     </a>`,
   );
   return html`<!DOCTYPE html>
@@ -1318,6 +1319,7 @@ export function settingsPage(d: {
   telegram: { linked: boolean; tgUsername: string | null; bot: string | null; login: boolean };
   currencies: Record<string, Currency>;
   currentCurrency: string;
+  appMode?: 'expenses' | 'nutrition';
   lang: Lang;
   owner?: boolean; // владелец сайта: строка «Дашборд пользователей»
 }) {
@@ -1330,6 +1332,17 @@ export function settingsPage(d: {
     html`${header(S.nav.settings, undefined, html`${A.setLoginLabel.replace('%s', d.username)}`)}
 
 <div class="list reveal" style="--inset:58px">
+  <form method="POST" style="margin:0">
+    <input type="hidden" name="action" value="change_mode">
+    <label class="row" style="margin:0;font-size:17px;color:var(--text)">
+      ${sq('bolt', '#30d158')}<span class="grow">${d.lang === 'en' ? 'App mode' : 'Режим приложения'}</span>${CHEV}
+      <select name="app_mode" aria-label="${d.lang === 'en' ? 'App mode' : 'Режим приложения'}" onchange="this.form.submit()">
+        <option value="expenses" ${d.appMode !== 'nutrition' ? 'selected' : ''}>${d.lang === 'en' ? 'Expenses' : 'Расходы'}</option>
+        <option value="nutrition" ${d.appMode === 'nutrition' ? 'selected' : ''}>${d.lang === 'en' ? 'Nutrition' : 'Питание'}</option>
+      </select>
+    </label>
+    <noscript><button type="submit">${A.save}</button></noscript>
+  </form>
   <form method="POST" style="margin:0">
     <input type="hidden" name="action" value="change_currency">
     <label class="row" style="margin:0; font-size:17px; color:var(--text)">
