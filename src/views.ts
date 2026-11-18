@@ -445,8 +445,8 @@ type IconName = keyof typeof ICONS;
 
 // Цвет плитки и цвет сегмента на диаграмме
 const COLORS: Record<string, string> = {
-  blue: '#5f8cf7', green: '#2fc487', orange: '#f68a41', pink: '#ef6a9c',
-  purple: '#9a72f7', teal: '#30c2b4', yellow: '#efb73d', red: '#ec5a70', slate: '#7d879c',
+  blue: '#7486ad', green: '#6fa88b', orange: '#b98d67', pink: '#ad7c96',
+  purple: '#927bb5', teal: '#689e99', yellow: '#b19c60', red: '#b67773', slate: '#828994',
 };
 
 const ICO_RULES: [string[], string, IconName][] = [
@@ -738,6 +738,7 @@ ${kopiCard(d)}
 
 <div class="card reveal" style="--d:.1s">
   <form method="POST" id="add-form" data-today="${d.today}" data-sym="${d.sym}" autocomplete="off">
+    <div class="expense-form-head"><div><h2>${d.lang === 'en' ? 'New expense' : 'Новая трата'}</h2><p>${d.lang === 'en' ? 'Add it now, the rest is optional.' : 'Добавь сумму, остальное можно заполнить позже.'}</p></div></div>
     <div class="amount-wrap"><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0" required aria-label="${d.lang === 'en' ? 'Amount' : 'Сумма'}"><span class="amount-cur">${d.sym}</span></div>
     <div class="form-rows">
       <label class="form-row"><span>${A.category}</span><select name="category">${catOptions()}</select></label>
