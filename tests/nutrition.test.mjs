@@ -1,6 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { build } from 'esbuild';
 import { calories, readFood, parseFoodGuess, validDate, foodNumber } from '../src/nutrition-data.ts';
+const aiBundle = await build({
+  stdin: { contents: "export { recognizeFood } from './src/nutrition-ai';", resolveDir: process.cwd() },
+  bundle: true, platform: 'node', format: 'esm', outfile: 'nutrition-ai-test.mjs', write: false,
+});
+const { recognizeFood } = await import(`data:text/javascript;base64,${Buffer.from(aiBundle.outputFiles[0].contents).toString('base64')}`);
 
 test('scales calories by consumed grams including zero-calorie foods', () => {
   assert.equal(calories(250, 50), 125);
@@ -41,4 +47,23 @@ test('rejects non-food classification and fails closed when classification is mi
   assert.equal(guess.name, '');
   assert.deepEqual(guess.questions, []);
   assert.equal(parseFoodGuess('{"name":"Карточка","questions":["Сколько граммов?"]}'), null);
+});
+
+test('nutrition image analysis stops before estimation when the photo is not food', async () => {
+  let calls = 0;
+  const result = await recognizeFood({ run: async () => { calls++; return { response: '{"is_food":false}' }; } }, new Uint8Array([1,2,3]), '', 'ru');
+  assert.equal(calls, 1);
+  assert.equal(result.is_food, false);
+  assert.equal(result.name, '');
+});
+
+test('confirmed food gets a separate calorie analysis', async () => {
+  let calls = 0;
+  const result = await recognizeFood({ run: async (_model, input) => {
+    calls++;
+    return { response: calls === 1 ? '{"is_food":true}' : '{"is_food":true,"name":"Йогурт","grams":150,"kcal_per_100":62,"questions":[],"note":"С этикетки","source":"label"}' };
+  } }, new Uint8Array([1,2,3]), '', 'ru');
+  assert.equal(calls, 2);
+  assert.equal(result.is_food, true);
+  assert.equal(result.kcal_per_100, 62);
 });

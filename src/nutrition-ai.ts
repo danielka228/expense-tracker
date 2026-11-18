@@ -16,11 +16,13 @@ export async function recognizeFood(ai: Runner, jpeg: Uint8Array, context: strin
   let timer: ReturnType<typeof setTimeout> | undefined;
   const image = { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${toBase64(jpeg)}` } };
   const run = async (prompt: string, maxTokens: number) => {
-    const result = await Promise.race([
-      ai.run(MODEL, { messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, image] }], max_tokens: maxTokens, temperature: 0.1 }),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Food AI timeout')), 20000); }),
-    ]) as { response?: unknown; choices?: { message?: { content?: unknown } }[] };
-    return result?.response ?? result?.choices?.[0]?.message?.content;
+    try {
+      const result = await Promise.race([
+        ai.run(MODEL, { messages: [{ role: 'user', content: [{ type: 'text', text: prompt }, image] }], max_tokens: maxTokens, temperature: 0.1 }),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Food AI timeout')), 20000); }),
+      ]) as { response?: unknown; choices?: { message?: { content?: unknown } }[] };
+      return result?.response ?? result?.choices?.[0]?.message?.content;
+    } finally { if (timer) clearTimeout(timer); timer = undefined; }
   };
   try {
     const check = await run(`Classify the main subject of this image for a calorie-tracking app. Is it clearly edible food or a drink, a prepared meal, or a nutrition label on food/drink packaging? Cosmetics and makeup (including Maybelline products, mascara, lipstick, skincare), medicine, electronics, household goods, and unrelated objects are NOT food. A package or a red/white box alone is not evidence of food. If unsure, classify it as not food. Do not guess a product name. Return only JSON: {"is_food":true} or {"is_food":false}.`, 80);
