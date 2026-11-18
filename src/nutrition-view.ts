@@ -11,8 +11,8 @@ export function nutritionPage(d: { entries: Food[]; date: string; lang: Lang; ai
   const total = eaten.reduce((sum, e) => sum + calories(e.grams, e.kcal_per_100), 0);
   const adjacent = (delta: number) => new Date(Date.parse(d.date + 'T12:00:00Z') + delta * 86400000).toISOString().slice(0,10);
   const row = (e: Food) => html`<article class="food-row">
-    <div><strong>${e.name}</strong>${e.source === 'estimate' ? html`<span class="food-badge">${t('≈ оценка ИИ','≈ AI estimate')}</span>` : e.source === 'label' ? html`<span class="food-badge">${t('С этикетки','From label')}</span>` : e.source === 'catalog' ? html`<span class="food-badge">${t('Из каталога Open Food Facts','From Open Food Facts catalog')}</span>` : ''}<p>${e.grams} ${t('г','g')} · ${e.kcal_per_100} ${t('ккал / 100 г','kcal / 100 g')}${e.kind === 'purchase' && e.price !== null && e.price !== undefined ? html` · ${e.price} ${d.currency} ${t('в расходах','in expenses')}` : ''}</p>
-      ${e.kind === 'meal' ? html`<b>${calories(e.grams, e.kcal_per_100)} ${t('ккал','kcal')}</b>` : ''}</div>
+    <div><strong>${e.name}</strong>${e.source === 'estimate' ? html`<span class="food-badge">${t('≈ оценка ИИ','≈ AI estimate')}</span>` : e.source === 'label' ? html`<span class="food-badge">${t('С этикетки','From label')}</span>` : e.source === 'catalog' ? html`<span class="food-badge">${t('Из каталога Open Food Facts','From Open Food Facts catalog')}</span>` : ''}<p>${e.kind === 'purchase' ? t('Упаковка','Package') : t('Порция','Portion')}: ${e.grams} ${t('г','g')} · ${e.kcal_per_100} ${t('ккал / 100 г','kcal / 100 g')}${e.kind === 'purchase' && e.price !== null && e.price !== undefined ? html` · ${e.price} ${d.currency} ${t('в расходах','in expenses')}` : ''}</p>
+      <b>${calories(e.grams, e.kcal_per_100)} ${e.kind === 'purchase' ? t('ккал во всей покупке','kcal in the whole package') : t('ккал в порции','kcal in portion')}</b></div>
     <div class="food-actions">
       ${e.kind === 'purchase' ? html`<button type="button" class="btn-plain" data-eat="${JSON.stringify(e)}">${t('Записать порцию','Log a portion')}</button>` : ''}
       <button type="button" class="btn-plain" data-edit="${JSON.stringify(e)}">${t('Изменить','Edit')}</button>
@@ -45,8 +45,11 @@ ${d.ai ? html`
 <div id="food-ai-result" role="status" aria-live="polite"></div>` : html`<p>${t('Распознавание сейчас недоступно. Можно заполнить данные вручную.','Photo analysis is unavailable. You can enter the values manually.')}</p>`}
 </details>
 <label>${t('Продукт или блюдо','Food or dish')}<input name="name" required maxlength="120" autocomplete="off"></label>
-<div class="food-grid"><label>${t('Вес, г','Weight, g')}<input name="grams" type="number" min="0.1" max="100000" step="0.1" required inputmode="decimal"></label>
+<div class="food-grid"><label><span id="food-grams-label">${t('Вес съеденной порции, г','Eaten portion weight, g')}</span><input name="grams" type="number" min="0.1" max="100000" step="0.1" required inputmode="decimal"></label>
 <label>${t('Ккал на 100 г','Kcal per 100 g')}<input name="kcal_per_100" type="number" min="0" max="1000" step="0.1" required inputmode="decimal"></label></div>
+<label>${t('Вес всей упаковки, г (если известен)','Whole package weight, g (if known)')}<input name="package_grams" type="number" min="0.1" max="100000" step="0.1" inputmode="decimal"></label>
+<p id="food-package-total" class="food-badge" role="status" aria-live="polite" hidden></p>
+<button type="button" class="btn-plain" id="food-use-package" hidden>${t('Внести вес всей упаковки как съеденную порцию','Use the whole package as the eaten portion')}</button>
 <p id="food-source" class="food-badge" hidden></p>
 <p id="food-calculation" aria-live="polite">${t('Укажи вес и калорийность.','Enter weight and calories.')}</p>
 <label>${t('Приём пищи','Meal')}<select name="meal">${MEALS.map((m,i) => html`<option value="${m}">${names[i]}</option>`)}</select></label>

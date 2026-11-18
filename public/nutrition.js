@@ -19,8 +19,18 @@
   const show = text => { status.textContent = text; };
   function calculation() {
     const grams = Number(field('grams').value), kcal = Number(field('kcal_per_100').value);
+    const buying = field('kind').value === 'purchase';
+    document.getElementById('food-grams-label').textContent = buying ? t('Вес всей покупки, г','Purchased product weight, g') : t('Вес съеденной порции, г','Eaten portion weight, g');
     document.getElementById('food-calculation').textContent = field('grams').value && field('kcal_per_100').value && grams > 0 && kcal >= 0
-      ? `${Math.round(grams * kcal / 10) / 10} ${t('ккал', 'kcal')} · ${t('в указанном весе', 'in this weight')}` : t('Укажи вес и калорийность.', 'Enter weight and calories.');
+      ? `${Math.round(grams * kcal / 10) / 10} ${t('ккал', 'kcal')} · ${buying ? t('во всей покупке','in the full purchase') : t('в этой порции', 'in this portion')}` : t('Укажи вес и калорийность.', 'Enter weight and calories.');
+    const pack = Number(field('package_grams').value), packageTotal = document.getElementById('food-package-total'), usePackage = document.getElementById('food-use-package');
+    const hasPackage = field('package_grams').value && pack > 0 && pack <= 100000 && field('kcal_per_100').value && kcal >= 0;
+    packageTotal.hidden = !hasPackage; usePackage.hidden = !hasPackage;
+    if (hasPackage) {
+      const total = Math.round(pack * kcal / 100 * 10) / 10;
+      packageTotal.textContent = t(`Во всей упаковке: ${total} ккал (${pack} г).`, `Whole package: ${total} kcal (${pack} g).`);
+      usePackage.textContent = t(`Внести ${pack} г как съеденную порцию`, `Use ${pack} g as the eaten portion`);
+    }
     document.getElementById('food-price').hidden = field('kind').value !== 'purchase';
     field('amount').disabled = document.getElementById('food-price').hidden;
     const source = document.getElementById('food-source');
@@ -151,21 +161,23 @@
       controller?.abort(); const current = ++version;
       const active = new AbortController(); controller = active;
       const timer = setTimeout(() => active.abort(), 55000);
-      const snapshot = Object.fromEntries(['name','grams','kcal_per_100'].map(key => [key, field(key).value]));
+      const snapshot = Object.fromEntries(['name','grams','package_grams','kcal_per_100'].map(key => [key, field(key).value]));
       const answers = questions.map((q,i) => ({ question:q, answer:questionsBox.querySelectorAll('input')[i]?.value || '' })).filter(q=>q.answer.trim());
       const context = JSON.stringify({ previousAnswers:history, answers, details:document.getElementById('food-context').value,
-        grams: snapshot.grams !== autoValues.grams ? snapshot.grams : '', entryType:field('kind').value });
+        grams: snapshot.grams !== autoValues.grams ? snapshot.grams : '', packageGrams: snapshot.package_grams !== autoValues.package_grams ? snapshot.package_grams : '', entryType:field('kind').value });
       const body = new FormData(); body.set('photo', jpeg, 'food.jpg'); body.set('context', context);
       setBusy(true); result.textContent = t('Распознаю еду и оцениваю порцию…','Identifying food and estimating the portion…');
       try {
         const { guess, matches = [], visualMatch = null } = await request('/nutrition/analyze', body, active.signal);
         if (current !== version) return;
         history = [...history, ...answers].slice(-4);
-        const suggested = { name:guess.name || '', grams:guess.grams === null ? '' : String(Math.round(guess.grams*10)/10), kcal_per_100:guess.kcal_per_100 === null ? '' : String(Math.round(guess.kcal_per_100*10)/10) };
+        const packageGrams = guess.package_grams === null ? '' : String(Math.round(guess.package_grams*10)/10);
+        const suggested = { name:guess.name || '', grams:guess.grams === null ? (field('kind').value === 'purchase' ? packageGrams : '') : String(Math.round(guess.grams*10)/10), package_grams:packageGrams, kcal_per_100:guess.kcal_per_100 === null ? '' : String(Math.round(guess.kcal_per_100*10)/10) };
         for (const key of Object.keys(suggested)) {
           // Never overwrite an edit made during the request, or a deliberately supplied weight.
           if (field(key).value !== snapshot[key]) continue;
           if (key === 'grams' && snapshot[key] && snapshot[key] !== autoValues[key]) continue;
+          if (key === 'package_grams' && snapshot[key] && snapshot[key] !== autoValues[key]) continue;
           field(key).value = suggested[key]; autoValues[key] = suggested[key];
           if (key === 'kcal_per_100') field('source').value = guess.source === 'label' ? 'label' : 'estimate';
         }
@@ -193,7 +205,8 @@
         const body = document.createElement('div'); body.className = 'food-match-body';
         const name = document.createElement('div'); name.className = 'food-match-name'; name.textContent = match.name || t('Без названия','Unnamed product'); body.append(name);
         const meta = document.createElement('div'); meta.className = 'food-match-meta';
-        meta.textContent = [match.brand, match.quantity, match.kcal_per_100 !== null ? `${match.kcal_per_100} ${t('ккал / 100 г','kcal / 100 g')}` : ''].filter(Boolean).join(' · ');
+        const packageKcal = match.package_grams && match.kcal_per_100 !== null ? `${Math.round(match.package_grams * match.kcal_per_100 / 10) / 10} ${t('ккал в упаковке','kcal per pack')}` : '';
+        meta.textContent = [match.brand, match.quantity, match.kcal_per_100 !== null ? `${match.kcal_per_100} ${t('ккал / 100 г','kcal / 100 g')}` : '', packageKcal].filter(Boolean).join(' · ');
         body.append(meta);
         const actions = document.createElement('div'); actions.className = 'food-match-actions';
         const use = document.createElement('button'); use.type = 'button'; use.className = 'food-match-use'; use.dataset.code = match.code;
@@ -210,11 +223,18 @@
       if (!match) return;
       field('name').value = match.name;
       autoValues.name = match.name;
+      field('package_grams').value = match.package_grams == null ? '' : String(match.package_grams);
+      autoValues.package_grams = field('package_grams').value;
+      if (field('kind').value === 'purchase' && match.package_grams && (!field('grams').value || field('grams').value === autoValues.grams)) { field('grams').value = String(match.package_grams); autoValues.grams = field('grams').value; }
       if (match.kcal_per_100 !== null) { field('kcal_per_100').value = match.kcal_per_100; autoValues.kcal_per_100 = String(match.kcal_per_100); field('source').value = 'catalog'; }
       dirty = true; calculation();
       result.textContent = t(`Выбран кандидат из Open Food Facts: ${match.name}. Калорийность и название можно изменить перед сохранением. Порцию в граммах укажи отдельно.`, `Selected Open Food Facts candidate: ${match.name}. Review the name and calories before saving. Enter the eaten portion separately.`);
     });
     analyze.addEventListener('click', () => { if (!busy) analyzePhoto(); });
+    document.getElementById('food-use-package').addEventListener('click', () => {
+      if (!field('package_grams').value) return;
+      field('grams').value = field('package_grams').value; dirty = true; calculation(); field('grams').focus();
+    });
   }
   calculation(); setBusy(false);
 })();

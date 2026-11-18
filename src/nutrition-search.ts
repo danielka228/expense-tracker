@@ -3,6 +3,7 @@ export interface FoodProductMatch {
   name: string;
   brand: string | null;
   quantity: string | null;
+  package_grams: number | null;
   kcal_per_100: number | null;
   image: string | null;
   source_url: string;
@@ -17,6 +18,20 @@ const imageUrl = (value: unknown): string | null => {
     return url.protocol === 'https:' && ['images.openfoodfacts.org','images.openfoodfacts.net'].includes(url.hostname) ? url.href : null;
   } catch { return null; }
 };
+export function quantityInGrams(value: string | null): number | null {
+  if (!value) return null;
+  const multipack = value.match(/(\d+(?:[.,]\d+)?)\s*[x×*]\s*(\d+(?:[.,]\d+)?)\s*(kg|кг|g|гр|г)(?=$|[\s,.;])/iu);
+  if (multipack) {
+    const unit = /^(kg|кг)$/i.test(multipack[3]) ? 1000 : 1;
+    const total = Number(multipack[1].replace(',', '.')) * Number(multipack[2].replace(',', '.')) * unit;
+    if (Number.isFinite(total) && total > 0 && total <= 100000) return total;
+  }
+  const matches = [...value.matchAll(/(\d+(?:[.,]\d+)?)\s*(kg|кг|g|гр|г)(?=$|[\s,.;×x*])/giu)];
+  const match = matches.at(-1);
+  if (!match) return null;
+  const amount = Number(match[1].replace(',', '.')) * (/^(kg|кг)$/i.test(match[2]) ? 1000 : 1);
+  return Number.isFinite(amount) && amount > 0 && amount <= 100000 ? amount : null;
+}
 
 export function parseFoodSearchResults(value: unknown): FoodProductMatch[] {
   if (!value || typeof value !== 'object' || !Array.isArray((value as { products?: unknown }).products)) return [];
@@ -36,6 +51,7 @@ export function parseFoodSearchResults(value: unknown): FoodProductMatch[] {
       name,
       brand: text(p.brands, 100),
       quantity: text(p.quantity, 60),
+      package_grams: quantityInGrams(text(p.quantity, 60)),
       kcal_per_100: Number.isFinite(kcal) && kcal >= 0 && kcal <= 1000 ? kcal : null,
       image: imageUrl(p.image_front_url ?? p.image_front_small_url),
       source_url: `https://world.openfoodfacts.net/product/${code}`,

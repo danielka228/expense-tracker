@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
 import { calories, readFood, parseFoodGuess, validDate, foodNumber } from '../src/nutrition-data.ts';
-import { parseFoodSearchResults, searchFoodProducts } from '../src/nutrition-search.ts';
+import { parseFoodSearchResults, searchFoodProducts, quantityInGrams } from '../src/nutrition-search.ts';
 const aiBundle = await build({
   stdin: { contents: "export { recognizeFood, compareFoodCandidates } from './src/nutrition-ai';", resolveDir: process.cwd() },
   bundle: true, platform: 'node', format: 'esm', outfile: 'nutrition-ai-test.mjs', write: false,
@@ -12,6 +12,7 @@ const { recognizeFood, compareFoodCandidates } = await import(`data:text/javascr
 test('scales calories by consumed grams including zero-calorie foods', () => {
   assert.equal(calories(250, 50), 125);
   assert.equal(calories(125, 83), 103.8);
+  assert.equal(calories(40, 320), 128);
   assert.equal(calories(250, 0), 0);
 });
 test('validates real calendar dates and bounded numeric inputs', () => {
@@ -31,6 +32,8 @@ test('untrusted AI answers preserve missing values and clarification questions',
   assert.equal(parseFoodGuess('not json'),null);
   assert.equal(parseFoodGuess('{"name":null}'),null);
   assert.equal(parseFoodGuess('{"is_food":true,"name":"Water","kcal_per_100":0}').kcal_per_100,0);
+  assert.equal(parseFoodGuess('{"is_food":true,"name":"Snack","package_grams":40,"kcal_per_100":320}').package_grams,40);
+  assert.equal(parseFoodGuess('{"is_food":true,"name":"Snack","package_grams":200000}').package_grams,null);
   assert.equal(parseFoodGuess('{"is_food":true,"name":"Oil","kcal_per_100":9999}').kcal_per_100,null);
 });
 
@@ -86,6 +89,10 @@ test('an unclear classifier falls back to the detailed food analysis', async () 
 });
 
 test('catalog results keep nutrition data and only allow trusted product-image URLs', () => {
+  assert.equal(quantityInGrams('40 g'),40);
+  assert.equal(quantityInGrams('0,5 kg'),500);
+  assert.equal(quantityInGrams('2 x 40 g'),80);
+  assert.equal(quantityInGrams('500 ml'),null);
   const products = parseFoodSearchResults({products:[
     {code:'4660043858806',product_name:'Картошка',brands:'Ростагрокомплекс',quantity:'50 г',image_front_url:'https://images.openfoodfacts.net/a.jpg',nutriments:{'energy-kcal_100g':413}},
     {code:'4660043858806',product_name:'Duplicate',nutriments:{'energy-kcal_100g':1}},
@@ -93,6 +100,7 @@ test('catalog results keep nutrition data and only allow trusted product-image U
   ]});
   assert.equal(products.length,1);
   assert.equal(products[0].kcal_per_100,413);
+  assert.equal(products[0].package_grams,50);
   assert.equal(products[0].image,'https://images.openfoodfacts.net/a.jpg');
 });
 

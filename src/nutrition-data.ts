@@ -24,7 +24,7 @@ export function readFood(f: Record<string, unknown>) {
   return { name, grams, kcal, meal, date: f.entry_date, kind: String(f.kind), source };
 }
 export interface FoodGuess {
-  is_food: boolean; name: string; brand: string | null; grams: number | null; kcal_per_100: number | null; questions: string[]; note: string; source: 'estimate' | 'label';
+  is_food: boolean; name: string; brand: string | null; grams: number | null; package_grams: number | null; kcal_per_100: number | null; questions: string[]; note: string; source: 'estimate' | 'label';
 }
 const clean = (x: unknown, max: number) => typeof x === 'string' ? x.replace(/[<>\u0000-\u001f]/g, ' ').trim().slice(0, max) : '';
 export function parseFoodGuess(raw: string): FoodGuess | null {
@@ -33,11 +33,11 @@ export function parseFoodGuess(raw: string): FoodGuess | null {
     if (start < 0 || end < start) return null;
     const j = JSON.parse(raw.slice(start, end + 1));
     if (!j || typeof j !== 'object') return null;
-    if (j.is_food === false) return { is_food: false, name: '', brand: null, grams: null, kcal_per_100: null, questions: [], note: clean(j.note, 500), source: 'estimate' };
+    if (j.is_food === false) return { is_food: false, name: '', brand: null, grams: null, package_grams: null, kcal_per_100: null, questions: [], note: clean(j.note, 500), source: 'estimate' };
     if (j.is_food !== true) return null;
     const name = clean(j.name, 120);
     const questions = Array.isArray(j.questions) ? j.questions.map((q: unknown) => clean(q, 250)).filter(Boolean).slice(0, 4) : [];
     if (!name && !questions.length) return null;
-    return { is_food: true, name, brand: clean(j.brand, 80) || null, source: j.source === 'label' ? 'label' : 'estimate', grams: foodNumber(j.grams, 100000), kcal_per_100: foodNumber(j.kcal_per_100, 1000, true), questions, note: clean(j.note, 500) };
+    return { is_food: true, name, brand: clean(j.brand, 80) || null, source: j.source === 'label' ? 'label' : 'estimate', grams: foodNumber(j.grams, 100000), package_grams: foodNumber(j.package_grams, 100000), kcal_per_100: foodNumber(j.kcal_per_100, 1000, true), questions, note: clean(j.note, 500) };
   } catch { return null; }
 }
