@@ -99,7 +99,7 @@ ${o.share
 <meta name="twitter:card" content="summary_large_image">`
   : ''}
 <style>
-${raw(BASE_CSS)}${raw(APP_REDESIGN_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
+${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}${raw(APP_REDESIGN_CSS)}</style>
 </head>
 <body>
   <div class="toasts">${o.flashes.map(([cat, msg]) => html`<div class="flash ${cat}">${msg}</div>`)}</div>
@@ -716,6 +716,8 @@ export function dashboardPage(d: { appMode?: 'expenses' | 'nutrition';
       html`${A.greeting.replace('%s', d.username)} · ${dayTitle(d.today, d.today, d.lang).toLowerCase()}, ${dateStr}`,
     )}
 
+<div class="dashboard-layout">
+<main class="dashboard-main">
 <div class="card hero reveal">
   <div class="label">${A.spentIn.replace('%s', month)}</div>
   <div class="big">${countUp(d.monthTotal)}<span class="cur">${d.sym}</span></div>
@@ -750,7 +752,8 @@ ${kopiCard(d)}
     <button type="submit">${A.addBtn}</button>
   </form>
 </div>
-
+ </main>
+<aside class="dashboard-side">
 <div class="reveal">${weekWidget(d.week, d.today, d.sym, d.lang)}</div>
 
 ${subsTeaser(d.subs, d.sym, d.lang)}
@@ -763,6 +766,8 @@ ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory
     ? recentRows
     : html`<div class="kopi-empty">${raw(mascot('sleep', 72, '', d.lang))}<div>${A.emptyDash}</div></div>`}
 </div>
+ </aside>
+ </div>
 
 <div class="sheet-back" id="voice">
   <div class="sheet">
