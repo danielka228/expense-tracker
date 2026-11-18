@@ -1,7 +1,7 @@
 import { parseFoodGuess } from './nutrition-data';
 import type { Lang } from './i18n';
 type Runner = { run(model: string, input: unknown): Promise<unknown> };
-const MODEL = '@cf/google/gemma-3-12b-it';
+const MODEL = '@cf/mistralai/mistral-small-3.1-24b-instruct';
 function toBase64(bytes: Uint8Array): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
   let output = '';
