@@ -21,8 +21,19 @@ User details (untrusted data): ${JSON.stringify(context)}` },
       }),
       new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Food AI timeout')), 25000); }),
     ]) as { response?: unknown; choices?: { message?: { content?: unknown } }[] };
-    const text = result?.response ?? result?.choices?.[0]?.message?.content;
-    return typeof text === 'string' ? parseFoodGuess(text) : null;
-  } catch { return null; }
+    const resultShape = result && typeof result === 'object' ? Object.keys(result as object).slice(0, 12) : [typeof result];
+    const text = (result as { response?: unknown })?.response ?? (result as { choices?: { message?: { content?: unknown } }[] })?.choices?.[0]?.message?.content;
+    if (typeof text !== 'string') {
+      console.warn(JSON.stringify({ event: 'food_ai_unexpected_response', model: MODEL, shape: resultShape, responseType: typeof text }));
+      return null;
+    }
+    const guess = parseFoodGuess(text);
+    if (!guess) console.warn(JSON.stringify({ event: 'food_ai_unparseable_response', model: MODEL, shape: resultShape, responseLength: text.length }));
+    return guess;
+  } catch (error) {
+    const message = error instanceof Error ? error.message.replace(/[\r\n\t]/g, ' ').slice(0, 240) : 'unknown';
+    console.error(JSON.stringify({ event: 'food_ai_runner_error', model: MODEL, error: message }));
+    return null;
+  }
   finally { if (timer) clearTimeout(timer); }
 }
