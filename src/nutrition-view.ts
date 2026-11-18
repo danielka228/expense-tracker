@@ -56,7 +56,7 @@ ${d.ai ? html`
 <section class="food-diary"><h2>${t('Приёмы пищи','Meals')}</h2>
 ${!eaten.length ? html`<div class="food-panel"><h3>${t('Пока нет записей','No meals yet')}</h3><p>${t('Добавь первый приём пищи вручную или по фото.','Add your first meal manually or from a photo.')}</p></div>` : ''}
 ${MEALS.map((m,i) => { const list = eaten.filter(e => e.meal === m); return list.length ? html`<section class="food-panel"><h3>${names[i]} <small>· ${Math.round(list.reduce((s,e) => s + calories(e.grams,e.kcal_per_100),0))} ${t('ккал','kcal')}</small></h3>${list.map(row)}</section>` : ''; })}
-<h2>${t('Покупки продуктов','Food purchases')}</h2><div class="food-panel"><p>${t('Купленный вес хранится отдельно. Нажми «Записать порцию» и укажи, сколько съел.','Purchased weight is separate. Choose “Log a portion” and enter how much you ate.')}</p>${bought.length ? bought.map(row) : html`<p>${t('На эту дату покупок нет.','No purchases on this date.')}</p>`}</div>
+<h2 id="food-purchases" style="scroll-margin-top:70px">${t('Покупки продуктов','Food purchases')}</h2><div class="food-panel"><p>${t('Купленный вес хранится отдельно. Нажми «Записать порцию» и укажи, сколько съел.','Purchased weight is separate. Choose “Log a portion” and enter how much you ate.')}</p>${bought.length ? bought.map(row) : html`<p>${t('На эту дату покупок нет.','No purchases on this date.')}</p>`}</div>
 </section></div><script src="/nutrition.js" defer></script>`);
 }
 const CSS = `

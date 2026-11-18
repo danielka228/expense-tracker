@@ -513,7 +513,7 @@ app.get('/dashboard', async (c) => {
   ]);
 
   return c.html(
-    dashboardPage({
+    dashboardPage({ appMode: user.app_mode,
       flashes: popFlashes(c),
       lang: langOf(c.get('user').lang),
       sym: symbol(user),
@@ -611,7 +611,7 @@ app.get('/subs', async (c) => {
   await chargeDue(db, periodStart('day'), user.id);
   const [subs, month] = await Promise.all([loadSubs(db, user), spentSince(db, user.id, periodStart('month'))]);
   return c.html(
-    subsPage({
+    subsPage({ appMode: user.app_mode,
       flashes: popFlashes(c),
       lang: langOf(user.lang),
       sym: symbol(user),
@@ -681,7 +681,7 @@ app.get('/wrapped', async (c) => {
     c.env.DB.prepare('SELECT 1 FROM telegram_links WHERE user_id = ?').bind(user.id).first(),
   ]);
   return c.html(
-    wrappedPage({
+    wrappedPage({ appMode: user.app_mode,
       flashes: popFlashes(c),
       lang: langOf(user.lang),
       sym: symbol(user),
@@ -721,7 +721,7 @@ app.get('/month', async (c) => {
   const t = top.results[0] as { note: string; n: number } | undefined;
   const token = c.env.TELEGRAM_BOT_TOKEN;
   return c.html(
-    monthPage({
+    monthPage({ appMode: user.app_mode,
       flashes: popFlashes(c),
       lang: langOf(c.get('user').lang),
       canSend: !!token && link.results.length > 0,
@@ -944,7 +944,7 @@ app.get('/friends', async (c) => {
   ]);
 
   return c.html(
-    friendsPage({
+    friendsPage({ appMode: user.app_mode,
       flashes: popFlashes(c),
       lang: langOf(c.get('user').lang),
       sym: symbol(user),
@@ -987,7 +987,7 @@ app.get('/friends/:id{[0-9]+}', async (c) => {
     recent: o.recent.map((r) => ({ ...r, amount: r.amount * k })),
   };
   return c.html(
-    friendProfilePage({
+    friendProfilePage({ appMode: user.app_mode,
       flashes: popFlashes(c),
       lang: langOf(c.get('user').lang),
       sym: symbol(user),
@@ -1075,7 +1075,7 @@ app.get('/profile', async (c) => {
   ]);
 
   return c.html(
-    profilePage({
+    profilePage({ appMode: user.app_mode,
       flashes: popFlashes(c),
       lang: langOf(c.get('user').lang),
       sym: symbol(user),
@@ -1651,7 +1651,7 @@ app.get('/admin', async (c) => {
     currencies: currencies.results as AdminData['currencies'],
     users: users.results as AdminData['users'],
   };
-  return c.html(adminPage({ flashes: popFlashes(c), lang: langOf(user.lang), today, data }));
+  return c.html(adminPage({ appMode: user.app_mode, flashes: popFlashes(c), lang: langOf(user.lang), today, data }));
 });
 
 // Расписание (triggers.crons в wrangler.jsonc): итоги от Трэка в Telegram.

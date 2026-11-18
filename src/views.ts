@@ -55,12 +55,21 @@ interface LayoutOpts {
 export function layout(o: LayoutOpts, content: H) {
   const S = tr(o.lang ?? 'ru');
   const tabLabels: Record<Tab, string> = S.nav;
-  const tabs = (Object.keys(TAB_ICONS) as Tab[]).map(
-    (t) => html`
-    <a class="tab ${o.activeTab === t ? 'active' : ''}" href="/${t}">
-      <span class="icon">${raw(TAB_ICONS[t])}</span><span>${t === 'dashboard' && o.nutrition ? (o.lang === 'en' ? 'Nutrition' : 'Питание') : tabLabels[t]}</span>
-    </a>`,
-  );
+  const nutrition = o.nutrition === true;
+  const foodIcon = '<svg viewBox="0 0 24 24"><path d="M4 3v5a2 2 0 0 0 4 0V3M6 3v18M20 3c-4 2-5 8-2 9h2M20 3v18"/></svg>';
+  const purchasesIcon = '<svg viewBox="0 0 24 24"><path d="M5 7h14l1 14H4L5 7zM8 7V6a4 4 0 0 1 8 0v1"/></svg>';
+  const tabs = (Object.keys(TAB_ICONS) as Tab[]).map((t) => {
+    const href = nutrition && t === 'dashboard' ? '/nutrition'
+      : nutrition && t === 'subs' ? '/nutrition#food-purchases' : `/${t}`;
+    const label = nutrition && t === 'dashboard' ? (o.lang === 'en' ? 'Nutrition' : 'Питание')
+      : nutrition && t === 'subs' ? (o.lang === 'en' ? 'Groceries' : 'Продукты') : tabLabels[t];
+    const icon = nutrition && t === 'dashboard' ? foodIcon
+      : nutrition && t === 'subs' ? purchasesIcon : TAB_ICONS[t];
+    return html`
+    <a class="tab ${o.activeTab === t ? 'active' : ''}" href="${href}">
+      <span class="icon">${raw(icon)}</span><span>${label}</span>
+    </a>`;
+  });
   return html`<!DOCTYPE html>
 <html lang="${S.htmlLang}" class="no-js">
 <head>
@@ -646,7 +655,7 @@ function kopiCard(d: { sym: string; today: string; todayTotal: number; monthTota
 
 // ---------- главная ----------
 
-export function dashboardPage(d: {
+export function dashboardPage(d: { appMode?: 'expenses' | 'nutrition';
   flashes: Flash[];
   sym: string;
   username: string;
@@ -677,7 +686,7 @@ export function dashboardPage(d: {
     {
       title: S.nav.dashboard,
       flashes: d.flashes,
-      loggedIn: true,
+      loggedIn: true, nutrition: d.appMode === 'nutrition',
       lang: d.lang,
       activeTab: 'dashboard',
       extraCss: DASHBOARD_CSS + SUBS_CSS + WRAPPED_BANNER_CSS,
@@ -838,7 +847,7 @@ function subForm(d: { lang: Lang; today: string; currencies: Record<string, Curr
   </form>`;
 }
 
-export function subsPage(d: {
+export function subsPage(d: { appMode?: 'expenses' | 'nutrition';
   flashes: Flash[];
   lang: Lang;
   sym: string;
@@ -871,7 +880,7 @@ export function subsPage(d: {
   }
 
   return layout(
-    { title: T.title, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'subs', extraCss: DASHBOARD_CSS + SETTINGS_CSS + SUBS_CSS, scripts: SUBS_JS },
+    { title: T.title, flashes: d.flashes, loggedIn: true, nutrition: d.appMode === 'nutrition', lang: d.lang, activeTab: 'subs', extraCss: DASHBOARD_CSS + SETTINGS_CSS + SUBS_CSS, scripts: SUBS_JS },
     html`${header(T.title, undefined, d.subs.length ? T.subtitle(d.subs.length) : T.emptySub)}
 
 <div class="card hero reveal">
@@ -951,7 +960,7 @@ function av(uid: number, name: string) {
   return html`<div class="av">${(name ? [...name][0] : '?').toUpperCase()}<img src="/avatar/${uid}" alt="" onerror="this.remove()"></div>`;
 }
 
-export function friendsPage(d: {
+export function friendsPage(d: { appMode?: 'expenses' | 'nutrition';
   flashes: Flash[];
   sym: string;
   period: string;
@@ -968,7 +977,7 @@ export function friendsPage(d: {
   ];
   const idx = Math.max(0, periods.findIndex(([p]) => p === d.period));
   return layout(
-    { title: S.nav.friends, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'friends', extraCss: FRIENDS_CSS },
+    { title: S.nav.friends, flashes: d.flashes, loggedIn: true, nutrition: d.appMode === 'nutrition', lang: d.lang, activeTab: 'friends', extraCss: FRIENDS_CSS },
     html`${header(S.nav.friends, undefined, A.friendsSub)}
 
 <div class="seg reveal" style="--n:3; --i:${idx}">
@@ -1025,7 +1034,7 @@ ${d.incoming.length
 
 const BACK_SVG = '<svg viewBox="0 0 12 20"><path d="M10 2 2 10l8 8" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
-export function friendProfilePage(d: {
+export function friendProfilePage(d: { appMode?: 'expenses' | 'nutrition';
   flashes: Flash[];
   sym: string;
   id: number;
@@ -1049,7 +1058,7 @@ export function friendProfilePage(d: {
     ? `${S.months.short[Number(since.slice(5, 7)) - 1]} ${Number(since.slice(8, 10))}, ${since.slice(0, 4)}`
     : `${Number(since.slice(8, 10))} ${S.months.short[Number(since.slice(5, 7)) - 1]} ${since.slice(0, 4)}`;
   return layout(
-    { title: d.username, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'friends', extraCss: DASHBOARD_CSS + PROFILE_CSS },
+    { title: d.username, flashes: d.flashes, loggedIn: true, nutrition: d.appMode === 'nutrition', lang: d.lang, activeTab: 'friends', extraCss: DASHBOARD_CSS + PROFILE_CSS },
     html`<header class="nav"><a class="nav-side left nav-back" href="/friends">${raw(BACK_SVG)}${A.friendsBack}</a><div class="nav-title">${d.username}</div></header>
 <div class="profile-head reveal">
   <div class="avatar-wrap">
@@ -1090,7 +1099,7 @@ ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory
 
 // ---------- профиль ----------
 
-export function profilePage(d: {
+export function profilePage(d: { appMode?: 'expenses' | 'nutrition';
   flashes: Flash[];
   sym: string;
   shortcutUrl: string;
@@ -1114,7 +1123,7 @@ export function profilePage(d: {
       : `${d.createdAt.slice(8, 10)}.${d.createdAt.slice(5, 7)}.${d.createdAt.slice(0, 4)}`
     : '—';
   return layout(
-    { title: S.nav.profile, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'profile', extraCss: PROFILE_CSS },
+    { title: S.nav.profile, flashes: d.flashes, loggedIn: true, nutrition: d.appMode === 'nutrition', lang: d.lang, activeTab: 'profile', extraCss: PROFILE_CSS },
     html`<header class="nav"><div class="nav-title">${d.username || A.profileFallback}</div></header>
 <div class="profile-head reveal">
   <form id="avatar-form" method="POST" action="/profile/avatar" enctype="multipart/form-data">
@@ -1328,7 +1337,7 @@ export function settingsPage(d: {
   const curLabel = (code: string, info: Currency) => `${currencyLabel(code, d.lang, info.label)} (${currencySymbol(code, d.lang, info.symbol)})`;
   const cur = d.currencies[d.currentCurrency] ?? Object.values(d.currencies)[0];
   return layout(
-    { title: S.nav.settings, flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'settings', extraCss: SETTINGS_CSS },
+    { title: S.nav.settings, flashes: d.flashes, loggedIn: true, nutrition: d.appMode === 'nutrition', lang: d.lang, activeTab: 'settings', extraCss: SETTINGS_CSS },
     html`${header(S.nav.settings, undefined, html`${A.setLoginLabel.replace('%s', d.username)}`)}
 
 <div class="list reveal" style="--inset:58px">
@@ -1417,7 +1426,7 @@ function wrappedCardSvg(o: { title: string; emoji: string; name: string; colors:
 </svg>`;
 }
 
-export function wrappedPage(d: { flashes: Flash[]; lang: Lang; sym: string; currency: string; username: string; w: WrappedData; canSend: boolean }) {
+export function wrappedPage(d: { appMode?: 'expenses' | 'nutrition'; flashes: Flash[]; lang: Lang; sym: string; currency: string; username: string; w: WrappedData; canSend: boolean }) {
   const lang = d.lang;
   const S = tr(lang);
   const T = wrappedText(lang);
@@ -1429,7 +1438,7 @@ export function wrappedPage(d: { flashes: Flash[]; lang: Lang; sym: string; curr
   const css = DASHBOARD_CSS + WRAPPED_CSS;
   if (!w.count) {
     return layout(
-      { title: T.title(monthNom), flashes: d.flashes, loggedIn: true, lang, extraCss: css },
+      { title: T.title(monthNom), flashes: d.flashes, loggedIn: true, nutrition: d.appMode === 'nutrition', lang, extraCss: css },
       html`${header(T.title(monthNom))}<div class="card reveal" style="text-align:center">${raw(mascot('sleep', 110, '', lang))}<p style="margin:12px 0 0">${T.empty}</p><a class="btn" href="/dashboard" style="margin-top:14px">${T.emptyBtn}</a></div>`,
     );
   }
@@ -1643,7 +1652,7 @@ function dayBars(title: string, sum: string, rows: { d: string; n: number }[], u
 </div>`;
 }
 
-export function adminPage(d: { flashes: Flash[]; lang: Lang; today: string; data: AdminData }) {
+export function adminPage(d: { appMode?: 'expenses' | 'nutrition'; flashes: Flash[]; lang: Lang; today: string; data: AdminData }) {
   const t = d.data.totals;
   const v = (k: string) => fmt0(t[k] ?? 0);
   const f = d.data.funnel;
@@ -1665,7 +1674,7 @@ export function adminPage(d: { flashes: Flash[]; lang: Lang; today: string; data
   const chips = (rows: { k: string; n: number }[]) => rows.map((x) => html`<span class="adm-chip">${x.k} <b>${x.n}</b></span>`);
 
   return layout(
-    { title: 'Дашборд', flashes: d.flashes, loggedIn: true, lang: d.lang, activeTab: 'settings', extraCss: DASHBOARD_CSS + ADMIN_CSS, scripts: ADMIN_JS },
+    { title: 'Дашборд', flashes: d.flashes, loggedIn: true, nutrition: d.appMode === 'nutrition', lang: d.lang, activeTab: 'settings', extraCss: DASHBOARD_CSS + ADMIN_CSS, scripts: ADMIN_JS },
     html`${header('Дашборд', undefined, 'Пользователи СпендТрекера · видно только тебе')}
 
 <div class="adm-grid">
@@ -1794,7 +1803,7 @@ export function monthCardSvg(c: MonthCard, lang: Lang = 'ru'): string {
 </svg>`;
 }
 
-export function monthPage(d: { flashes: Flash[]; card: MonthCard | null; canSend: boolean; lang: Lang }) {
+export function monthPage(d: { appMode?: 'expenses' | 'nutrition'; flashes: Flash[]; card: MonthCard | null; canSend: boolean; lang: Lang }) {
   const S = tr(d.lang);
   const A = S.app;
   const css = `
@@ -1804,12 +1813,12 @@ export function monthPage(d: { flashes: Flash[]; card: MonthCard | null; canSend
   .mc-hint { text-align: center; color: var(--text-2); font-size: 14px; margin: 0; }`;
   if (!d.card) {
     return layout(
-      { title: A.monthTitle, flashes: d.flashes, loggedIn: true, lang: d.lang, extraCss: DASHBOARD_CSS + css },
+      { title: A.monthTitle, flashes: d.flashes, loggedIn: true, nutrition: d.appMode === 'nutrition', lang: d.lang, extraCss: DASHBOARD_CSS + css },
       html`${header(A.monthTitle)}<div class="card reveal" style="text-align:center">${raw(mascot('sleep', 110, '', d.lang))}<p style="margin:12px 0 0">${A.monthEmpty}</p><a class="btn" href="/dashboard" style="margin-top:14px">${A.addExpenseBtn}</a></div>`,
     );
   }
   return layout(
-    { title: A.monthTitle, flashes: d.flashes, loggedIn: true, lang: d.lang, extraCss: DASHBOARD_CSS + css },
+    { title: A.monthTitle, flashes: d.flashes, loggedIn: true, nutrition: d.appMode === 'nutrition', lang: d.lang, extraCss: DASHBOARD_CSS + css },
     html`${header(A.monthTitle, undefined, html`${A.monthSub}`)}
 <div class="mc reveal">
   <a class="btn wr-open" href="/wrapped">${d.lang === 'en' ? '✨ Watch your month wrap-up' : '✨ Смотреть итоги месяца'}</a>
