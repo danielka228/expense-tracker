@@ -12,6 +12,7 @@
   const preview = document.getElementById('food-preview');
   const questionsBox = document.getElementById('food-questions');
   const save = document.getElementById('food-save');
+  const photoDetails = document.querySelector('.food-photo');
   let jpeg = null, version = 0, controller = null, previewUrl;
   let questions = [], history = [], autoValues = {}, busy = false, saving = false, dirty = false;
   const show = text => { status.textContent = text; };
@@ -19,7 +20,9 @@
     const grams = Number(field('grams').value), kcal = Number(field('kcal_per_100').value);
     document.getElementById('food-calculation').textContent = field('grams').value && field('kcal_per_100').value && grams > 0 && kcal >= 0
       ? `${Math.round(grams * kcal / 10) / 10} ${t('ккал', 'kcal')} · ${t('в указанном весе', 'in this weight')}` : t('Укажи вес и калорийность.', 'Enter weight and calories.');
-    document.getElementById('food-price').hidden = field('kind').value !== 'purchase' || !!field('id').value;
+    const buying = field('kind').value === 'purchase';
+    document.getElementById('food-meal-field').hidden = buying;
+    document.getElementById('food-price').hidden = !buying || !!field('id').value;
     field('amount').disabled = document.getElementById('food-price').hidden;
     const source = document.getElementById('food-source');
     source.hidden = field('source').value === 'manual';
@@ -39,7 +42,13 @@
     if (ev.target === field('kcal_per_100')) field('source').value = 'manual';
     calculation();
   });
-  form.addEventListener('change', calculation);
+  form.addEventListener('change', ev => {
+    calculation();
+    if (ev.target === field('kind')) {
+      if (field('kind').value === 'purchase' && photoDetails) photoDetails.open = true;
+      else if (photoDetails && photoDetails.open) photoDetails.open = false;
+    }
+  });
   window.addEventListener('beforeunload', ev => { if (dirty) { ev.preventDefault(); ev.returnValue = ''; } });
   const errors = {
     limit: t('Лимит ИИ на сегодня исчерпан. Введи данные вручную.', 'AI daily limit reached. Enter values manually.'),
@@ -102,6 +111,7 @@
     for (const key of ['name','grams','kcal_per_100','meal','entry_date','kind']) field(key).value = entry[key];
     field('source').value = entry.source || 'manual';
     field('id').value = eat ? '' : entry.id;
+    if (photoDetails) photoDetails.open = false;
     if (eat) { field('kind').value = 'meal'; field('grams').value = ''; field('entry_date').value = document.getElementById('food-day').value; }
     document.getElementById('food-form-title').textContent = eat ? t('Сколько ты съел?', 'How much did you eat?') : t('Изменить запись','Edit entry');
     calculation(); form.scrollIntoView({ behavior: 'smooth', block: 'start' }); field(eat ? 'grams' : 'name').focus();

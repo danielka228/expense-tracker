@@ -30,6 +30,17 @@ const path = require('node:path');
       }
     });
     await page.goto('http://localhost:8799/nutrition');
+    assert.equal(await page.locator('#food-meal-field').isVisible(),true);
+    assert.equal(await page.locator('#food-price').isHidden(),true);
+    assert.equal(await page.locator('.food-photo').evaluate(el=>el.open),false);
+    await page.locator('[name=kind]').selectOption('purchase');
+    assert.equal(await page.locator('#food-meal-field').isVisible(),false);
+    assert.equal(await page.locator('#food-price').isVisible(),true);
+    assert.equal(await page.locator('.food-photo').evaluate(el=>el.open),true);
+    await page.locator('[name=kind]').selectOption('meal');
+    assert.equal(await page.locator('#food-meal-field').isVisible(),true);
+    assert.equal(await page.locator('.food-photo').evaluate(el=>el.open),false);
+    await page.locator('.food-photo summary').click();
     const photo = {name:'food.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aVxkAAAAASUVORK5CYII=','base64')};
     response={name:'Рис',grams:250,kcal_per_100:160,questions:['Сколько масла?'],note:'Примерная оценка',source:'estimate'};
     await page.locator('#food-photo').setInputFiles(photo);
@@ -80,6 +91,7 @@ const path = require('node:path');
     for(const width of [390,320]) {
       await page.setViewportSize({width,height:844});
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+      assert.ok(await page.locator('#food-day').evaluate(el=>el.getBoundingClientRect().width)>=150);
     }
     if(process.env.SCREENSHOT_DIR) await page.screenshot({path:path.join(process.env.SCREENSHOT_DIR,'nutrition-mobile.png'),fullPage:true});
     await page.goto('http://localhost:8799/nutrition?lang=en');
