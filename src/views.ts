@@ -1335,8 +1335,8 @@ export function settingsPage(d: {
   <form method="POST" style="margin:0">
     <input type="hidden" name="action" value="change_mode">
     <label class="row" style="margin:0;font-size:17px;color:var(--text)">
-      ${sq('bolt', '#30d158')}<span class="grow">${d.lang === 'en' ? 'App mode' : 'Режим приложения'}</span>${CHEV}
-      <select name="app_mode" aria-label="${d.lang === 'en' ? 'App mode' : 'Режим приложения'}" onchange="this.form.submit()">
+      ${sq('bolt', '#30d158')}<span class="grow">${d.lang === 'en' ? 'App mode' : 'Режим приложения'}</span><span class="value">${d.appMode === 'nutrition' ? (d.lang === 'en' ? 'Nutrition' : 'Питание') : (d.lang === 'en' ? 'Expenses' : 'Расходы')}</span>${CHEV}
+      <select name="app_mode" class="overlay" aria-label="${d.lang === 'en' ? 'App mode' : 'Режим приложения'}" onchange="this.form.submit()">
         <option value="expenses" ${d.appMode !== 'nutrition' ? 'selected' : ''}>${d.lang === 'en' ? 'Expenses' : 'Расходы'}</option>
         <option value="nutrition" ${d.appMode === 'nutrition' ? 'selected' : ''}>${d.lang === 'en' ? 'Nutrition' : 'Питание'}</option>
       </select>
