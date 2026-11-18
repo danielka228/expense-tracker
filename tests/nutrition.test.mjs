@@ -59,11 +59,16 @@ test('nutrition image analysis stops before estimation when the photo is not foo
 
 test('confirmed food gets a separate calorie analysis', async () => {
   let calls = 0;
+  const prompts = [];
   const result = await recognizeFood({ run: async (_model, input) => {
     calls++;
+    prompts.push(input.messages[0].content[0].text);
     return { response: calls === 1 ? '{"is_food":true}' : '{"is_food":true,"name":"Йогурт","grams":150,"kcal_per_100":62,"questions":[],"note":"С этикетки","source":"label"}' };
   } }, new Uint8Array([1,2,3]), '', 'ru');
   assert.equal(calls, 2);
+  assert.match(prompts[0], /sealed packaging/);
+  assert.match(prompts[1], /do not misread it as "Карточка"/);
+  assert.match(prompts[1], /Never ask the user to tell you the calorie value/);
   assert.equal(result.is_food, true);
   assert.equal(result.kcal_per_100, 62);
 });
