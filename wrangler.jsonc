@@ -30,6 +30,9 @@
     "preview": {
       "name": "expense-tracker-preview",
       "vars": { "DEMO": "1" },
+      // Демо не рассылает сообщения и не занимает лимит фоновых заданий основного сайта.
+      "triggers": { "crons": [] },
+      "ai": { "binding": "AI" },
       "d1_databases": [
         {
           "binding": "DB",

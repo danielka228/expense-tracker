@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { nutritionRoutes } from './nutrition';
 import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
@@ -74,11 +75,12 @@ interface User {
   currency: string;
   created_at: string | null;
   session_ver: number;
+  app_mode: 'expenses' | 'nutrition';
   bio: string | null;
   lang: string;
 }
 
-type App = { Bindings: Env; Variables: { user: User } };
+export type App = { Bindings: Env; Variables: { user: User } };
 type C = Context<App>;
 
 const CATEGORIES = ['Еда', 'Транспорт', 'Жильё', 'Развлечения', 'Здоровье', 'Одежда', 'Табак', 'Прочее'];
@@ -294,9 +296,11 @@ const loginRequired = async (c: C, next: () => Promise<void>) => {
   await next();
 };
 
-for (const p of ['/dashboard', '/subs', '/subs/*', '/wrapped', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/admin', '/api/product/*', '/api/stores']) {
+for (const p of ['/nutrition', '/nutrition/*', '/dashboard', '/subs', '/subs/*', '/wrapped', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/admin', '/api/product/*', '/api/stores']) {
   app.use(p, loginRequired);
 }
+
+app.route('/nutrition', nutritionRoutes);
 
 // ---------- маршруты ----------
 
@@ -495,6 +499,7 @@ async function spendingOverview(db: D1Database, userId: number, recentLimit: num
 
 app.get('/dashboard', async (c) => {
   const user = c.get('user');
+  if (user.app_mode === 'nutrition' && c.req.query('view') !== 'expenses') return c.redirect('/nutrition');
   await chargeDue(c.env.DB, periodStart('day'), user.id);
   const today = periodStart('day');
   // Первая неделя месяца — баннер «Итоги прошлого месяца», если было что подводить
@@ -1504,6 +1509,7 @@ app.get('/settings', async (c) => {
       telegram: { linked: !!tgLink, tgUsername: tgLink?.tg_username ?? null, bot: tgBot, login: !!tgLoginConfig(c) },
       currencies: CURRENCIES,
       currentCurrency: user.currency,
+      appMode: user.app_mode,
       owner: await isOwner(c, user),
     }),
   );
@@ -1514,7 +1520,12 @@ app.post('/settings', async (c) => {
   const form = await c.req.parseBody();
   const action = formStr(form, 'action');
 
-  if (action === 'change_password') {
+  if (action === 'change_mode') {
+    const mode = formStr(form, 'app_mode');
+    if (mode !== 'expenses' && mode !== 'nutrition') return c.text('Invalid mode', 400);
+    await c.env.DB.prepare('UPDATE users SET app_mode = ? WHERE id = ?').bind(mode, user.id).run();
+    return c.redirect('/dashboard');
+  } else if (action === 'change_password') {
     // У аккаунта, созданного через Telegram, пароля ещё нет — его задают без «текущего»
     if (user.password_hash && !checkPassword(user.password_hash, formStr(form, 'current_password'))) {
       flash(c, flashT(c).pwWrong, 'error');
