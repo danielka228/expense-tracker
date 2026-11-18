@@ -1,6 +1,6 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
-import { ADMIN_JS, WRAPPED_JS, COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SCAN_JS, SUBS_JS, VOICE_JS } from './client';
+import { ADMIN_JS, WRAPPED_JS, COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SUBS_JS, VOICE_JS } from './client';
 import { ADMIN_CSS, WRAPPED_BANNER_CSS, WRAPPED_CSS, BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS, SUBS_CSS } from './styles';
 import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
 import { plural } from './trek';
@@ -49,6 +49,7 @@ interface LayoutOpts {
   bare?: boolean; // без общей обёртки (страница-презентация)
   extraCss?: string;
   scripts?: string;
+  lazyScripts?: { buttonId: string; src: string }[];
   share?: string; // адрес сайта (https://…): публичной странице добавляем превью для чатов и соцсетей
 }
 
@@ -106,6 +107,22 @@ ${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
   ${o.loggedIn ? html`<nav class="tabbar">${tabs}
   </nav>` : ''}
   <script>${o.scripts ? raw(clientScript(o.lang ?? 'ru')) : ''}${raw(COMMON_JS)}${raw(MASCOT_JS)}${raw(o.scripts ?? '')}</script>
+  ${o.lazyScripts?.length ? raw(`<script>(function(){${o.lazyScripts.map(({ buttonId, src }) => `
+    (function(){
+      var button=document.getElementById(${JSON.stringify(buttonId)});
+      if(!button)return;
+      var loading=false,loaded=false;
+      button.addEventListener('click',function(event){
+        if(loaded)return;
+        event.preventDefault();event.stopImmediatePropagation();
+        if(loading)return;
+        loading=true;button.setAttribute('aria-busy','true');
+        var script=document.createElement('script');script.src=${JSON.stringify(src)};
+        script.onload=function(){loaded=true;loading=false;button.removeAttribute('aria-busy');button.click();};
+        script.onerror=function(){loading=false;button.removeAttribute('aria-busy');};
+        document.head.appendChild(script);
+      },true);
+    })();`).join('')} })();</script>`) : ''}
 </body>
 </html>`;
 }
@@ -690,7 +707,8 @@ export function dashboardPage(d: { appMode?: 'expenses' | 'nutrition';
       lang: d.lang,
       activeTab: 'dashboard',
       extraCss: DASHBOARD_CSS + SUBS_CSS + WRAPPED_BANNER_CSS,
-      scripts: PARSE_JS + DASH_JS + VOICE_JS + SCAN_JS,
+      scripts: PARSE_JS + DASH_JS + VOICE_JS,
+      lazyScripts: [{ buttonId: 'act-scan', src: '/client/scan.js' }],
     },
     html`${header(
       S.nav.dashboard,

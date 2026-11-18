@@ -1,4 +1,5 @@
 import { Hono, type Context } from 'hono';
+import { SCAN_JS } from './client';
 import { nutritionRoutes } from './nutrition';
 import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
 import { Buffer } from 'node:buffer';
@@ -309,6 +310,15 @@ const pageLang = (c: C): Lang => langOf(getCookie(c, 'lang'));
 // Язык для залогиненных: предпочитаем язык аккаунта, иначе cookie.
 const uiLang = (c: C): Lang => langOf((c.get('user') as User | undefined)?.lang ?? getCookie(c, 'lang'));
 const flashT = (c: C) => tr(uiLang(c)).fl;
+
+// The scanner is only needed after someone opens it. Keep it out of the initial dashboard HTML.
+app.get('/client/scan.js', (c) => new Response(SCAN_JS, {
+  headers: {
+    'Content-Type': 'text/javascript; charset=utf-8',
+    'Cache-Control': 'public, max-age=300',
+    'X-Content-Type-Options': 'nosniff',
+  },
+}));
 
 app.get('/lang/:code', (c) => {
   const code = langOf(c.req.param('code'));
