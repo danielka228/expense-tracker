@@ -256,6 +256,37 @@ export const BASE_CSS = `
   .tab .icon svg { width: 25px; height: 25px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
   .tab.active { color: var(--accent); background: var(--accent-soft); }
 
+  /* Широкая раскладка в духе референса Ember; на телефоне остаётся нижняя панель. */
+  .desktop-rail { display:none; }
+  @media (min-width: 960px) {
+    .desktop-rail {
+      position:fixed; inset:0 auto 0 0; z-index:35; display:flex; flex-direction:column;
+      width:260px; padding:28px 18px 18px; background:#07080b;
+      border-right:1px solid rgba(255,255,255,.07); color:var(--text-2);
+    }
+    .rail-brand { display:flex; align-items:center; gap:12px; color:var(--text); font-size:22px; font-weight:700; letter-spacing:-.5px; padding:0 8px 28px; }
+    .rail-mark { width:30px; height:30px; border-radius:10px; display:grid; place-items:center; background:var(--accent-soft); color:var(--accent); }
+    .rail-mark svg { width:19px; height:19px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+    .rail-search { height:44px; display:flex; align-items:center; gap:10px; padding:0 13px; border-radius:12px; background:#111217; border:1px solid var(--hair); font-size:19px; color:var(--text-3); margin-bottom:32px; }
+    .rail-search span { font-size:14px; }
+    .rail-caption { padding:0 10px; margin-bottom:10px; color:var(--text-3); font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:1px; }
+    .rail-links { display:flex; flex-direction:column; gap:4px; }
+    .rail-links .tab { flex:none; min-height:44px; padding:0 12px; display:flex; flex-direction:row; justify-content:flex-start; gap:12px; border-radius:10px; color:var(--text-2); font-size:14px; font-weight:550; }
+    .rail-links .tab .icon svg { width:19px; height:19px; }
+    .rail-links .tab.active { color:#f3f2fa; background:linear-gradient(110deg,rgba(166,154,255,.18),rgba(255,255,255,.045)); box-shadow:inset 0 0 0 1px rgba(255,255,255,.055); }
+    .rail-foot { margin-top:auto; padding:14px 9px 4px; border-top:1px solid var(--hair); display:flex; align-items:center; gap:9px; color:var(--text-3); font-size:11px; }
+    .rail-status { width:7px; height:7px; border-radius:50%; background:#64d5ad; box-shadow:0 0 12px rgba(100,213,173,.4); }
+    body:has(.desktop-rail) .wrap { max-width:1180px; margin-left:260px; padding-left:36px; padding-right:36px; }
+    body:has(.desktop-rail) .tabbar { display:none; }
+    body:has(.desktop-rail) .large-title { font-size:38px; line-height:1.15; margin-top:18px; }
+    body:has(.desktop-rail) .hero { background:radial-gradient(75% 150% at 100% 0%,rgba(85,211,190,.16),transparent 58%),linear-gradient(120deg,#17151f,#101116 72%); }
+    body:has(.desktop-rail) .hero .big { font-size:58px; }
+    body:has(.desktop-rail) .hero::after { content:''; position:absolute; right:-18px; bottom:-88px; width:240px; height:180px; border-radius:50%; background:radial-gradient(ellipse,rgba(166,154,255,.12),transparent 68%); pointer-events:none; }
+    body:has(.desktop-rail) .week .bar { background:linear-gradient(180deg,#71d6ba,#a69aff); }
+    body:has(.desktop-rail) .week .col.today .bar { background:linear-gradient(180deg,#ffe082,#f4b94f); }
+    body:has(.desktop-rail) .card { border-radius:16px; }
+  }
+
   /* ---------- шторка снизу (как в iOS): открывается пружиной, смахивается вниз ---------- */
   .sheet-back {
     position: fixed; inset: 0; z-index: 60; display: flex; align-items: flex-end; justify-content: center;

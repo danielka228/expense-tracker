@@ -71,6 +71,13 @@ export function layout(o: LayoutOpts, content: H) {
       <span class="icon">${raw(icon)}</span><span>${label}</span>
     </a>`;
   });
+  const desktopNav = o.loggedIn ? html`<aside class="desktop-rail" aria-label="${S.brand}">
+    <a class="rail-brand" href="/dashboard"><span class="rail-mark">${raw(TAB_ICONS.dashboard)}</span><span>${S.brand}</span></a>
+    <div class="rail-search">⌕ <span>${o.lang === 'en' ? 'Your overview' : 'Твой обзор'}</span></div>
+    <div class="rail-caption">${o.lang === 'en' ? 'Navigation' : 'Навигация'}</div>
+    <nav class="rail-links">${tabs.map((tab) => tab)}</nav>
+    <div class="rail-foot"><span class="rail-status"></span>${o.lang === 'en' ? 'All data in sync' : 'Данные синхронизированы'}</div>
+  </aside>` : '';
   return html`<!DOCTYPE html>
 <html lang="${S.htmlLang}" class="no-js">
 <head>
@@ -103,6 +110,7 @@ ${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
 </head>
 <body>
   <div class="toasts">${o.flashes.map(([cat, msg]) => html`<div class="flash ${cat}">${msg}</div>`)}</div>
+  ${desktopNav}
   ${o.bare ? content : html`<div class="${o.center ? 'center-wrap' : 'wrap'}">${content}</div>`}
   ${o.loggedIn ? html`<nav class="tabbar">${tabs}
   </nav>` : ''}
