@@ -126,6 +126,7 @@ const path = require('node:path');
     for(const width of [390,320]) {
       await page.setViewportSize({width,height:844});
       assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
+      assert.ok(await page.locator('[name=entry_date]').evaluate(el=>el.getBoundingClientRect().width)>=150,'date remains readable on narrow screens');
     }
     if(process.env.SCREENSHOT_DIR) await page.screenshot({path:path.join(process.env.SCREENSHOT_DIR,'nutrition-mobile.png'),fullPage:true});
     await page.goto('http://localhost:8799/nutrition?lang=en');

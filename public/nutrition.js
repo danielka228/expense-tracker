@@ -20,7 +20,7 @@
   function calculation() {
     const grams = Number(field('grams').value), kcal = Number(field('kcal_per_100').value);
     const buying = field('kind').value === 'purchase';
-    document.getElementById('food-grams-label').textContent = buying ? t('Вес всей покупки, г','Purchased product weight, g') : t('Вес съеденной порции, г','Eaten portion weight, g');
+    document.getElementById('food-grams-label').textContent = buying ? t('Вес покупки, г','Purchased weight, g') : t('Вес порции, г','Portion weight, g');
     document.getElementById('food-calculation').textContent = field('grams').value && field('kcal_per_100').value && grams > 0 && kcal >= 0
       ? `${Math.round(grams * kcal / 10) / 10} ${t('ккал', 'kcal')} · ${buying ? t('во всей покупке','in the full purchase') : t('в этой порции', 'in this portion')}` : t('Укажи вес и калорийность.', 'Enter weight and calories.');
     const pack = Number(field('package_grams').value), packageTotal = document.getElementById('food-package-total'), usePackage = document.getElementById('food-use-package');
