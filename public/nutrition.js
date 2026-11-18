@@ -14,6 +14,7 @@
   const matchesBox = document.getElementById('food-matches');
   const matchList = document.getElementById('food-match-list');
   const save = document.getElementById('food-save');
+  const photoDetails = document.querySelector('.food-photo');
   let jpeg = null, version = 0, controller = null, previewUrl;
   let questions = [], history = [], autoValues = {}, productMatches = [], busy = false, saving = false, dirty = false;
   const show = text => { status.textContent = text; };
@@ -25,14 +26,16 @@
       ? `${Math.round(grams * kcal / 10) / 10} ${t('ккал', 'kcal')} · ${buying ? t('во всей покупке','in the full purchase') : t('в этой порции', 'in this portion')}` : t('Укажи вес и калорийность.', 'Enter weight and calories.');
     const pack = Number(field('package_grams').value), packageTotal = document.getElementById('food-package-total'), usePackage = document.getElementById('food-use-package');
     const hasPackage = field('package_grams').value && pack > 0 && pack <= 100000 && field('kcal_per_100').value && kcal >= 0;
-    packageTotal.hidden = !hasPackage; usePackage.hidden = !hasPackage;
+    packageTotal.hidden = !hasPackage; usePackage.hidden = !hasPackage || buying;
     if (hasPackage) {
       const total = Math.round(pack * kcal / 100 * 10) / 10;
       packageTotal.textContent = t(`Во всей упаковке: ${total} ккал (${pack} г).`, `Whole package: ${total} kcal (${pack} g).`);
       usePackage.textContent = t(`Внести ${pack} г как съеденную порцию`, `Use ${pack} g as the eaten portion`);
     }
-    document.getElementById('food-price').hidden = field('kind').value !== 'purchase';
-    field('amount').disabled = document.getElementById('food-price').hidden;
+    document.getElementById('food-price').hidden = !buying;
+    document.getElementById('food-meal-field').hidden = buying;
+    document.getElementById('food-package-field').hidden = !buying;
+    field('amount').disabled = !buying;
     const source = document.getElementById('food-source');
     source.hidden = field('source').value === 'manual';
     source.textContent = field('source').value === 'catalog' ? t('Калорийность из Open Food Facts — проверь совпадение товара.', 'Calories from Open Food Facts — verify the product match.') : field('source').value === 'label' ? t('Калорийность с этикетки — проверь цифры.', 'Calories from the label — check the numbers.') : t('≈ Оценка ИИ. Проверь состав и вес порции.', '≈ AI estimate. Check ingredients and portion weight.');
@@ -51,7 +54,13 @@
     if (ev.target === field('kcal_per_100')) field('source').value = 'manual';
     calculation();
   });
-  form.addEventListener('change', calculation);
+  form.addEventListener('change', ev => {
+    calculation();
+    if (ev.target === field('kind')) {
+      if (field('kind').value === 'purchase' && photoDetails) photoDetails.open = true;
+      else if (photoDetails && photoDetails.open) photoDetails.open = false;
+    }
+  });
   window.addEventListener('beforeunload', ev => { if (dirty) { ev.preventDefault(); ev.returnValue = ''; } });
   const errors = {
     limit: t('Лимит ИИ на сегодня исчерпан. Введи данные вручную.', 'AI daily limit reached. Enter values manually.'),
@@ -120,6 +129,7 @@
     field('source').value = entry.source || 'manual';
     field('id').value = eat ? '' : entry.id;
     if (eat) { field('kind').value = 'meal'; field('grams').value = ''; field('entry_date').value = document.getElementById('food-day').value; }
+    if (photoDetails) photoDetails.open = false;
     document.getElementById('food-form-title').textContent = eat ? t('Сколько ты съел?', 'How much did you eat?') : t('Изменить запись','Edit entry');
     calculation(); form.scrollIntoView({ behavior: 'smooth', block: 'start' }); field(eat ? 'grams' : 'name').focus();
   });
