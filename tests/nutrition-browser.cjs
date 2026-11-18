@@ -17,6 +17,7 @@ const path = require('node:path');
     page.on('dialog', dialog=>dialog.accept());
     let calls=0, response, matches=[], visualMatch=null, delay=0, lastContext, apiError=null;
     const sample = {id:1,name:'Рис с курицей',grams:250,kcal_per_100:160,meal:'lunch',entry_date:'2026-11-17',kind:'meal',expense_id:null,source:'estimate'};
+    const purchaseSample = {id:2,name:'Йогурт',grams:450,kcal_per_100:62,meal:'snack',entry_date:'2026-11-17',kind:'purchase',expense_id:8,price:125,source:'catalog'};
     await page.route('http://localhost:8799/**',async route=>{
       const url = new URL(route.request().url());
       if(url.pathname==='/nutrition/analyze') {
@@ -26,10 +27,25 @@ const path = require('node:path');
       } else if(url.pathname==='/nutrition.js') {
         await route.fulfill({contentType:'text/javascript',body:fs.readFileSync('public/nutrition.js','utf8')});
       } else {
-        await route.fulfill({contentType:'text/html',body:String(await nutritionPage({entries:[sample],date:'2026-11-17',lang:url.searchParams.get('lang') || 'ru',ai:true,currency:'RUB'}))});
+        await route.fulfill({contentType:'text/html',body:String(await nutritionPage({entries:[sample,purchaseSample],date:'2026-11-17',lang:url.searchParams.get('lang') || 'ru',ai:true,currency:'RUB'}))});
       }
     });
     await page.goto('http://localhost:8799/nutrition');
+    assert.equal(await page.locator('#food-price').isHidden(),true);
+    await page.locator('[name=kind]').selectOption('purchase');
+    assert.equal(await page.locator('#food-price').isVisible(),true);
+    assert.equal(await page.locator('[name=amount]').isDisabled(),false);
+    await page.locator('[name=kind]').selectOption('meal');
+    await page.locator('[data-edit]').nth(1).click();
+    assert.equal(await page.locator('[name=kind]').inputValue(),'purchase');
+    assert.equal(await page.locator('[name=amount]').inputValue(),'125');
+    assert.equal(await page.locator('[name=expense_id]').inputValue(),'8');
+    assert.equal(await page.locator('#food-price').isVisible(),true);
+    await page.locator('#food-reset').click();
+    await page.locator('[data-eat]').click();
+    assert.equal(await page.locator('[name=kind]').inputValue(),'meal');
+    assert.equal(await page.locator('[name=expense_id]').inputValue(),'');
+    await page.locator('#food-reset').click();
     const photo = {name:'food.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aVxkAAAAASUVORK5CYII=','base64')};
     response={is_food:true,name:'Рис',grams:250,kcal_per_100:160,questions:['Сколько масла?'],note:'Примерная оценка',source:'estimate'};
     matches=[{code:'4660043858806',name:'Сырок творожный глазированный Картошка',brand:'Ростагрокомплекс',quantity:'50 г',kcal_per_100:413,image:null,source_url:'https://world.openfoodfacts.net/product/4660043858806'}];
@@ -80,6 +96,7 @@ const path = require('node:path');
     assert.equal(await page.locator('[name=name]').inputValue(),'Моё название');
     // Cancellation unlocks manual entry and ignores the old result.
     await page.locator('#food-analyze').click();
+    await page.locator('#food-cancel').waitFor({state:'visible'});
     await page.locator('#food-cancel').click();
     assert.equal(await page.locator('#food-save').isDisabled(),false);
     await page.waitForTimeout(500);

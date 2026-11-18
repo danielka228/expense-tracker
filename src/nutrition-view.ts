@@ -11,7 +11,7 @@ export function nutritionPage(d: { entries: Food[]; date: string; lang: Lang; ai
   const total = eaten.reduce((sum, e) => sum + calories(e.grams, e.kcal_per_100), 0);
   const adjacent = (delta: number) => new Date(Date.parse(d.date + 'T12:00:00Z') + delta * 86400000).toISOString().slice(0,10);
   const row = (e: Food) => html`<article class="food-row">
-    <div><strong>${e.name}</strong>${e.source === 'estimate' ? html`<span class="food-badge">${t('≈ оценка ИИ','≈ AI estimate')}</span>` : e.source === 'label' ? html`<span class="food-badge">${t('С этикетки','From label')}</span>` : e.source === 'catalog' ? html`<span class="food-badge">${t('Из каталога Open Food Facts','From Open Food Facts catalog')}</span>` : ''}<p>${e.grams} ${t('г','g')} · ${e.kcal_per_100} ${t('ккал / 100 г','kcal / 100 g')}</p>
+    <div><strong>${e.name}</strong>${e.source === 'estimate' ? html`<span class="food-badge">${t('≈ оценка ИИ','≈ AI estimate')}</span>` : e.source === 'label' ? html`<span class="food-badge">${t('С этикетки','From label')}</span>` : e.source === 'catalog' ? html`<span class="food-badge">${t('Из каталога Open Food Facts','From Open Food Facts catalog')}</span>` : ''}<p>${e.grams} ${t('г','g')} · ${e.kcal_per_100} ${t('ккал / 100 г','kcal / 100 g')}${e.kind === 'purchase' && e.price !== null && e.price !== undefined ? html` · ${e.price} ${d.currency} ${t('в расходах','in expenses')}` : ''}</p>
       ${e.kind === 'meal' ? html`<b>${calories(e.grams, e.kcal_per_100)} ${t('ккал','kcal')}</b>` : ''}</div>
     <div class="food-actions">
       ${e.kind === 'purchase' ? html`<button type="button" class="btn-plain" data-eat="${JSON.stringify(e)}">${t('Записать порцию','Log a portion')}</button>` : ''}
@@ -30,7 +30,7 @@ export function nutritionPage(d: { entries: Food[]; date: string; lang: Lang; ai
 <div class="food-columns"><section class="food-panel">
 <h2 id="food-form-title">${t('Добавить запись','Add entry')}</h2>
 <form id="food-form">
-<input type="hidden" name="id" value=""><input type="hidden" name="request_key" value="${crypto.randomUUID()}"><input type="hidden" name="source" value="manual">
+<input type="hidden" name="id" value=""><input type="hidden" name="expense_id" value=""><input type="hidden" name="request_key" value="${crypto.randomUUID()}"><input type="hidden" name="source" value="manual">
 <label>${t('Тип записи','Entry type')}<select name="kind"><option value="meal">${t('Приём пищи','Meal')}</option><option value="purchase">${t('Покупка продукта','Food purchase')}</option></select></label>
 <details class="food-photo" open><summary>${t('Заполнить по фото с ИИ','Fill from a photo with AI')}</summary>
 <p>${t('Выбери фото — ИИ сам распознает еду или этикетку и предложит калории и вес. Проверь примерную оценку перед сохранением.','Choose a photo — AI automatically recognizes food or a nutrition label and suggests calories and weight. Review the approximate estimate before saving.')}</p>
@@ -51,13 +51,13 @@ ${d.ai ? html`
 <p id="food-calculation" aria-live="polite">${t('Укажи вес и калорийность.','Enter weight and calories.')}</p>
 <label>${t('Приём пищи','Meal')}<select name="meal">${MEALS.map((m,i) => html`<option value="${m}">${names[i]}</option>`)}</select></label>
 <label>${t('Дата записи','Entry date')}<input name="entry_date" type="date" value="${d.date}" required></label>
-<label id="food-price" hidden>${t('Цена покупки (необязательно)','Purchase price (optional)')} · ${d.currency}<input name="amount" type="number" min="0.01" max="9999999" step="0.01" inputmode="decimal"><small>${t('Создаст также трату в категории «Еда». Удаление записи питания не удаляет трату.','Also creates a Food expense. Deleting the food entry does not delete that expense.')}</small></label>
+<label id="food-price" hidden>${t('Цена покупки (необязательно)','Purchase price (optional)')} · ${d.currency}<input name="amount" type="number" min="0.01" max="9999999" step="0.01" inputmode="decimal"><small>${t('Цена и дата синхронизируются с расходами. Если очистить цену при редактировании, связанный расход удалится.','Price and date sync with expenses. Clearing the price while editing also deletes its linked expense.')}</small></label>
 <button type="submit" id="food-save">${t('Сохранить запись','Save entry')}</button><button type="button" class="btn-plain" id="food-reset">${t('Очистить / отменить','Clear / cancel')}</button>
 </form></section>
 <section class="food-diary"><h2>${t('Приёмы пищи','Meals')}</h2>
 ${!eaten.length ? html`<div class="food-panel"><h3>${t('Пока нет записей','No meals yet')}</h3><p>${t('Добавь первый приём пищи вручную или по фото.','Add your first meal manually or from a photo.')}</p></div>` : ''}
 ${MEALS.map((m,i) => { const list = eaten.filter(e => e.meal === m); return list.length ? html`<section class="food-panel"><h3>${names[i]} <small>· ${Math.round(list.reduce((s,e) => s + calories(e.grams,e.kcal_per_100),0))} ${t('ккал','kcal')}</small></h3>${list.map(row)}</section>` : ''; })}
-<h2>${t('Покупки продуктов','Food purchases')}</h2><div class="food-panel"><p>${t('Купленный вес хранится отдельно. Нажми «Записать порцию» и укажи, сколько съел.','Purchased weight is separate. Choose “Log a portion” and enter how much you ate.')}</p>${bought.length ? bought.map(row) : html`<p>${t('На эту дату покупок нет.','No purchases on this date.')}</p>`}</div>
+<h2>${t('Покупки продуктов','Food purchases')}</h2><div class="food-panel"><p>${t('Цена покупки связана с расходами. Купленный вес хранится отдельно от съеденного: нажми «Записать порцию» и укажи, сколько съел.','Purchase price links to expenses. Purchased weight is separate from eaten weight: choose “Log a portion” and enter how much you ate.')}</p>${bought.length ? bought.map(row) : html`<p>${t('На эту дату покупок нет.','No purchases on this date.')}</p>`}</div>
 </section></div><script src="/nutrition.js" defer></script>`);
 }
 const CSS = `

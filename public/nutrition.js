@@ -21,7 +21,7 @@
     const grams = Number(field('grams').value), kcal = Number(field('kcal_per_100').value);
     document.getElementById('food-calculation').textContent = field('grams').value && field('kcal_per_100').value && grams > 0 && kcal >= 0
       ? `${Math.round(grams * kcal / 10) / 10} ${t('ккал', 'kcal')} · ${t('в указанном весе', 'in this weight')}` : t('Укажи вес и калорийность.', 'Enter weight and calories.');
-    document.getElementById('food-price').hidden = field('kind').value !== 'purchase' || !!field('id').value;
+    document.getElementById('food-price').hidden = field('kind').value !== 'purchase';
     field('amount').disabled = document.getElementById('food-price').hidden;
     const source = document.getElementById('food-source');
     source.hidden = field('source').value === 'manual';
@@ -70,6 +70,8 @@
   form.addEventListener('submit', async ev => {
     ev.preventDefault();
     if (busy || saving) return;
+    if (field('expense_id').value && (field('kind').value !== 'purchase' || !field('amount').value.trim()) &&
+        !confirm(t('Связанный расход тоже будет удалён. Продолжить?', 'The linked expense will also be deleted. Continue?'))) return;
     saving = true; save.disabled = true;
     // Keep the same request key after a network failure, even if the server already saved it.
     const body = new FormData(form), day = field('entry_date').value;
@@ -92,7 +94,7 @@
   }
   const discard = () => !dirty || confirm(t('Отменить несохранённые изменения?', 'Discard unsaved changes?'));
   function reset() {
-    form.reset(); field('id').value = ''; field('source').value = 'manual'; field('request_key').value = crypto.randomUUID();
+    form.reset(); field('id').value = ''; field('expense_id').value = ''; field('source').value = 'manual'; field('request_key').value = crypto.randomUUID();
     clearPhoto(); dirty = false; show(''); calculation();
     document.getElementById('food-form-title').textContent = t('Добавить запись','Add entry');
   }
@@ -103,6 +105,8 @@
     const eat = button.hasAttribute('data-eat');
     const entry = JSON.parse(eat ? button.dataset.eat : button.dataset.edit);
     for (const key of ['name','grams','kcal_per_100','meal','entry_date','kind']) field(key).value = entry[key];
+    field('expense_id').value = eat ? '' : (entry.expense_id || '');
+    field('amount').value = entry.price == null ? '' : entry.price;
     field('source').value = entry.source || 'manual';
     field('id').value = eat ? '' : entry.id;
     if (eat) { field('kind').value = 'meal'; field('grams').value = ''; field('entry_date').value = document.getElementById('food-day').value; }
@@ -110,7 +114,7 @@
     calculation(); form.scrollIntoView({ behavior: 'smooth', block: 'start' }); field(eat ? 'grams' : 'name').focus();
   });
   for (const button of document.querySelectorAll('[data-delete]')) button.addEventListener('click', async () => {
-    if (saving || !discard() || !confirm(t('Удалить запись питания? Связанная трата останется в расходах.', 'Delete food entry? Any linked expense stays in expenses.'))) return;
+    if (saving || !discard() || !confirm(t('Удалить запись питания? Связанная трата также будет удалена.', 'Delete this food entry? Its linked expense will also be deleted.'))) return;
     button.disabled = true;
     try { await request('/nutrition/delete/' + button.dataset.delete); dirty = false; location.reload(); }
     catch (e) { show(e.message); button.disabled = false; }

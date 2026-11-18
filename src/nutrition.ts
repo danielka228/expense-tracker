@@ -15,7 +15,7 @@ nutritionRoutes.get('/', async c => {
   const day = c.req.query('date') || new Date().toISOString().slice(0, 10);
   if (!validDate(day)) return c.text('Invalid date', 400);
   const user = c.get('user');
-  const { results } = await c.env.DB.prepare('SELECT * FROM food_entries WHERE user_id = ? AND entry_date = ? ORDER BY id DESC').bind(user.id, day).all<Food>();
+  const { results } = await c.env.DB.prepare('SELECT f.*, e.amount AS price FROM food_entries f LEFT JOIN expenses e ON e.id=f.expense_id AND e.user_id=f.user_id WHERE f.user_id = ? AND f.entry_date = ? ORDER BY f.id DESC').bind(user.id, day).all<Food>();
   return c.html(nutritionPage({ entries: results, date: day, lang: langOf(user.lang), ai: !!c.env.AI, currency: user.currency }));
 });
 nutritionRoutes.post('/save', async c => {
@@ -25,16 +25,42 @@ nutritionRoutes.post('/save', async c => {
   const user = c.get('user');
   const id = f.id ? foodNumber(f.id, Number.MAX_SAFE_INTEGER) : null;
   if (f.id && (!id || !Number.isInteger(id))) return c.json({ error: 'invalid' }, 400);
+  const amount = f.amount ? foodNumber(f.amount, 9999999) : null;
+  if (f.amount && amount === null) return c.json({ error: 'invalid' }, 400);
   if (id) {
-    const old = await c.env.DB.prepare('SELECT id FROM food_entries WHERE id = ? AND user_id = ?').bind(id, user.id).first();
+    const old = await c.env.DB.prepare('SELECT id,expense_id FROM food_entries WHERE id = ? AND user_id = ?').bind(id, user.id).first<{id:number;expense_id:number|null}>();
     if (!old) return c.json({ error: 'not_found' }, 404);
-    await c.env.DB.prepare('UPDATE food_entries SET name=?, grams=?, kcal_per_100=?, meal=?, entry_date=?, kind=?, source=? WHERE id=? AND user_id=?')
-      .bind(entry.name, entry.grams, entry.kcal, entry.meal, entry.date, entry.kind, entry.source, id, user.id).run();
+    const linkedExpense = old.expense_id && entry.kind === 'purchase' && amount !== null;
+    const updateFood = c.env.DB.prepare('UPDATE food_entries SET name=?, grams=?, kcal_per_100=?, meal=?, entry_date=?, kind=?, source=? WHERE id=? AND user_id=?')
+      .bind(entry.name, entry.grams, entry.kcal, entry.meal, entry.date, entry.kind, entry.source, id, user.id);
+    if (old.expense_id && linkedExpense) {
+      await c.env.DB.batch([
+        updateFood,
+        c.env.DB.prepare('UPDATE expenses SET amount=?,note=?,expense_date=? WHERE id=? AND user_id=?').bind(amount, entry.name, entry.date, old.expense_id, user.id),
+      ]);
+    } else if (old.expense_id && entry.kind !== 'purchase') {
+      // Clear the foreign key before deleting the linked expense; the row is now a meal, not a purchase.
+      await c.env.DB.batch([
+        c.env.DB.prepare('UPDATE food_entries SET expense_id=NULL WHERE id=? AND user_id=?').bind(id, user.id),
+        updateFood,
+        c.env.DB.prepare('DELETE FROM expenses WHERE id=? AND user_id=?').bind(old.expense_id, user.id),
+      ]);
+    } else if (old.expense_id && amount === null) {
+      await c.env.DB.batch([
+        c.env.DB.prepare('UPDATE food_entries SET expense_id=NULL WHERE id=? AND user_id=?').bind(id, user.id),
+        updateFood,
+        c.env.DB.prepare('DELETE FROM expenses WHERE id=? AND user_id=?').bind(old.expense_id, user.id),
+      ]);
+    } else if (entry.kind === 'purchase' && amount !== null) {
+      await c.env.DB.batch([
+        updateFood,
+        c.env.DB.prepare("INSERT INTO expenses (user_id,amount,category,note,expense_date) VALUES (?,?,'Еда',?,?)").bind(user.id, amount, entry.name, entry.date),
+        c.env.DB.prepare('UPDATE food_entries SET expense_id=last_insert_rowid() WHERE id=? AND user_id=?').bind(id, user.id),
+      ]);
+    } else await updateFood.run();
   } else {
     const key = typeof f.request_key === 'string' ? f.request_key : crypto.randomUUID();
     if (!/^[a-zA-Z0-9-]{16,64}$/.test(key)) return c.json({ error: 'invalid' }, 400);
-    const amount = f.amount ? foodNumber(f.amount, 9999999) : null;
-    if (f.amount && amount === null) return c.json({ error: 'invalid' }, 400);
     const insert = c.env.DB.prepare('INSERT OR IGNORE INTO food_entries (user_id,name,grams,kcal_per_100,meal,entry_date,kind,expense_id,source,request_key) VALUES (?,?,?,?,?,?,?,NULL,?,?)').bind(user.id, entry.name, entry.grams, entry.kcal, entry.meal, entry.date, entry.kind, entry.source, key);
     if (entry.kind === 'purchase' && amount !== null) {
       // One transaction: a failure cannot leave an expense without its food purchase.
@@ -54,7 +80,12 @@ nutritionRoutes.post('/save', async c => {
   return c.json({ ok: true });
 });
 nutritionRoutes.post('/delete/:id', async c => {
-  await c.env.DB.prepare('DELETE FROM food_entries WHERE id=? AND user_id=?').bind(c.req.param('id'), c.get('user').id).run();
+  const id = Number(c.req.param('id'));
+  const userId = c.get('user').id;
+  await c.env.DB.batch([
+    c.env.DB.prepare('DELETE FROM expenses WHERE id=(SELECT expense_id FROM food_entries WHERE id=? AND user_id=?) AND user_id=?').bind(id, userId, userId),
+    c.env.DB.prepare('DELETE FROM food_entries WHERE id=? AND user_id=?').bind(id, userId),
+  ]);
   return c.json({ ok: true });
 });
 nutritionRoutes.post('/analyze', async c => {

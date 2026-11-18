@@ -1,6 +1,6 @@
 export const MEALS = ['breakfast', 'lunch', 'dinner', 'snack'] as const;
 export interface Food {
-  id: number; name: string; grams: number; kcal_per_100: number;
+  id: number; name: string; grams: number; kcal_per_100: number; price?: number | null;
   meal: typeof MEALS[number]; entry_date: string; kind: 'meal' | 'purchase'; expense_id: number | null; source?: 'manual' | 'estimate' | 'label' | 'catalog';
 }
 export function foodNumber(value: unknown, max: number, zero = false): number | null {
