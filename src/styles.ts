@@ -292,6 +292,84 @@ export const BASE_CSS = `
   }
 `;
 
+// Единая визуальная система приложения: тихий тёплый графит, меньше «стекла» и
+// рамок, больше контраста в данных и одинаковый ритм на всех внутренних экранах.
+export const APP_REDESIGN_CSS = `
+  :root {
+    --bg: #101113;
+    --surface: #181a1d;
+    --surface-2: #202226;
+    --fill: #232529;
+    --fill-2: #2c2f34;
+    --hair: rgba(255,255,255,.055);
+    --sep: rgba(255,255,255,.09);
+    --text: #f4f3ef;
+    --text-2: #a2a3a5;
+    --text-3: #77797d;
+    --accent: #b8a5ff;
+    --accent-soft: rgba(184,165,255,.14);
+    --grad: linear-gradient(135deg,#c5b6ff,#9c8af1);
+    --green: #9bd4b1;
+    --red: #ff8b82;
+    --gold: #e9c77e;
+    --r-lg: 22px;
+    --r-md: 14px;
+    color-scheme: dark;
+  }
+  body { background: var(--bg); letter-spacing: -.15px; }
+  .wrap { max-width: 620px; padding-left: 20px; padding-right: 20px; }
+  .center-wrap { max-width: 440px; }
+  h2 { font-size: 20px; letter-spacing: -.35px; }
+  h3 { font-size: 16px; }
+  .large-title,.page-title { font-size: 32px; line-height: 1.12; letter-spacing: -1px; margin: 4px 2px 4px; }
+  .large-sub { margin: 0 2px 22px; font-size: 14px; line-height: 1.45; }
+  .nav { margin-left:-20px; margin-right:-20px; padding-left:20px; padding-right:20px; height:calc(52px + env(safe-area-inset-top)); }
+  .nav.compact { background:rgba(16,17,19,.9); border-bottom-color:var(--hair); }
+  .nav-side.right a { font-size:14px; font-weight:600; }
+  .card,.list { background:var(--surface); border:1px solid var(--hair); border-radius:20px; }
+  .card { padding:18px; margin-bottom:12px; }
+  .list { margin-bottom:12px; }
+  .row { min-height:54px; }
+  .section-h { margin:24px 4px 9px; font-size:11px; letter-spacing:.9px; font-weight:700; }
+  input,select,textarea { background:var(--surface-2); border:1px solid transparent; border-radius:13px; }
+  input:focus,select:focus,textarea:focus { background:var(--surface-2); box-shadow:0 0 0 3px var(--accent-soft); }
+  button,.btn { min-height:48px; border-radius:14px; font-size:15px; font-weight:650; }
+  .btn-plain { min-height:42px; }
+  .btn-secondary,.btn-gray { background:var(--surface-2); }
+  .pill { height:30px; font-size:12px; }
+  .hero { border:1px solid rgba(184,165,255,.12); background:linear-gradient(145deg,#222127,#1a1b1e 65%); padding:20px; }
+  .hero .label { font-size:13px; }
+  .hero .big { font-size:46px; letter-spacing:-2.2px; margin:7px 0 17px; }
+  .hero .big .cur { font-size:24px; }
+  .chip { background:rgba(255,255,255,.055); border-radius:13px; }
+  .chip .k { font-size:12px; }
+  .chip .v { font-size:16px; }
+  .actions { gap:9px; margin-bottom:12px; }
+  .action { background:var(--surface); border:1px solid var(--hair); border-radius:17px; gap:7px; padding:13px 5px 12px; font-size:12px; }
+  .action .ring { width:40px; height:40px; border-radius:13px; }
+  .action.voice .ring { background:var(--accent-soft); color:var(--accent); box-shadow:none; }
+  .form-rows { background:var(--surface-2); border-radius:15px; }
+  .amount-input { background:none; border:0; }
+  .tabbar { height:62px; left:14px; right:14px; bottom:calc(9px + env(safe-area-inset-bottom)); padding:5px; gap:2px; background:rgba(27,28,31,.96); border:1px solid rgba(255,255,255,.09); box-shadow:0 8px 28px rgba(0,0,0,.32); }
+  .tab { font-size:10px; font-weight:600; }
+  .tab .icon svg { width:22px; height:22px; }
+  .tab.active { color:var(--accent); background:rgba(184,165,255,.12); }
+  .ico { box-shadow:none; }
+  .stat { border:1px solid var(--hair); }
+  .toasts .flash { border-radius:15px; }
+  @media(min-width:760px) {
+    .wrap { padding-top:18px; }
+    .nav { margin-top:-18px; }
+  }
+  @media(max-width:480px) {
+    .wrap { padding-left:16px; padding-right:16px; }
+    .nav { margin-left:-16px; margin-right:-16px; padding-left:16px; padding-right:16px; }
+    .large-title,.page-title { font-size:30px; }
+    .hero .big { font-size:42px; }
+    .tabbar { left:10px; right:10px; }
+  }
+`;
+
 // Главная: виджеты, быстрые действия, голосовой ввод и сканер
 export const DASHBOARD_CSS = `
   .hero {

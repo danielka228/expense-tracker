@@ -1,7 +1,7 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
 import { ADMIN_JS, WRAPPED_JS, COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SUBS_JS, VOICE_JS } from './client';
-import { ADMIN_CSS, WRAPPED_BANNER_CSS, WRAPPED_CSS, BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS, SUBS_CSS } from './styles';
+import { ADMIN_CSS, WRAPPED_BANNER_CSS, WRAPPED_CSS, BASE_CSS, APP_REDESIGN_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS, SUBS_CSS } from './styles';
 import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
 import { plural } from './trek';
 import { SUB_PERIODS, SUB_PRESETS, subsText, type Sub } from './subs';
@@ -99,7 +99,7 @@ ${o.share
 <meta name="twitter:card" content="summary_large_image">`
   : ''}
 <style>
-${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
+${raw(BASE_CSS)}${raw(APP_REDESIGN_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
 </head>
 <body>
   <div class="toasts">${o.flashes.map(([cat, msg]) => html`<div class="flash ${cat}">${msg}</div>`)}</div>
