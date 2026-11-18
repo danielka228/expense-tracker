@@ -74,6 +74,17 @@ test('confirmed food gets a separate calorie analysis', async () => {
   assert.equal(result.kcal_per_100, 62);
 });
 
+test('an unclear classifier falls back to the detailed food analysis', async () => {
+  let calls = 0;
+  const result = await recognizeFood({ run: async () => {
+    calls++;
+    return { response: calls === 1 ? 'The image appears to show food.' : '{"is_food":true,"name":"Пирожное Картошка","brand":"Ростагрокомплекс","grams":50,"kcal_per_100":413,"questions":[],"note":"Оценка по каталогу","source":"estimate"}' };
+  } }, new Uint8Array([1,2,3]), '', 'ru');
+  assert.equal(calls, 2);
+  assert.equal(result.is_food, true);
+  assert.equal(result.name, 'Пирожное Картошка');
+});
+
 test('catalog results keep nutrition data and only allow trusted product-image URLs', () => {
   const products = parseFoodSearchResults({products:[
     {code:'4660043858806',product_name:'Картошка',brands:'Ростагрокомплекс',quantity:'50 г',image_front_url:'https://images.openfoodfacts.net/a.jpg',nutriments:{'energy-kcal_100g':413}},
