@@ -1,7 +1,7 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
 import { ADMIN_JS, WRAPPED_JS, COMMON_JS, DASH_JS, LANDING_JS, PARSE_JS, SUBS_JS, VOICE_JS } from './client';
-import { ADMIN_CSS, WRAPPED_BANNER_CSS, WRAPPED_CSS, BASE_CSS, APP_REDESIGN_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS, SUBS_CSS } from './styles';
+import { ADMIN_CSS, WRAPPED_BANNER_CSS, WRAPPED_CSS, BASE_CSS, DASHBOARD_CSS, FRIENDS_CSS, LANDING_CSS, PROFILE_CSS, SETTINGS_CSS, SUBS_CSS } from './styles';
 import { MASCOT_CSS, MASCOT_JS, mascot, type Mood } from './mascot';
 import { plural } from './trek';
 import { SUB_PERIODS, SUB_PRESETS, subsText, type Sub } from './subs';
@@ -99,7 +99,7 @@ ${o.share
 <meta name="twitter:card" content="summary_large_image">`
   : ''}
 <style>
-${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}${raw(APP_REDESIGN_CSS)}</style>
+${raw(BASE_CSS)}${raw(MASCOT_CSS)}${raw(o.extraCss ?? '')}</style>
 </head>
 <body>
   <div class="toasts">${o.flashes.map(([cat, msg]) => html`<div class="flash ${cat}">${msg}</div>`)}</div>
@@ -445,8 +445,8 @@ type IconName = keyof typeof ICONS;
 
 // Цвет плитки и цвет сегмента на диаграмме
 const COLORS: Record<string, string> = {
-  blue: '#7486ad', green: '#6fa88b', orange: '#b98d67', pink: '#ad7c96',
-  purple: '#927bb5', teal: '#689e99', yellow: '#b19c60', red: '#b67773', slate: '#828994',
+  blue: '#5f8cf7', green: '#2fc487', orange: '#f68a41', pink: '#ef6a9c',
+  purple: '#9a72f7', teal: '#30c2b4', yellow: '#efb73d', red: '#ec5a70', slate: '#7d879c',
 };
 
 const ICO_RULES: [string[], string, IconName][] = [
@@ -665,7 +665,7 @@ function kopiCard(d: { sym: string; today: string; todayTotal: number; monthTota
         'Хе-хе, щекотно! 😄',
       ];
   return html`<div class="kopi-card reveal" style="--d:.03s" data-tips="${JSON.stringify(tips)}" data-i="0">
-  ${raw(mascot(mood, 64, '', lang))}
+  ${raw(mascot(mood, 64, 'interactive', lang))}
   <div class="kopi-bubble"><span class="who">${en ? 'Track' : 'Трэк'}</span><span class="kopi-text">${raw(text)}</span></div>
 </div>`;
 }
@@ -716,8 +716,6 @@ export function dashboardPage(d: { appMode?: 'expenses' | 'nutrition';
       html`${A.greeting.replace('%s', d.username)} · ${dayTitle(d.today, d.today, d.lang).toLowerCase()}, ${dateStr}`,
     )}
 
-<div class="dashboard-layout">
-<main class="dashboard-main">
 <div class="card hero reveal">
   <div class="label">${A.spentIn.replace('%s', month)}</div>
   <div class="big">${countUp(d.monthTotal)}<span class="cur">${d.sym}</span></div>
@@ -738,7 +736,6 @@ ${kopiCard(d)}
 
 <div class="card reveal" style="--d:.1s">
   <form method="POST" id="add-form" data-today="${d.today}" data-sym="${d.sym}" autocomplete="off">
-    <div class="expense-form-head"><div><h2>${d.lang === 'en' ? 'New expense' : 'Новая трата'}</h2><p>${d.lang === 'en' ? 'Add it now, the rest is optional.' : 'Добавь сумму, остальное можно заполнить позже.'}</p></div></div>
     <div class="amount-wrap"><input class="amount-input" type="text" name="amount" inputmode="decimal" placeholder="0" required aria-label="${d.lang === 'en' ? 'Amount' : 'Сумма'}"><span class="amount-cur">${d.sym}</span></div>
     <div class="form-rows">
       <label class="form-row"><span>${A.category}</span><select name="category">${catOptions()}</select></label>
@@ -753,8 +750,7 @@ ${kopiCard(d)}
     <button type="submit">${A.addBtn}</button>
   </form>
 </div>
- </main>
-<aside class="dashboard-side">
+
 <div class="reveal">${weekWidget(d.week, d.today, d.sym, d.lang)}</div>
 
 ${subsTeaser(d.subs, d.sym, d.lang)}
@@ -767,8 +763,6 @@ ${d.byCategory.length ? html`<div class="reveal">${categoriesWidget(d.byCategory
     ? recentRows
     : html`<div class="kopi-empty">${raw(mascot('sleep', 72, '', d.lang))}<div>${A.emptyDash}</div></div>`}
 </div>
- </aside>
- </div>
 
 <div class="sheet-back" id="voice">
   <div class="sheet">
