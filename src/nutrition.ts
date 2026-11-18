@@ -3,7 +3,8 @@ import { bodyLimit } from 'hono/body-limit';
 import type { App } from './index';
 import { langOf } from './i18n';
 import { takeAiQuota } from './vision';
-import { recognizeFood } from './nutrition-ai';
+import { compareFoodCandidates, recognizeFood } from './nutrition-ai';
+import { searchFoodProducts } from './nutrition-search';
 import { readFood, validDate, foodNumber, type Food } from './nutrition-data';
 import { nutritionPage } from './nutrition-view';
 
@@ -69,5 +70,7 @@ nutritionRoutes.post('/analyze', async c => {
   const guess = await recognizeFood(c.env.AI, bytes, context, langOf(c.get('user').lang));
   if (!guess) return c.json({ error: 'unknown' }, 422);
   if (!guess.is_food) return c.json({ error: 'not_food' }, 422);
-  return c.json({ ok: true, guess });
+  const matches = await searchFoodProducts(guess.name, guess.brand);
+  const visualMatch = matches.length ? await compareFoodCandidates(c.env.AI, bytes, matches) : null;
+  return c.json({ ok: true, guess, matches, visualMatch });
 });

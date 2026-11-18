@@ -11,9 +11,11 @@
   const cancel = document.getElementById('food-cancel');
   const preview = document.getElementById('food-preview');
   const questionsBox = document.getElementById('food-questions');
+  const matchesBox = document.getElementById('food-matches');
+  const matchList = document.getElementById('food-match-list');
   const save = document.getElementById('food-save');
   let jpeg = null, version = 0, controller = null, previewUrl;
-  let questions = [], history = [], autoValues = {}, busy = false, saving = false, dirty = false;
+  let questions = [], history = [], autoValues = {}, productMatches = [], busy = false, saving = false, dirty = false;
   const show = text => { status.textContent = text; };
   function calculation() {
     const grams = Number(field('grams').value), kcal = Number(field('kcal_per_100').value);
@@ -23,7 +25,7 @@
     field('amount').disabled = document.getElementById('food-price').hidden;
     const source = document.getElementById('food-source');
     source.hidden = field('source').value === 'manual';
-    source.textContent = field('source').value === 'label' ? t('Калорийность с этикетки — проверь цифры.', 'Calories from the label — check the numbers.') : t('≈ Оценка ИИ. Проверь состав и вес порции.', '≈ AI estimate. Check ingredients and portion weight.');
+    source.textContent = field('source').value === 'catalog' ? t('Калорийность из Open Food Facts — проверь совпадение товара.', 'Calories from Open Food Facts — verify the product match.') : field('source').value === 'label' ? t('Калорийность с этикетки — проверь цифры.', 'Calories from the label — check the numbers.') : t('≈ Оценка ИИ. Проверь состав и вес порции.', '≈ AI estimate. Check ingredients and portion weight.');
   }
   function setBusy(value) {
     busy = value;
@@ -80,9 +82,9 @@
   });
   function stop() { version++; controller?.abort(); controller = null; setBusy(false); }
   function clearPhoto() {
-    stop(); jpeg = null; questions = []; history = []; autoValues = {};
+    stop(); jpeg = null; questions = []; history = []; autoValues = {}; productMatches = [];
     if (photo) {
-      photo.value = ''; result.textContent = ''; questionsBox.replaceChildren();
+      photo.value = ''; result.textContent = ''; questionsBox.replaceChildren(); matchList.replaceChildren(); matchesBox.hidden = true;
       document.getElementById('food-context').value = ''; preview.hidden = true;
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setBusy(false);
@@ -117,7 +119,7 @@
     cancel.addEventListener('click', () => { stop(); result.textContent = t('Распознавание отменено. Можно повторить или заполнить вручную.', 'Analysis canceled. Retry or fill in manually.'); });
     photo.addEventListener('change', async () => {
       stop(); const current = version;
-      jpeg = null; questions = []; history = []; result.textContent = ''; questionsBox.replaceChildren(); preview.hidden = true;
+      jpeg = null; questions = []; history = []; productMatches = []; result.textContent = ''; questionsBox.replaceChildren(); matchList.replaceChildren(); matchesBox.hidden = true; preview.hidden = true;
       // Remove old AI suggestions; preserve values explicitly entered by the person.
       for (const [key, value] of Object.entries(autoValues)) if (field(key).value === value) field(key).value = '';
       autoValues = {}; field('source').value = 'manual'; calculation();
@@ -144,7 +146,7 @@
       if (!jpeg || saving) return;
       controller?.abort(); const current = ++version;
       const active = new AbortController(); controller = active;
-      const timer = setTimeout(() => active.abort(), 35000);
+      const timer = setTimeout(() => active.abort(), 55000);
       const snapshot = Object.fromEntries(['name','grams','kcal_per_100'].map(key => [key, field(key).value]));
       const answers = questions.map((q,i) => ({ question:q, answer:questionsBox.querySelectorAll('input')[i]?.value || '' })).filter(q=>q.answer.trim());
       const context = JSON.stringify({ previousAnswers:history, answers, details:document.getElementById('food-context').value,
@@ -152,7 +154,7 @@
       const body = new FormData(); body.set('photo', jpeg, 'food.jpg'); body.set('context', context);
       setBusy(true); result.textContent = t('Распознаю еду и оцениваю порцию…','Identifying food and estimating the portion…');
       try {
-        const { guess } = await request('/nutrition/analyze', body, active.signal);
+        const { guess, matches = [], visualMatch = null } = await request('/nutrition/analyze', body, active.signal);
         if (current !== version) return;
         history = [...history, ...answers].slice(-4);
         const suggested = { name:guess.name || '', grams:guess.grams === null ? '' : String(Math.round(guess.grams*10)/10), kcal_per_100:guess.kcal_per_100 === null ? '' : String(Math.round(guess.kcal_per_100*10)/10) };
@@ -168,12 +170,46 @@
           const label = document.createElement('label'); label.append(document.createTextNode(q));
           const input = document.createElement('input'); input.type = 'text'; input.maxLength = 250; input.placeholder = t('Твой ответ', 'Your answer'); label.append(input); questionsBox.append(label);
         }
+        productMatches = Array.isArray(matches) ? matches : [];
+        drawFoodMatches(productMatches, visualMatch);
         result.textContent = [t('Проверь результат перед сохранением.', 'Review the result before saving.'),guess.note,questions.length ? t('Ответь на вопросы выше и нажми «Распознать / уточнить».', 'Answer the questions above and click “Analyze / refine”.') : ''].filter(Boolean).join('\n\n');
         dirty = true; calculation();
       } catch (e) {
         if (current === version) result.textContent = active.signal.aborted ? t('ИИ не ответил вовремя. Попробуй ещё раз или введи данные вручную.', 'AI did not respond in time. Retry or enter values manually.') : e.message;
       } finally { clearTimeout(timer); if (current === version) { controller = null; setBusy(false); } }
     }
+    function drawFoodMatches(matches, visualMatch) {
+      matchList.replaceChildren();
+      if (!Array.isArray(matches) || !matches.length) { matchesBox.hidden = true; return; }
+      matchesBox.hidden = false;
+      for (const match of matches) {
+        const article = document.createElement('article'); article.className = 'food-match';
+        if (match.image) { const img = document.createElement('img'); img.src = match.image; img.alt = ''; img.loading = 'lazy'; article.append(img); }
+        else { const spacer = document.createElement('span'); article.append(spacer); }
+        const body = document.createElement('div'); body.className = 'food-match-body';
+        const name = document.createElement('div'); name.className = 'food-match-name'; name.textContent = match.name || t('Без названия','Unnamed product'); body.append(name);
+        const meta = document.createElement('div'); meta.className = 'food-match-meta';
+        meta.textContent = [match.brand, match.quantity, match.kcal_per_100 !== null ? `${match.kcal_per_100} ${t('ккал / 100 г','kcal / 100 g')}` : ''].filter(Boolean).join(' · ');
+        body.append(meta);
+        const actions = document.createElement('div'); actions.className = 'food-match-actions';
+        const use = document.createElement('button'); use.type = 'button'; use.className = 'food-match-use'; use.dataset.code = match.code;
+        use.textContent = t('Использовать данные','Use product data'); actions.append(use);
+        const link = document.createElement('a'); link.href = match.source_url; link.target = '_blank'; link.rel = 'noopener noreferrer'; link.textContent = 'Open Food Facts'; actions.append(link);
+        if (visualMatch?.code === match.code) { const badge = document.createElement('span'); badge.className = 'food-badge'; badge.textContent = t(`Визуально похоже · ${visualMatch.confidence === 'high' ? 'высокая' : visualMatch.confidence === 'medium' ? 'средняя' : 'низкая'} уверенность`, `Visual match · ${visualMatch.confidence} confidence`); actions.append(badge); }
+        body.append(actions); article.append(body); matchList.append(article);
+      }
+    }
+    matchList.addEventListener('click', ev => {
+      const button = ev.target.closest('.food-match-use');
+      if (!button) return;
+      const match = productMatches.find(item => item.code === button.dataset.code);
+      if (!match) return;
+      field('name').value = match.name;
+      autoValues.name = match.name;
+      if (match.kcal_per_100 !== null) { field('kcal_per_100').value = match.kcal_per_100; autoValues.kcal_per_100 = String(match.kcal_per_100); field('source').value = 'catalog'; }
+      dirty = true; calculation();
+      result.textContent = t(`Выбран кандидат из Open Food Facts: ${match.name}. Калорийность и название можно изменить перед сохранением. Порцию в граммах укажи отдельно.`, `Selected Open Food Facts candidate: ${match.name}. Review the name and calories before saving. Enter the eaten portion separately.`);
+    });
     analyze.addEventListener('click', () => { if (!busy) analyzePhoto(); });
   }
   calculation(); setBusy(false);
