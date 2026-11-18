@@ -67,5 +67,7 @@ nutritionRoutes.post('/analyze', async c => {
   if (context.length > 6000) return c.json({ error: 'invalid' }, 400);
   if (!(await takeAiQuota(c.env.DB, c.get('user').id))) return c.json({ error: 'limit' }, 429);
   const guess = await recognizeFood(c.env.AI, bytes, context, langOf(c.get('user').lang));
-  return guess ? c.json({ ok: true, guess }) : c.json({ error: 'unknown' }, 422);
+  if (!guess) return c.json({ error: 'unknown' }, 422);
+  if (!guess.is_food) return c.json({ error: 'not_food' }, 422);
+  return c.json({ ok: true, guess });
 });

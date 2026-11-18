@@ -15,14 +15,14 @@ const path = require('node:path');
     const page = await browser.newPage({viewport:{width:1280,height:900}});
     const errors=[];page.on('pageerror', e=>errors.push(e.message));
     page.on('dialog', dialog=>dialog.accept());
-    let calls=0, response, delay=0, lastContext;
+    let calls=0, response, delay=0, lastContext, apiError=null;
     const sample = {id:1,name:'Рис с курицей',grams:250,kcal_per_100:160,meal:'lunch',entry_date:'2026-11-17',kind:'meal',expense_id:null,source:'estimate'};
     await page.route('http://localhost:8799/**',async route=>{
       const url = new URL(route.request().url());
       if(url.pathname==='/nutrition/analyze') {
         calls++; const chosen=response, wait=delay;lastContext=route.request().postData();
         if(wait) await new Promise(resolve=>setTimeout(resolve,wait));
-        await route.fulfill({json:{ok:true,guess:chosen}}).catch(()=>{});
+        await route.fulfill(apiError ? {status:422,json:{error:apiError}} : {json:{ok:true,guess:chosen}}).catch(()=>{});
       } else if(url.pathname==='/nutrition.js') {
         await route.fulfill({contentType:'text/javascript',body:fs.readFileSync('public/nutrition.js','utf8')});
       } else {
@@ -31,7 +31,7 @@ const path = require('node:path');
     });
     await page.goto('http://localhost:8799/nutrition');
     const photo = {name:'food.png',mimeType:'image/png',buffer:Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aVxkAAAAASUVORK5CYII=','base64')};
-    response={name:'Рис',grams:250,kcal_per_100:160,questions:['Сколько масла?'],note:'Примерная оценка',source:'estimate'};
+    response={is_food:true,name:'Рис',grams:250,kcal_per_100:160,questions:['Сколько масла?'],note:'Примерная оценка',source:'estimate'};
     await page.locator('#food-photo').setInputFiles(photo);
     await page.waitForFunction(()=>document.querySelector('[name=name]').value==='Рис');
     assert.equal(calls,1);
@@ -49,14 +49,21 @@ const path = require('node:path');
     await page.locator('#food-analyze').click();
     await page.waitForFunction(()=>!document.getElementById('food-save').disabled);
     assert.equal(await page.locator('[name=grams]').inputValue(),'180');
+    // A photo rejected as non-food must not become a made-up diary entry.
+    apiError='not_food';
+    await page.locator('#food-photo').setInputFiles(photo);
+    await page.waitForFunction(()=>document.getElementById('food-ai-result').textContent.includes('не еда'));
+    assert.equal(await page.locator('[name=name]').inputValue(),'');
+    assert.equal(await page.locator('#food-questions').locator('input').count(),0);
+    apiError=null;
     // Replacement photos must not reuse old calories if the new image is unreadable.
-    response={name:'',grams:null,kcal_per_100:null,questions:['Пришли более чёткое фото'],note:'',source:'estimate'};
+    response={is_food:true,name:'',grams:null,kcal_per_100:null,questions:['Пришли более чёткое фото'],note:'',source:'estimate'};
     await page.locator('#food-photo').setInputFiles(photo);
     await page.waitForFunction(()=>document.querySelector('#food-questions').textContent.includes('Пришли'));
     assert.equal(await page.locator('[name=kcal_per_100]').inputValue(),'');
     assert.equal(await page.locator('[name=name]').inputValue(),'');
     // A late response cannot overwrite edits made while the request is running.
-    response={name:'Поздний ответ',grams:350,kcal_per_100:200,questions:[],note:'',source:'estimate'};delay=400;
+    response={is_food:true,name:'Поздний ответ',grams:350,kcal_per_100:200,questions:[],note:'',source:'estimate'};delay=400;
     await page.locator('#food-analyze').click();
     await page.locator('[name=name]').fill('Моё название');
     await page.waitForFunction(()=>!document.getElementById('food-save').disabled);

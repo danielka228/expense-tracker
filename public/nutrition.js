@@ -45,6 +45,7 @@
     limit: t('Лимит ИИ на сегодня исчерпан. Введи данные вручную.', 'AI daily limit reached. Enter values manually.'),
     ai_off: t('ИИ сейчас недоступен. Введи данные вручную.', 'AI is unavailable. Enter values manually.'),
     unknown: t('Не удалось разобрать фото. Попробуй другой снимок или введи данные вручную.', 'Could not read the photo. Try another image or enter values manually.'),
+    not_food: t('Похоже, на фото не еда. Сфотографируй блюдо или этикетку пищевого продукта.', 'This does not appear to be food. Photograph a meal or a food nutrition label.'),
     invalid: t('Проверь название, дату, вес, калории и цену.', 'Check the name, date, weight, calories and price.'),
     already_saved: t('Эта запись уже сохранена. Открой дневник и измени её там.', 'This entry is already saved. Open the diary and edit it there.'),
     not_found: t('Запись уже удалена. Обнови страницу.', 'This entry has been deleted. Reload the page.'),
