@@ -92,6 +92,7 @@ private struct Friend: Decodable, Identifiable {
     let username: String
     let total: Double
     let isMe: Bool
+    let avatarV: String?
 }
 
 private struct Incoming: Decodable, Identifiable {
@@ -102,6 +103,16 @@ private struct Incoming: Decodable, Identifiable {
 private struct ProfileSummary: Decodable {
     let expenseCount: Int
     let allTimeTotal: Double
+    let avatarV: String?
+}
+
+private struct PhotoGuess: Decodable {
+    let ok: Bool
+    let name: String?
+    let category: String?
+    let amount: Double?
+    let grams: Double?
+    let kcalPer100: Double?
 }
 
 @MainActor
@@ -205,9 +216,34 @@ private final class NativeStore: NSObject, ObservableObject, ASWebAuthentication
     }
 
     func updateSettings(appMode: String, currency: String, language: String) async {
+        let changedMode = data?.user.appMode != appMode
         await mutate(path: "/api/native/settings", method: "PUT", payload: [
             "appMode": appMode, "currency": currency, "language": language
         ])
+        if changedMode { tab = 0 }
+    }
+
+    func recognizePhoto(_ image: UIImage, mode: String) async -> PhotoGuess? {
+        guard let bytes = image.nativeJPEG else { error = "Не удалось обработать фото."; return nil }
+        guard let cookie = SessionVault.load() else { isLoggedIn = false; return nil }
+        loading = true
+        defer { loading = false }
+        do {
+            var request = URLRequest(url: URL(string: "/api/native/recognize-photo?mode=\(mode)", relativeTo: site)!, timeoutInterval: 35)
+            request.httpMethod = "POST"
+            request.httpBody = bytes
+            request.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+            request.setValue("session=\(cookie.value)", forHTTPHeaderField: "Cookie")
+            let (body, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NativeError.requestFailed }
+            let result = try JSONDecoder().decode(PhotoGuess.self, from: body)
+            guard result.ok else { throw NativeError.requestFailed }
+            error = nil
+            return result
+        } catch {
+            self.error = "Не удалось распознать фото. Попробуй другое освещение или введи данные вручную."
+            return nil
+        }
     }
 
     func logout() async {
@@ -418,11 +454,20 @@ private struct AddFoodSheet: View {
     @ObservedObject var store: NativeStore
     @Environment(\.dismiss) private var dismiss
     @State private var name = ""; @State private var grams = "100"; @State private var kcal = ""; @State private var meal = "snack"; @State private var saving = false
+    @State private var photo: UIImage?; @State private var pickerSource: UIImagePickerController.SourceType = .photoLibrary; @State private var showPicker = false
     private let meals: [(String,String)] = [("breakfast","Завтрак"),("lunch","Обед"),("dinner","Ужин"),("snack","Перекус")]
     var body: some View { NavigationStack { Form {
+        Section("Фото еды или упаковки") {
+            if let photo { Image(uiImage:photo).resizable().scaledToFill().frame(maxWidth:.infinity).frame(height:180).clipped().clipShape(RoundedRectangle(cornerRadius:14)) }
+            HStack {
+                Button { pickerSource = .camera; showPicker = true } label: { Label("Снять",systemImage:"camera") }.disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+                Button { pickerSource = .photoLibrary; showPicker = true } label: { Label("Выбрать фото",systemImage:"photo") }
+            }
+            if photo != nil { Button { Task { if let photo, let guess = await store.recognizePhoto(photo, mode:"nutrition") { name = guess.name ?? name; grams = guess.grams.map { String(Int($0.rounded())) } ?? grams; kcal = guess.kcalPer100.map { String(Int($0.rounded())) } ?? kcal } } } label: { Label("Распознать с ИИ",systemImage:"sparkles") } }
+        }
         Section("Блюдо") { TextField("Название",text:$name);TextField("Съедено, грамм",text:$grams).keyboardType(.decimalPad);TextField("Ккал на 100 грамм",text:$kcal).keyboardType(.decimalPad);Picker("Приём пищи",selection:$meal){ForEach(meals,id:\.0){Text($0.1).tag($0.0)}} }
         Section { Button { Task { await save() } } label:{if saving{ProgressView()}else{Text("Добавить в дневник").frame(maxWidth:.infinity)}}.disabled(saving) }
-    }.scrollContentBackground(.hidden).background(Color.black).navigationTitle("Добавить еду").toolbar{ToolbarItem(placement:.topBarLeading){Button("Закрыть"){dismiss()}}} } }
+    }.scrollContentBackground(.hidden).background(Color.black).navigationTitle("Добавить еду").toolbar{ToolbarItem(placement:.topBarLeading){Button("Закрыть"){dismiss()}}}.sheet(isPresented:$showPicker){NativeImagePicker(sourceType:pickerSource,image:$photo)} } }
     private func save() async { guard let gramsValue=Double(grams.replacingOccurrences(of:",",with:".")),let kcalValue=Double(kcal.replacingOccurrences(of:",",with:".")),!name.trimmingCharacters(in:.whitespaces).isEmpty else{return};saving=true;await store.addFood(name:name,grams:gramsValue,kcalPer100:kcalValue,meal:meal);saving=false;if store.error == nil{dismiss()} }
 }
 
@@ -468,7 +513,7 @@ private struct FriendsScreen: View {
                 if let friends = store.data?.friends {
                     Section("За этот месяц") {
                         ForEach(Array(friends.enumerated()),id:\.element.id) { index, person in
-                            HStack(spacing:12){Text("\(index+1)").font(.headline.monospacedDigit()).foregroundStyle(index == 0 ? .yellow : .secondary).frame(width:26);Text(String(person.username.prefix(1)).uppercased()).font(.headline).frame(width:40,height:40).background(violet.opacity(0.16),in:Circle());Text(person.isMe ? "\(person.username) · вы" : person.username).fontWeight(person.isMe ? .semibold : .regular);Spacer();Text(money(person.total,store.data?.user.symbol ?? "₽")).font(.subheadline.monospacedDigit()) }
+                            HStack(spacing:12){Text("\(index+1)").font(.headline.monospacedDigit()).foregroundStyle(index == 0 ? .yellow : .secondary).frame(width:26);NativeAvatar(userID:person.id,version:person.avatarV,size:42);Text(person.isMe ? "\(person.username) · вы" : person.username).fontWeight(person.isMe ? .semibold : .regular);Spacer();Text(money(person.total,store.data?.user.symbol ?? "₽")).font(.subheadline.monospacedDigit()) }
                         }
                     }
                     if !store.data!.incoming.isEmpty { Section("Заявки в друзья") { ForEach(store.data!.incoming){ Text($0.username) } } }
@@ -484,7 +529,7 @@ private struct ProfileScreen: View {
         NavigationStack {
             List {
                 if let d = store.data {
-                    Section { VStack(spacing:10){Image(systemName:"person.crop.circle.fill").font(.system(size:72)).foregroundStyle(violet);Text(d.user.username).font(.title2.bold());Text(d.user.bio ?? "Твой профиль СпендТрекер").foregroundStyle(.secondary)}.frame(maxWidth:.infinity).padding(.vertical,12) }
+                    Section { VStack(spacing:10){NativeAvatar(userID:d.user.id,version:d.profile.avatarV,size:86);Text(d.user.username).font(.title2.bold());Text(d.user.bio ?? "Твой профиль СпендТрекер").foregroundStyle(.secondary)}.frame(maxWidth:.infinity).padding(.vertical,12) }
                     Section("Моя статистика") { LabeledContent("Всего потрачено",value:money(d.profile.allTimeTotal,d.user.symbol));LabeledContent("Записей",value:"\(d.profile.expenseCount)");LabeledContent("Валюта",value:d.user.currency);LabeledContent("Режим",value:d.user.appMode == "nutrition" ? "Питание" : "Расходы") }
                     Section { Button(role:.destructive){Task{await store.logout()}} label:{Label("Выйти из аккаунта",systemImage:"rectangle.portrait.and.arrow.right")} }
                 }
@@ -529,12 +574,21 @@ private struct AddExpenseSheet: View {
     @ObservedObject var store: NativeStore
     @Environment(\.dismiss) private var dismiss
     @State private var amount=""; @State private var note=""; @State private var category="Еда"; @State private var date=Date(); @State private var saving=false
+    @State private var photo: UIImage?; @State private var pickerSource: UIImagePickerController.SourceType = .photoLibrary; @State private var showPicker = false
     private let choices=["Еда","Транспорт","Жильё","Развлечения","Здоровье","Одежда","Табак","Прочее"]
     var body: some View {
         NavigationStack { Form {
+            Section("Фото товара или чека") {
+                if let photo { Image(uiImage:photo).resizable().scaledToFill().frame(maxWidth:.infinity).frame(height:180).clipped().clipShape(RoundedRectangle(cornerRadius:14)) }
+                HStack {
+                    Button { pickerSource = .camera; showPicker = true } label: { Label("Снять",systemImage:"camera") }.disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
+                    Button { pickerSource = .photoLibrary; showPicker = true } label: { Label("Выбрать фото",systemImage:"photo") }
+                }
+                if photo != nil { Button { Task { if let photo, let guess = await store.recognizePhoto(photo, mode:"expense") { note = guess.name ?? note; category = guess.category ?? category; if let value = guess.amount { amount = String(value) } } } } label: { Label("Распознать с ИИ",systemImage:"sparkles") } }
+            }
             Section("Новая трата") { TextField("Сумма",text:$amount).keyboardType(.decimalPad);TextField("На что потратил?",text:$note);Picker("Категория",selection:$category){ForEach(choices,id:\.self){Text($0)}};DatePicker("Дата",selection:$date,in:...Date(),displayedComponents:.date) }
             Section { Button { Task { await save() } } label: { if saving { ProgressView() } else { Text("Сохранить трату").frame(maxWidth:.infinity) } }.disabled(saving) }
-        }.scrollContentBackground(.hidden).background(Color.black).navigationTitle("Добавить трату").navigationBarTitleDisplayMode(.inline).toolbar{ToolbarItem(placement:.topBarLeading){Button("Закрыть"){dismiss()}}} }
+        }.scrollContentBackground(.hidden).background(Color.black).navigationTitle("Добавить трату").navigationBarTitleDisplayMode(.inline).toolbar{ToolbarItem(placement:.topBarLeading){Button("Закрыть"){dismiss()}}}.sheet(isPresented:$showPicker){NativeImagePicker(sourceType:pickerSource,image:$photo)} }
     }
     private func save() async { guard let value=Double(amount.replacingOccurrences(of:",",with:".")),value>0 else{return};saving=true;await store.addExpense(amount:value,category:category,note:note,date:date);saving=false;if store.error == nil {dismiss()} }
 }
@@ -549,6 +603,55 @@ private struct AddSubscriptionSheet: View {
 private struct EmptyCard: View {
     let text:String
     var body:some View{VStack(spacing:10){Image(systemName:"sparkle").font(.title2).foregroundStyle(violet);Text(text).multilineTextAlignment(.center).foregroundStyle(.secondary)}.frame(maxWidth:.infinity).padding(24).background(.white.opacity(0.05),in:RoundedRectangle(cornerRadius:20))}
+}
+
+private struct NativeImagePicker: UIViewControllerRepresentable {
+    let sourceType: UIImagePickerController.SourceType
+    @Binding var image: UIImage?
+    @Environment(\.dismiss) private var dismiss
+    func makeUIViewController(context: Context) -> UIImagePickerController {
+        let picker = UIImagePickerController(); picker.sourceType = sourceType; picker.delegate = context.coordinator
+        picker.allowsEditing = false; return picker
+    }
+    func updateUIViewController(_ controller: UIImagePickerController, context: Context) {}
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+    final class Coordinator: NSObject, UINavigationControllerDelegate, UIImagePickerControllerDelegate {
+        let parent: NativeImagePicker
+        init(_ parent: NativeImagePicker) { self.parent = parent }
+        func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+            parent.image = info[.originalImage] as? UIImage; parent.dismiss()
+        }
+        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) { parent.dismiss() }
+    }
+}
+
+private struct NativeAvatar: View {
+    let userID: Int; let version: String?; let size: CGFloat
+    @State private var image: UIImage?
+    var body: some View {
+        Group {
+            if let image { Image(uiImage:image).resizable().scaledToFill() }
+            else { Image(systemName:"person.fill").resizable().scaledToFit().padding(size * 0.25).foregroundStyle(violet).background(violet.opacity(0.15)) }
+        }
+        .frame(width:size,height:size).clipShape(Circle())
+        .task(id:"\(userID)-\(version ?? "none")") {
+            guard version != nil, let cookie = SessionVault.load(),
+                  let url = URL(string:"/avatar/\(userID)?v=\(version ?? "")",relativeTo:site) else { image = nil; return }
+            var request = URLRequest(url:url); request.setValue("session=\(cookie.value)",forHTTPHeaderField:"Cookie")
+            if let (bytes, response) = try? await URLSession.shared.data(for:request),
+               (response as? HTTPURLResponse)?.statusCode == 200 { image = UIImage(data:bytes) }
+        }
+    }
+}
+
+private extension UIImage {
+    var nativeJPEG: Data? {
+        let maxSide: CGFloat = 1600
+        let ratio = min(1, maxSide / max(size.width,size.height))
+        let target = CGSize(width:size.width * ratio,height:size.height * ratio)
+        let renderer = UIGraphicsImageRenderer(size:target)
+        return renderer.jpegData(withCompressionQuality:0.78) { _ in draw(in:CGRect(origin:.zero,size:target)) }
+    }
 }
 
 private func money(_ value: Double, _ symbol: String) -> String {

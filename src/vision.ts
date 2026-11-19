@@ -17,6 +17,12 @@ export interface Guess {
   amount?: number; // цена с ценника или итог чека — только если просили (recognizeProduct с withAmount)
 }
 
+export interface FoodGuess {
+  name: string;
+  grams: number;
+  kcalPer100: number;
+}
+
 type Runner = { run(model: string, input: unknown): Promise<unknown> };
 
 const ask = async (ai: Runner, messages: unknown[], maxTokens: number, ms: number): Promise<string> => {
@@ -88,6 +94,30 @@ export async function recognizeProduct(ai: Runner, jpeg: Uint8Array, withAmount 
     return parseGuess(out);
   } catch (e) {
     console.error('recognizeProduct failed', e);
+    return null;
+  }
+}
+
+/** Фото блюда или этикетки: оценка калорийности для обязательного подтверждения человеком. */
+export async function recognizeFood(ai: Runner, jpeg: Uint8Array, lang: Lang = 'ru'): Promise<FoodGuess | null> {
+  let b64 = '';
+  for (let i = 0; i < jpeg.length; i += 0x8000) b64 += String.fromCharCode(...jpeg.subarray(i, i + 0x8000));
+  try {
+    const out = await ask(ai, [{ role: 'user', content: [
+      { type: 'text', text: lang === 'en'
+        ? 'Identify the food in this photo and estimate edible portion grams and kcal per 100g. For a nutrition label, read its stated kcal/100g and package grams if visible. Reply only JSON: {"name":"...","grams":100,"kcalPer100":200}. If uncertain, give your best estimate. If no food is visible, return {"name":null}.'
+        : 'Определи еду на фото и оцени съеденную порцию в граммах и ккал на 100 г. Если это этикетка, считай указанную калорийность на 100 г и массу упаковки, если видны. Верни только JSON: {"name":"...","grams":100,"kcalPer100":200}. Если есть неопределённость, дай наиболее вероятную оценку. Если еда не видна, верни {"name":null}.' },
+      { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${btoa(b64)}` } },
+    ] }], 120, 25000);
+    const m = out.match(/\{[\s\S]*?\}/);
+    if (!m) return null;
+    const v = JSON.parse(m[0]) as Record<string, unknown>;
+    const name = typeof v.name === 'string' ? v.name.replace(/[<>`\u0000-\u001f]/g, ' ').trim().slice(0, 100) : '';
+    const grams = Number(v.grams), kcalPer100 = Number(v.kcalPer100);
+    if (name.length < 2 || !Number.isFinite(grams) || grams <= 0 || grams > 100000 || !Number.isFinite(kcalPer100) || kcalPer100 < 0 || kcalPer100 > 1000) return null;
+    return { name, grams, kcalPer100 };
+  } catch (e) {
+    console.error('recognizeFood failed', e);
     return null;
   }
 }

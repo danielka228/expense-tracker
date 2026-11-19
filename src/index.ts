@@ -4,7 +4,7 @@ import { nutritionRoutes } from './nutrition';
 import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
-import { recognizeProduct, takeAiQuota } from './vision';
+import { recognizeFood, recognizeProduct, takeAiQuota } from './vision';
 import { cleanupLimits, hit } from './limits';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
@@ -801,6 +801,25 @@ app.post('/api/product/:code{[0-9]{8,14}}/photo', async (c) => {
   return c.json(guess ? { ok: true, name: guess.name, category: guess.category } : { ok: false, error: 'unknown' });
 });
 
+app.post('/api/native/recognize-photo', async (c) => {
+  if (!c.env.AI) return c.json({ ok: false, error: 'ai_off' }, 503);
+  const bytes = new Uint8Array(await c.req.arrayBuffer());
+  const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if (!isJpeg || bytes.length > MAX_PHOTO_BYTES) return c.json({ ok: false, error: 'bad_image' }, 400);
+  const user = c.get('user');
+  if (!(await takeAiQuota(c.env.DB, user.id))) return c.json({ ok: false, error: 'limit' }, 429);
+  const mode = c.req.query('mode');
+  if (mode === 'nutrition') {
+    const food = await recognizeFood(c.env.AI, bytes, uiLang(c));
+    return food ? c.json({ ok: true, ...food }) : c.json({ ok: false, error: 'unknown' }, 422);
+  }
+  if (mode === 'expense') {
+    const product = await recognizeProduct(c.env.AI, bytes, true, uiLang(c));
+    return product ? c.json({ ok: true, ...product }) : c.json({ ok: false, error: 'unknown' }, 422);
+  }
+  return c.json({ ok: false, error: 'bad_mode' }, 400);
+});
+
 app.get('/api/stores', async (c) => {
   if (!(await hit(c.env.DB, `stores:${c.get('user').id}`, 60, 3600))) return c.json({ stores: [], error: 'limit' }, 429);
   const lat = Number(c.req.query('lat'));
@@ -952,13 +971,18 @@ app.get('/api/native/bootstrap', async (c) => {
     ? await db.prepare('SELECT id, name, grams, kcal_per_100, meal, entry_date, kind FROM food_entries WHERE user_id = ? AND entry_date = ? ORDER BY id DESC')
       .bind(user.id, periodStart('day')).all()
     : { results: [] };
+  const avatarIds = [...new Set([...board.map((f) => f.id), user.id])];
+  const avatarRows = await db.prepare(`SELECT user_id, updated_at FROM avatars WHERE user_id IN (SELECT value FROM json_each(?))`)
+    .bind(JSON.stringify(avatarIds)).all<{ user_id: number; updated_at: string }>();
+  const avatarVersions = Object.fromEntries(avatarRows.results.map((a) => [a.user_id,
+    String(Date.parse(a.updated_at.replace(' ', 'T') + 'Z') / 1000 || 0)]));
   return c.json({
     user: { id: user.id, username: user.username, currency: user.currency, symbol: symbol(user),
       appMode: user.app_mode, language: langOf(user.lang), bio: user.bio, createdAt: user.created_at },
-    overview, subscriptions, monthTotal, friends: board,
+    overview, subscriptions, monthTotal, friends: board.map((f) => ({ ...f, avatarV: avatarVersions[f.id] ?? null })),
     incoming: incoming.results,
     foodEntries: foodEntries.results,
-    profile: { expenseCount: expenseCount?.n ?? 0, allTimeTotal },
+    profile: { expenseCount: expenseCount?.n ?? 0, allTimeTotal, avatarV: avatarVersions[user.id] ?? null },
     categories: CATEGORIES,
   });
 });
