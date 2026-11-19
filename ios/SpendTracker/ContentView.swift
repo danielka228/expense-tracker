@@ -1,743 +1,561 @@
 import SwiftUI
-import WebKit
 import UIKit
-import AVFoundation
-import Speech
 import AuthenticationServices
 import Security
 
+private let site = URL(string: "https://traaaack.app")!
+private let violet = Color(red: 0.63, green: 0.54, blue: 1)
+
 struct ContentView: View {
-    @StateObject private var appState = NativeAppState()
+    @StateObject private var store = NativeStore()
 
     var body: some View {
-        VStack(spacing: 0) {
-            SpendTrackerWebView(state: appState)
-                .overlay(alignment: .top) {
-                    GeometryReader { proxy in
-                        Rectangle()
-                            .fill(Color(red: 0.62, green: 0.53, blue: 1.0))
-                            .frame(width: proxy.size.width, height: 2)
-                            .opacity(appState.isLoading ? 1 : 0)
-                            .animation(.easeOut(duration: 0.18), value: appState.isLoading)
-                    }
-                    .frame(height: 2)
-                }
-
-            if !appState.tabs.isEmpty {
-                NativeTabBar(state: appState)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+        Group {
+            if store.isLoggedIn {
+                NativeTabs(store: store)
+            } else {
+                NativeLogin(store: store)
             }
         }
-        .background(Color.black)
+        .background(Color.black.ignoresSafeArea())
         .preferredColorScheme(.dark)
+        .tint(violet)
+        .task { await store.restore() }
     }
 }
 
-private struct NativeTab: Identifiable {
-    let id: String
-    let title: String
-    let href: String
+private struct Bootstrap: Decodable {
+    let user: Account
+    let overview: Overview
+    let subscriptions: [Subscription]
+    let monthTotal: Double
+    let friends: [Friend]
+    let incoming: [Incoming]
+    let profile: ProfileSummary
+    let categories: [String]
+    let foodEntries: [FoodEntry]
+}
+
+private struct FoodEntry: Decodable, Identifiable {
+    let id: Int
+    let name: String
+    let grams: Double
+    let kcalPer100: Double
+    let meal: String
+    let entryDate: String
+    let kind: String
+    var calories: Double { grams * kcalPer100 / 100 }
+}
+
+private struct Account: Decodable {
+    let id: Int
+    let username: String
+    let currency: String
     let symbol: String
-    let selected: Bool
+    let appMode: String
+    let language: String
+    let bio: String?
+    let createdAt: String?
+}
+
+private struct Overview: Decodable {
+    let today: String
+    let todayTotal: Double
+    let weekTotal: Double
+    let monthTotal: Double
+    let recent: [Expense]
+}
+
+private struct Expense: Decodable, Identifiable {
+    let id: Int
+    let amount: Double
+    let category: String
+    let note: String?
+    let expenseDate: String
+    let store: String?
+}
+
+private struct Subscription: Decodable, Identifiable {
+    let id: Int
+    let name: String
+    let amount: Double
+    let currency: String
+    let period: String
+    let nextDate: String
+    let monthly: Double
+    let sym: String
+    let days: Int
+}
+
+private struct Friend: Decodable, Identifiable {
+    let id: Int
+    let username: String
+    let total: Double
+    let isMe: Bool
+}
+
+private struct Incoming: Decodable, Identifiable {
+    let id: Int
+    let username: String
+}
+
+private struct ProfileSummary: Decodable {
+    let expenseCount: Int
+    let allTimeTotal: Double
 }
 
 @MainActor
-private final class NativeAppState: ObservableObject {
-    @Published var tabs: [NativeTab] = []
-    @Published var selectedTab = ""
-    @Published var isLoading = true
-    weak var webView: WKWebView?
-    var restoringSession = false
-    private var recentPages: [ObjectIdentifier: Date] = [:]
-    private let feedback = UISelectionFeedbackGenerator()
+private final class NativeStore: NSObject, ObservableObject, ASWebAuthenticationPresentationContextProviding {
+    @Published var isLoggedIn = false
+    @Published var loading = false
+    @Published var error: String?
+    @Published var data: Bootstrap?
+    @Published var tab = 0
+    @Published var showAddExpense = false
+    @Published var showAddSubscription = false
+    private var authSession: ASWebAuthenticationSession?
+    private var restored = false
 
-    func invalidatePages() { recentPages.removeAll() }
-
-    func rememberPage(_ webView: WKWebView) {
-        guard let item = webView.backForwardList.currentItem else { return }
-        recentPages = recentPages.filter { Date().timeIntervalSince($0.value) < 30 }
-        if recentPages[ObjectIdentifier(item)] == nil {
-            recentPages[ObjectIdentifier(item)] = Date()
-        }
-    }
-
-    func updateTabs(_ newTabs: [NativeTab]) {
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
-            tabs = newTabs
-            if let active = newTabs.first(where: \.selected) { selectedTab = active.id }
-        }
-        if let home = newTabs.first, let path = URL(string: home.href)?.path,
-           path == "/dashboard" || path == "/nutrition" {
-            UserDefaults.standard.set(path, forKey: "homePath")
-        }
-    }
-
-    func open(_ tab: NativeTab) {
-        guard let url = URL(string: tab.href),
-              url.scheme == "https", url.host == "traaaack.app" else { return }
-        guard let webView else { return }
-        feedback.selectionChanged()
-        selectedTab = tab.id
-        // Repeated taps must not discard the current form or restart a request.
-        if webView.url == url { return }
-        if let current = webView.url,
-           current.host == url.host, current.path == url.path, current.query == url.query {
-            // Nutrition and groceries are sections of the same document.
-            guard let data = try? JSONEncoder().encode(url.absoluteString),
-                  let value = String(data: data, encoding: .utf8) else { return }
-            webView.evaluateJavaScript("location.href = \(value)")
-            return
-        }
-        let history = Array(webView.backForwardList.backList.reversed()) + webView.backForwardList.forwardList
-        if let item = history.first(where: {
-            $0.url == url && recentPages[ObjectIdentifier($0)].map { Date().timeIntervalSince($0) < 30 } == true
-        }) {
-            webView.go(to: item)
-        } else {
-            webView.load(URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30))
-        }
-    }
-}
-
-private struct NativeTabBar: View {
-    @ObservedObject var state: NativeAppState
-    private let accent = Color(red: 0.64, green: 0.55, blue: 1.0)
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(state.tabs) { tab in
-                Button {
-                    state.open(tab)
-                } label: {
-                    VStack(spacing: 4) {
-                        Image(systemName: tab.symbol)
-                            .font(.system(size: 19, weight: state.selectedTab == tab.id ? .semibold : .regular))
-                            .frame(height: 22)
-                        Text(tab.title)
-                            .font(.system(size: 10, weight: .semibold))
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                    }
-                    .foregroundStyle(state.selectedTab == tab.id ? accent : Color.white.opacity(0.58))
-                    .frame(maxWidth: .infinity, minHeight: 54)
-                    .background {
-                        if state.selectedTab == tab.id {
-                            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                                .fill(accent.opacity(0.15))
-                        }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
+    func restore() async {
+        guard !restored else { return }
+        restored = true
+        guard let cookie = SessionVault.load() else { return }
+        do {
+            try await fetchData(cookie: cookie)
+            isLoggedIn = true
+        } catch {
+            if (error as? NativeError) == .unauthorized {
+                SessionVault.clear()
+            } else {
+                isLoggedIn = true
+                self.error = "Нет соединения. Потяни экран вниз, чтобы обновить данные."
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.top, 7)
-        .padding(.bottom, 3)
-        .overlay(alignment: .top) { Color.white.opacity(0.08).frame(height: 0.5) }
-        .background {
-            Rectangle()
-                .fill(Color(red: 0.07, green: 0.075, blue: 0.09))
-                .ignoresSafeArea(edges: .bottom)
+    }
+
+    func signInWithTelegram() {
+        error = nil
+        guard let url = URL(string: "/auth/telegram?app=1", relativeTo: site) else { return }
+        let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "spendtracker") { [weak self] callback, authError in
+            Task { @MainActor in
+                guard let self else { return }
+                self.authSession = nil
+                guard authError == nil, let callback,
+                      let parts = URLComponents(url: callback, resolvingAgainstBaseURL: false),
+                      let ticket = parts.queryItems?.first(where: { $0.name == "ticket" })?.value else {
+                    self.error = "Вход отменён. Попробуй ещё раз."
+                    return
+                }
+                await self.exchange(ticket: ticket)
+            }
         }
-        .animation(.snappy(duration: 0.22), value: state.selectedTab)
+        session.presentationContextProvider = self
+        session.prefersEphemeralWebBrowserSession = false
+        authSession = session
+        session.start()
+    }
+
+    private func exchange(ticket: String) async {
+        loading = true
+        defer { loading = false }
+        do {
+            let url = URL(string: "/auth/app-session?ticket=\(ticket.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")", relativeTo: site)!
+            let (_, _) = try await URLSession.shared.data(from: url)
+            let cookies = HTTPCookieStorage.shared.cookies(for: site) ?? []
+            guard let cookie = cookies.first(where: { $0.name == "session" && $0.domain.hasSuffix("traaaack.app") }) else {
+                throw NativeError.sessionMissing
+            }
+            SessionVault.save(cookie)
+            try await fetchData(cookie: cookie)
+            isLoggedIn = true
+        } catch {
+            self.error = "Не удалось завершить вход. Проверь интернет и попробуй снова."
+        }
+    }
+
+    func refresh() async {
+        guard let cookie = SessionVault.load() else { isLoggedIn = false; return }
+        loading = true
+        defer { loading = false }
+        do { try await fetchData(cookie: cookie) }
+        catch { self.error = "Не удалось обновить данные." }
+    }
+
+    func addExpense(amount: Double, category: String, note: String, date: Date) async {
+        let payload: [String: Any] = ["amount": amount, "category": category, "note": note,
+                                      "date": ISO8601DateFormatter.nativeDate.string(from: date)]
+        await mutate(path: "/api/native/expenses", method: "POST", payload: payload)
+    }
+
+    func addSubscription(name: String, amount: Double, date: Date) async {
+        let payload: [String: Any] = ["name": name, "amount": String(amount), "next_date": ISO8601DateFormatter.nativeDate.string(from: date),
+                                      "period": "month", "currency": data?.user.currency ?? "RUB", "category": "Развлечения"]
+        await mutate(path: "/api/native/subscriptions", method: "POST", payload: payload)
+    }
+
+    func deleteSubscription(_ item: Subscription) async {
+        await mutate(path: "/api/native/subscriptions/\(item.id)", method: "DELETE")
+    }
+
+    func addFood(name: String, grams: Double, kcalPer100: Double, meal: String) async {
+        await mutate(path: "/api/native/food", method: "POST", payload: [
+            "name": name, "grams": grams, "kcalPer100": kcalPer100, "meal": meal,
+            "requestKey": UUID().uuidString
+        ])
+    }
+
+    func updateSettings(appMode: String, currency: String, language: String) async {
+        await mutate(path: "/api/native/settings", method: "PUT", payload: [
+            "appMode": appMode, "currency": currency, "language": language
+        ])
+    }
+
+    func logout() async {
+        if let cookie = SessionVault.load() {
+            var request = URLRequest(url: URL(string: "/logout", relativeTo: site)!)
+            request.setValue("session=\(cookie.value)", forHTTPHeaderField: "Cookie")
+            _ = try? await URLSession.shared.data(for: request)
+        }
+        (HTTPCookieStorage.shared.cookies(for: site) ?? []).forEach(HTTPCookieStorage.shared.deleteCookie)
+        SessionVault.clear()
+        data = nil
+        isLoggedIn = false
+        tab = 0
+    }
+
+    private func mutate(path: String, method: String, payload: [String: Any]? = nil) async {
+        guard let cookie = SessionVault.load() else { isLoggedIn = false; return }
+        error = nil
+        do {
+            var request = URLRequest(url: URL(string: path, relativeTo: site)!)
+            request.httpMethod = method
+            request.setValue("session=\(cookie.value)", forHTTPHeaderField: "Cookie")
+            if let payload {
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+            }
+            let (body, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw NativeError.requestFailed }
+            if let object = try JSONSerialization.jsonObject(with: body) as? [String: Any], object["error"] != nil {
+                throw NativeError.requestFailed
+            }
+            try await fetchData(cookie: cookie)
+        } catch {
+            self.error = "Не удалось сохранить. Проверь данные и повтори попытку."
+        }
+    }
+
+    private func fetchData(cookie: HTTPCookie) async throws {
+        var request = URLRequest(url: URL(string: "/api/native/bootstrap", relativeTo: site)!, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 15)
+        request.setValue("session=\(cookie.value)", forHTTPHeaderField: "Cookie")
+        let (body, response) = try await URLSession.shared.data(for: request)
+        guard let status = (response as? HTTPURLResponse)?.statusCode else { throw NativeError.requestFailed }
+        if status == 401 || status == 403 { throw NativeError.unauthorized }
+        guard status == 200 else { throw NativeError.requestFailed }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        data = try decoder.decode(Bootstrap.self, from: body)
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .flatMap(\.windows).first(where: \.isKeyWindow) ?? UIWindow()
     }
 }
+
+private enum NativeError: Error, Equatable { case requestFailed, sessionMissing, unauthorized }
 
 private enum SessionVault {
     private static let account = "web-session-cookie"
     private static let service = Bundle.main.bundleIdentifier ?? "app.traaaack.spendtracker"
-
     static func save(_ cookie: HTTPCookie) {
-        guard let properties = cookie.properties else { return }
-        let serializable = Dictionary(uniqueKeysWithValues: properties.map { ($0.key.rawValue, $0.value) })
-        guard let data = try? PropertyListSerialization.data(fromPropertyList: serializable, format: .binary, options: 0) else { return }
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        let update = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
-        if update == errSecItemNotFound {
-            var insert = query
-            insert[kSecValueData as String] = data
-            insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-            SecItemAdd(insert as CFDictionary, nil)
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service, kSecAttrAccount as String: account]
+        let data = Data(cookie.value.utf8)
+        let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if status == errSecItemNotFound {
+            var item = query
+            item[kSecValueData as String] = data
+            item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            SecItemAdd(item as CFDictionary, nil)
         }
     }
-
     static func load() -> HTTPCookie? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
+        let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
+                                    kSecAttrService as String: service, kSecAttrAccount as String: account,
+                                    kSecReturnData as String: true, kSecMatchLimit as String: kSecMatchLimitOne]
         var result: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
-              let data = result as? Data,
-              let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
-              let saved = object as? [String: Any] else { return nil }
-        let properties = Dictionary(uniqueKeysWithValues: saved.map { (HTTPCookiePropertyKey(rawValue: $0.key), $0.value) })
-        guard let cookie = HTTPCookie(properties: properties),
-              cookie.name == "session",
-              (cookie.domain == "traaaack.app" || cookie.domain == ".traaaack.app"),
-              cookie.expiresDate.map({ $0 > Date() }) ?? true else {
-            clear()
-            return nil
-        }
-        return cookie
+              let data = result as? Data, let value = String(data: data, encoding: .utf8) else { return nil }
+        let props: [HTTPCookiePropertyKey: Any] = [.domain: "traaaack.app", .path: "/", .name: "session",
+            .value: value, .secure: "TRUE", .expires: Date().addingTimeInterval(90 * 86400)]
+        return HTTPCookie(properties: props)
     }
-
     static func clear() {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(query as CFDictionary)
+        SecItemDelete([kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: service,
+                       kSecAttrAccount as String: account] as CFDictionary)
     }
 }
 
-private struct SpendTrackerWebView: UIViewRepresentable {
-    private static let siteURL = URL(string: "https://traaaack.app")!
-    let state: NativeAppState
+private extension ISO8601DateFormatter {
+    static let nativeDate: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; f.timeZone = TimeZone(secondsFromGMT: 0); return f
+    }()
+}
 
-    // iOS WKWebView does not expose SpeechRecognition on every OS release. This bridge
-    // gives the existing site script a Web Speech-compatible interface backed by Apple Speech.
-    private static let speechShim = #"""
-    (function () {
-      if (window.SpeechRecognition || window.webkitSpeechRecognition) return;
-      var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.nativeSpeech;
-      if (!handler) return;
-      var active = null;
-      function NativeSpeechRecognition() {
-        this.lang = 'ru-RU'; this.continuous = false; this.interimResults = false; this.maxAlternatives = 1;
-        this.onstart = this.onsoundstart = this.onspeechstart = this.onresult = this.onerror = this.onend = null;
-      }
-      NativeSpeechRecognition.prototype.start = function () {
-        active = this;
-        handler.postMessage({ action: 'start', language: this.lang || 'ru-RU' });
-        if (this.onstart) this.onstart({ type: 'start' });
-      };
-      NativeSpeechRecognition.prototype.stop = function () {
-        handler.postMessage({ action: 'stop', language: this.lang || 'ru-RU' });
-      };
-      NativeSpeechRecognition.prototype.abort = function () {
-        if (active === this) active = null;
-        handler.postMessage({ action: 'cancel', language: this.lang || 'ru-RU' });
-      };
-      window.addEventListener('spendtracker-native-speech', function (event) {
-        var recognition = active, data = event.detail || {};
-        if (!recognition) return;
-        if (data.error && recognition.onerror) recognition.onerror({ type: 'error', error: data.error });
-        if (data.text && recognition.onresult) {
-          var result = [{ transcript: data.text, confidence: 1 }];
-          result.isFinal = !!data.isFinal;
-          recognition.onresult({ type: 'result', resultIndex: 0, results: [result] });
+private struct NativeLogin: View {
+    @ObservedObject var store: NativeStore
+    var body: some View {
+        VStack(spacing: 20) {
+            Spacer()
+            Image(systemName: "chart.bar.xaxis").font(.system(size: 38, weight: .semibold)).foregroundStyle(.white)
+                .frame(width: 88, height: 88).background(LinearGradient(colors: [violet, Color.blue], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 24))
+            Text("СпендТрекер").font(.system(size: 30, weight: .bold))
+            Text("Твои расходы — под контролем").foregroundStyle(.white.opacity(0.62))
+            Button(action: store.signInWithTelegram) {
+                Label("Войти через Telegram", systemImage: "paperplane.fill")
+                    .font(.system(size: 17, weight: .semibold)).frame(maxWidth: .infinity).frame(height: 54)
+            }
+            .buttonStyle(.borderedProminent).tint(Color(red: 0.12, green: 0.65, blue: 0.9)).padding(.top, 12)
+            if store.loading { ProgressView().tint(violet) }
+            if let error = store.error { Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center) }
+            Spacer()
+            Spacer()
         }
-        if (data.isFinal) {
-          active = null;
-          if (recognition.onend) recognition.onend({ type: 'end' });
-        }
-      });
-      window.SpeechRecognition = NativeSpeechRecognition;
-      window.webkitSpeechRecognition = NativeSpeechRecognition;
-    })();
-    """#
-
-    private static let authBridge = #"""
-    (function () {
-      if (location.origin !== 'https://traaaack.app') return;
-      window.__spendTrackerNative = true;
-      var originalFetch = window.fetch;
-      window.fetch = function(input, options) {
-        var method = String(options && options.method || input && input.method || 'GET').toUpperCase();
-        var mutation = method !== 'GET' && method !== 'HEAD';
-        function invalidate() { window.webkit.messageHandlers.nativeSpeech.postMessage({action:'invalidatePages'}); }
-        if (mutation) invalidate();
-        var result = originalFetch.apply(this, arguments);
-        return mutation ? result.finally(invalidate) : result;
-      };
-      document.addEventListener('click', function (event) {
-        var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
-        if (!link) return;
-        var url;
-        try { url = new URL(link.href, location.href); } catch (_) { return; }
-        if (url.origin !== 'https://traaaack.app' || url.pathname !== '/auth/telegram' || url.searchParams.has('link')) return;
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        window.webkit.messageHandlers.nativeSpeech.postMessage({ action: 'telegramLogin' });
-      }, true);
-    })();
-    """#
-
-    private static let nativeShell = #"""
-    (function () {
-      if (location.origin !== 'https://traaaack.app') return;
-      var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.nativeSpeech;
-      function publishTabs() {
-      var nav = document.querySelector('nav.tabbar');
-      if (nav) {
-        nav.style.display = 'none';
-        var tabs = Array.from(nav.querySelectorAll('a.tab')).map(function (link) {
-          var label = (link.textContent || '').trim();
-          var href = link.href;
-          var symbol = href.indexOf('/nutrition') >= 0 ? (href.indexOf('#food-purchases') >= 0 ? 'basket' : 'fork.knife')
-            : href.indexOf('/subs') >= 0 ? 'bag' : href.indexOf('/friends') >= 0 ? 'person.2'
-            : href.indexOf('/profile') >= 0 ? 'person.crop.circle' : href.indexOf('/settings') >= 0 ? 'gearshape'
-            : label.toLowerCase().indexOf('nutrition') >= 0 || label.indexOf('Питание') >= 0 ? 'fork.knife' : 'chart.bar';
-          var active = link.classList.contains('active');
-          if (location.pathname === '/nutrition' && new URL(href).pathname === '/nutrition') {
-            active = (new URL(href).hash === '#food-purchases') === (location.hash === '#food-purchases');
-          }
-          return { id: href, title: label, href: href, symbol: symbol, selected: active };
-        });
-        if (handler) handler.postMessage({ action: 'nativeTabs', tabs: JSON.stringify(tabs) });
-      } else if (handler) {
-        handler.postMessage({ action: 'nativeTabs', tabs: '[]' });
-      }
-      }
-      publishTabs();
-      window.addEventListener('pageshow', function(event) { if (event.persisted) publishTabs(); });
-      window.addEventListener('hashchange', publishTabs);
-      var style = document.createElement('style');
-      style.textContent = 'nav.tabbar{display:none!important}.wrap{padding-bottom:calc(22px + env(safe-area-inset-bottom))!important}button,a,[role="button"],input[type="submit"]{-webkit-tap-highlight-color:transparent;transition:transform .16s ease,opacity .16s ease}button:active,a:active,[role="button"]:active,input[type="submit"]:active{transform:scale(.985);opacity:.86}';
-      (document.head || document.documentElement).appendChild(style);
-      var lightStyle = document.createElement('style');
-      lightStyle.textContent = '.reveal{opacity:1!important;transform:none!important;transition:none!important;animation:none!important}.nav,.flash{-webkit-backdrop-filter:none!important;backdrop-filter:none!important;background:#13151b!important}::view-transition-old(root),::view-transition-new(root){animation:none!important}.sheet{transition-duration:.2s!important}';
-      document.head.appendChild(lightStyle);
-      document.addEventListener('click', function (event) {
-        var target = event.target && event.target.closest ? event.target.closest('button,a,[role="button"],input[type="submit"]') : null;
-        if (!target || target.closest('nav.tabbar')) return;
-        if (handler) handler.postMessage({ action: 'haptic' });
-        var href = target.getAttribute('href');
-        if (href === '/logout') { if (handler) handler.postMessage({ action: 'clearSession' }); }
-      }, true);
-      document.addEventListener('submit', function (event) {
-        if (handler) handler.postMessage({ action: 'invalidatePages' });
-        var logout = event.target && event.target.querySelector('input[name="action"][value="logout_all"]');
-        if (logout && handler) handler.postMessage({ action: 'clearSession' });
-      }, true);
-    })();
-    """#
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(state: state)
+        .padding(28)
     }
+}
 
-    func makeUIView(context: Context) -> WKWebView {
-        let configuration = WKWebViewConfiguration()
-        // Persistent WebKit storage keeps the signed-in session between app launches.
-        configuration.websiteDataStore = .default()
-        configuration.allowsInlineMediaPlayback = true
-        configuration.mediaTypesRequiringUserActionForPlayback = []
-
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: Self.speechShim,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        ))
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: Self.authBridge,
-            injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
-        ))
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: Self.nativeShell,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true
-        ))
-
-        let coordinator = context.coordinator
-        configuration.userContentController.add(coordinator, name: "nativeSpeech")
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        coordinator.webView = webView
-        state.webView = webView
-        webView.navigationDelegate = coordinator
-        webView.uiDelegate = coordinator
-        webView.allowsBackForwardNavigationGestures = true
-        webView.scrollView.contentInsetAdjustmentBehavior = .never
-        webView.scrollView.delaysContentTouches = false
-        webView.scrollView.keyboardDismissMode = .interactive
-        webView.scrollView.decelerationRate = .fast
-        webView.isOpaque = false
-        webView.backgroundColor = UIColor.black
-        webView.scrollView.backgroundColor = UIColor.black
-        let refresh = UIRefreshControl()
-        refresh.tintColor = .lightGray
-        refresh.addTarget(coordinator, action: #selector(Coordinator.refreshPage), for: .valueChanged)
-        webView.scrollView.refreshControl = refresh
-        let cookieStore = configuration.websiteDataStore.httpCookieStore
-        let storedPath = UserDefaults.standard.string(forKey: "homePath")
-        let homePath = storedPath == "/nutrition" ? "/nutrition" : "/dashboard"
-        let homeRequest = URLRequest(url: URL(string: homePath, relativeTo: Self.siteURL)!.absoluteURL,
-                                     cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30)
-        let loginRequest = URLRequest(url: URL(string: "/login", relativeTo: Self.siteURL)!.absoluteURL,
-                                      cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30)
-        // A saved session needs just one cookie write, not a preceding cookie enumeration.
-        if let backupCookie = SessionVault.load() {
-            state.restoringSession = true
-            coordinator.lastSessionValue = backupCookie.value
-            coordinator.lastSessionExpires = backupCookie.expiresDate
-            cookieStore.setCookie(backupCookie) {
-                Task { @MainActor in webView.load(homeRequest) }
-            }
-        } else {
-            cookieStore.getAllCookies { cookies in
-                Task { @MainActor in
-                    let existing = cookies.first(where: { $0.name == "session" && ($0.domain == "traaaack.app" || $0.domain == ".traaaack.app") })
-                    if let existing {
-                        SessionVault.save(existing)
-                        coordinator.lastSessionValue = existing.value
-                        coordinator.lastSessionExpires = existing.expiresDate
-                    }
-                    webView.load(existing != nil ? homeRequest : loginRequest)
-                }
-            }
+private struct NativeTabs: View {
+    @ObservedObject var store: NativeStore
+    var body: some View {
+        TabView(selection: $store.tab) {
+            Group {
+                if store.data?.user.appMode == "nutrition" { NutritionScreen(store: store) }
+                else { ExpensesScreen(store: store) }
+            }.tabItem { Label(store.data?.user.appMode == "nutrition" ? "Питание" : "Траты", systemImage: store.data?.user.appMode == "nutrition" ? "fork.knife" : "chart.bar.fill") }.tag(0)
+            SubscriptionsScreen(store: store).tabItem { Label("Подписки", systemImage: "repeat") }.tag(1)
+            FriendsScreen(store: store).tabItem { Label("Друзья", systemImage: "person.2.fill") }.tag(2)
+            ProfileScreen(store: store).tabItem { Label("Профиль", systemImage: "person.crop.circle") }.tag(3)
+            SettingsScreen(store: store).tabItem { Label("Настройки", systemImage: "gearshape") }.tag(4)
         }
-        return webView
-    }
-
-    func updateUIView(_ webView: WKWebView, context: Context) {
-        context.coordinator.state = state
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
-        var state: NativeAppState
-        weak var webView: WKWebView?
-        private var speechRecognizer: SFSpeechRecognizer?
-        private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
-        private var recognitionTask: SFSpeechRecognitionTask?
-        private var audioEngine: AVAudioEngine?
-        private var speechSessionID = UUID()
-        private var authSession: ASWebAuthenticationSession?
-        var lastSessionValue: String?
-        var lastSessionExpires: Date?
-        private var historyNavigation = false
-        private var mainRequestIsGet = true
-        private let feedback = UIImpactFeedbackGenerator(style: .light)
-
-        @objc func refreshPage() {
-            guard let webView, let url = webView.url,
-                  url.host == "traaaack.app", !url.path.hasPrefix("/auth/") else {
-                webView?.scrollView.refreshControl?.endRefreshing()
-                return
-            }
-            state.invalidatePages()
-            webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
-        }
-
-
-        init(state: NativeAppState) {
-            self.state = state
-        }
-
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.frameInfo.isMainFrame,
-                  message.frameInfo.securityOrigin.host == "traaaack.app",
-                  message.name == "nativeSpeech", let body = message.body as? [String: Any],
-                  let action = body["action"] as? String else { return }
-            if action == "nativeTabs", let json = body["tabs"] as? String,
-               let data = json.data(using: .utf8),
-               let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-                let tabs = items.compactMap { item -> NativeTab? in
-                    guard let id = item["id"] as? String, let title = item["title"] as? String,
-                          let href = item["href"] as? String, let symbol = item["symbol"] as? String else { return nil }
-                    return NativeTab(id: id, title: title, href: href, symbol: symbol, selected: item["selected"] as? Bool ?? false)
-                }
-                state.updateTabs(tabs)
-                return
-            }
-            if action == "haptic" {
-                feedback.impactOccurred()
-                return
-            }
-            if action == "invalidatePages" {
-                state.invalidatePages()
-                return
-            }
-            if action == "clearSession" {
-                SessionVault.clear()
-                lastSessionValue = nil
-                state.invalidatePages()
-                return
-            }
-            if action == "telegramLogin" {
-                startTelegramLogin()
-                return
-            }
-            switch action {
-            case "start": startSpeech(language: body["language"] as? String ?? "ru-RU")
-            case "stop": stopSpeech(cancel: false)
-            case "cancel": stopSpeech(cancel: true)
-            default: break
-            }
-        }
-
-        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-            state.isLoading = true
-        }
-
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            state.isLoading = false
-            webView.scrollView.refreshControl?.endRefreshing()
-            guard webView.url?.host == "traaaack.app" else { return }
-            state.restoringSession = false
-            if webView.url?.path == "/login" || webView.url?.path == "/register" {
-                SessionVault.clear()
-                lastSessionValue = nil
-                state.invalidatePages()
-                state.updateTabs([])
-                return
-            }
-            if !historyNavigation && mainRequestIsGet { state.rememberPage(webView) }
-            if historyNavigation && lastSessionValue != nil { return }
-            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] cookies in
-                Task { @MainActor in
-                    guard let self,
-                          let cookie = cookies.first(where: { $0.name == "session" && ($0.domain == "traaaack.app" || $0.domain == ".traaaack.app") }),
-                          cookie.value != self.lastSessionValue || cookie.expiresDate != self.lastSessionExpires else { return }
-                    SessionVault.save(cookie)
-                    self.lastSessionValue = cookie.value
-                    self.lastSessionExpires = cookie.expiresDate
-                }
-            }
-        }
-
-        private func startTelegramLogin() {
-            guard let url = URL(string: "https://traaaack.app/auth/telegram?app=1") else { return }
-            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "spendtracker") { [weak self] callback, error in
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.authSession = nil
-                    guard error == nil, let callback,
-                          let parts = URLComponents(url: callback, resolvingAgainstBaseURL: false),
-                          let ticket = parts.queryItems?.first(where: { $0.name == "ticket" })?.value,
-                          var handoff = URLComponents(string: "https://traaaack.app/auth/app-session") else {
-                        self.webView?.reload()
-                        return
-                    }
-                    handoff.queryItems = [URLQueryItem(name: "ticket", value: ticket)]
-                    if let handoffURL = handoff.url { self.webView?.load(URLRequest(url: handoffURL)) }
-                }
-            }
-            session.presentationContextProvider = self
-            session.prefersEphemeralWebBrowserSession = false
-            authSession = session
-            session.start()
-        }
-
-        func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-            UIApplication.shared.connectedScenes
-                .compactMap { $0 as? UIWindowScene }
-                .flatMap(\.windows)
-                .first(where: \.isKeyWindow) ?? UIWindow()
-        }
-
-        private func startSpeech(language: String) {
-            stopSpeech(cancel: true)
-            let sessionID = UUID()
-            speechSessionID = sessionID
-            let locale = Locale(identifier: language)
-            guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
-                sendSpeechResult(text: "", isFinal: true, error: "service-not-allowed")
-                return
-            }
-            speechRecognizer = recognizer
-
-            let status = SFSpeechRecognizer.authorizationStatus()
-            if status == .notDetermined {
-                SFSpeechRecognizer.requestAuthorization { [weak self] status in
-                    Task { @MainActor in
-                        self?.continueSpeechAfterPermission(status, sessionID: sessionID)
-                    }
-                }
-            } else {
-                continueSpeechAfterPermission(status, sessionID: sessionID)
-            }
-        }
-
-        private func continueSpeechAfterPermission(_ status: SFSpeechRecognizerAuthorizationStatus, sessionID: UUID) {
-            guard speechSessionID == sessionID else { return }
-            guard status == .authorized else {
-                sendSpeechResult(text: "", isFinal: true, error: "not-allowed")
-                return
-            }
-
-            AVAudioSession.sharedInstance().requestRecordPermission { [weak self] granted in
-                Task { @MainActor in
-                    guard let self, self.speechSessionID == sessionID else { return }
-                    guard granted else {
-                        self.sendSpeechResult(text: "", isFinal: true, error: "not-allowed")
-                        return
-                    }
-                    guard let recognizer = self.speechRecognizer else { return }
-                    self.beginSpeechRecognition(recognizer: recognizer, sessionID: sessionID)
-                }
-            }
-        }
-
-        private func beginSpeechRecognition(recognizer: SFSpeechRecognizer, sessionID: UUID) {
-            guard speechSessionID == sessionID else { return }
-            let audioEngine = AVAudioEngine()
-            let request = SFSpeechAudioBufferRecognitionRequest()
-            request.shouldReportPartialResults = true
-            request.taskHint = .dictation
-            self.audioEngine = audioEngine
-            recognitionRequest = request
-
-            let input = audioEngine.inputNode
-            let format = input.outputFormat(forBus: 0)
-            input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-                request.append(buffer)
-            }
-
-            recognitionTask = recognizer.recognitionTask(with: request) { [weak self] result, error in
-                let text = result?.bestTranscription.formattedString ?? ""
-                let isFinal = result?.isFinal ?? false
-                let errorName = error == nil ? nil : "network"
-                Task { @MainActor in
-                    guard let self, self.speechSessionID == sessionID else { return }
-                    if let errorName {
-                        self.stopSpeech(cancel: true)
-                        self.sendSpeechResult(text: text, isFinal: true, error: errorName)
-                    } else if isFinal {
-                        self.stopSpeech(cancel: true)
-                        self.sendSpeechResult(text: text, isFinal: true, error: nil)
-                    } else {
-                        self.sendSpeechResult(text: text, isFinal: false, error: nil)
-                    }
-                }
-            }
-
-            do {
-                let session = AVAudioSession.sharedInstance()
-                try session.setCategory(.record, mode: .measurement, options: [.duckOthers])
-                try session.setActive(true, options: .notifyOthersOnDeactivation)
-                audioEngine.prepare()
-                try audioEngine.start()
-            } catch {
-                stopSpeech(cancel: true)
-                sendSpeechResult(text: "", isFinal: true, error: "audio-capture")
-            }
-        }
-
-        private func stopSpeech(cancel: Bool) {
-            if cancel { speechSessionID = UUID() }
-            if let engine = audioEngine {
-                if engine.isRunning { engine.stop() }
-                if cancel { engine.inputNode.removeTap(onBus: 0) }
-            }
-            recognitionRequest?.endAudio()
-            if cancel {
-                recognitionTask?.cancel()
-                audioEngine = nil
-                recognitionRequest = nil
-                recognitionTask = nil
-                speechRecognizer = nil
-            }
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-        }
-
-        private func sendSpeechResult(text: String, isFinal: Bool, error: String?) {
-            guard let webView else { return }
-            var payload: [String: Any] = ["text": text, "isFinal": isFinal]
-            if let error { payload["error"] = error }
-            guard let data = try? JSONSerialization.data(withJSONObject: payload),
-                  let json = String(data: data, encoding: .utf8) else { return }
-            webView.evaluateJavaScript("window.dispatchEvent(new CustomEvent('spendtracker-native-speech', {detail: \(json)}))")
-        }
-
-        func webView(
-            _ webView: WKWebView,
-            createWebViewWith configuration: WKWebViewConfiguration,
-            for navigationAction: WKNavigationAction,
-            windowFeatures: WKWindowFeatures
-        ) -> WKWebView? {
-            guard let url = navigationAction.request.url else { return nil }
-            if Self.isTelegramURL(url) {
-                openTelegram(url)
-            } else {
-                webView.load(navigationAction.request)
-            }
-            return nil
-        }
-
-        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
-            guard let url = navigationAction.request.url else { return .allow }
-            if navigationAction.targetFrame?.isMainFrame == true {
-                historyNavigation = navigationAction.navigationType == .backForward
-                mainRequestIsGet = (navigationAction.request.httpMethod ?? "GET") == "GET"
-                if navigationAction.request.httpMethod != "GET" || url.path == "/logout" {
-                    state.invalidatePages()
-                }
-            }
-            if Self.isTelegramURL(url) {
-                openTelegram(url)
-                return .cancel
-            }
-            return .allow
-        }
-
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-            guard (error as NSError).code != NSURLErrorCancelled else { return }
-            webView.scrollView.refreshControl?.endRefreshing()
-            showLoadError(in: webView)
-        }
-
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-            guard (error as NSError).code != NSURLErrorCancelled else { return }
-            webView.scrollView.refreshControl?.endRefreshing()
-            showLoadError(in: webView)
-        }
-
-        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            webView.reload()
-        }
-
-        private static func isTelegramURL(_ url: URL) -> Bool {
-            let scheme = url.scheme?.lowercased()
-            let host = url.host?.lowercased() ?? ""
-            if scheme == "tg" || scheme == "telegram" { return true }
-            return (scheme == "https" || scheme == "http") &&
-                (host == "t.me" || host.hasSuffix(".t.me") || host == "telegram.me")
-        }
-
-        private func openTelegram(_ url: URL) {
-            Task { @MainActor in
-                if let fallback = Self.telegramWebFallback(for: url),
-                   await UIApplication.shared.open(fallback) {
-                    return
-                }
-                await UIApplication.shared.open(url)
-            }
-        }
-
-        private static func telegramWebFallback(for url: URL) -> URL? {
-            guard url.scheme?.lowercased() == "tg",
-                  url.host?.lowercased() == "resolve",
-                  let components = URLComponents(url: url, resolvingAgainstBaseURL: false),
-                  let domain = components.queryItems?.first(where: { $0.name == "domain" })?.value,
-                  !domain.isEmpty else { return nil }
-
-            var fallback = URLComponents()
-            fallback.scheme = "https"
-            fallback.host = "t.me"
-            fallback.path = "/\(domain)"
-            fallback.queryItems = components.queryItems?.filter { $0.name != "domain" }
-            return fallback.url
-        }
-
-        private func showLoadError(in webView: WKWebView) {
-            let html = """
-            <!doctype html><html lang="ru"><meta name="viewport" content="width=device-width,initial-scale=1">
-            <style>body{margin:0;background:#000;color:#fff;font:17px -apple-system,system-ui;display:grid;min-height:100vh;place-items:center;text-align:center}main{padding:28px}p{color:#999;line-height:1.5}button{border:0;border-radius:14px;background:#5b9dff;color:white;font-size:16px;font-weight:600;padding:14px 22px}</style>
-            <main><h2>Не удалось открыть СпендТрекер</h2><p>Проверь подключение к интернету и попробуй ещё раз.</p><button onclick="location.reload()">Повторить</button></main></html>
-            """
-            webView.loadHTMLString(html, baseURL: SpendTrackerWebView.siteURL)
+        .toolbarBackground(Color(red: 0.09, green: 0.095, blue: 0.12), for: .tabBar)
+        .toolbarBackground(.visible, for: .tabBar)
+        .overlay(alignment: .top) {
+            if store.loading { ProgressView().tint(violet).frame(maxWidth: .infinity).background(Color.black.opacity(0.3)) }
+            if let error = store.error { Text(error).font(.footnote).padding(10).frame(maxWidth: .infinity).background(Color.red.opacity(0.85)).onTapGesture { store.error = nil } }
         }
     }
 }
+
+private struct ExpensesScreen: View {
+    @ObservedObject var store: NativeStore
+    private var data: Bootstrap? { store.data }
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    HStack { VStack(alignment: .leading, spacing: 3) { Text("Расходы").font(.largeTitle.bold()); Text("Привет, \(data?.user.username ?? "")").foregroundStyle(.secondary) }; Spacer(); Button { store.showAddExpense = true } label: { Image(systemName: "plus").font(.title3.bold()).frame(width: 44,height: 44).background(violet.opacity(0.2),in:Circle()) }.sensoryFeedback(.selection, trigger: store.showAddExpense) }
+                    if let d = data {
+                        HStack(spacing: 10) {
+                            TotalCard(title: "Сегодня", value: d.overview.todayTotal, symbol: d.user.symbol, tint: violet)
+                            TotalCard(title: "За месяц", value: d.overview.monthTotal, symbol: d.user.symbol, tint: Color(red: 0.3, green: 0.8, blue: 0.68))
+                        }
+                        HStack { Text("За неделю").foregroundStyle(.secondary); Spacer(); Text(money(d.overview.weekTotal, d.user.symbol)).fontWeight(.semibold) }.padding(16).background(.white.opacity(0.055), in: RoundedRectangle(cornerRadius: 18))
+                        HStack { Text("Последние траты").font(.title3.bold()); Spacer(); Button("Обновить") { Task { await store.refresh() } }.font(.footnote) }
+                        if d.overview.recent.isEmpty { EmptyCard(text: "Пока нет записей. Добавь первую трату.") }
+                        ForEach(d.overview.recent) { item in ExpenseRowView(item: item, symbol: d.user.symbol) }
+                    } else { ProgressView().tint(violet).frame(maxWidth: .infinity).padding(50) }
+                }
+                .padding(18)
+            }
+            .background(Color.black)
+            .refreshable { await store.refresh() }
+            .sheet(isPresented: $store.showAddExpense) { AddExpenseSheet(store: store) }
+        }
+    }
+}
+
+private struct TotalCard: View {
+    let title: String; let value: Double; let symbol: String; let tint: Color
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Text(money(value, symbol)).font(.system(size: 25, weight: .bold, design: .rounded)).minimumScaleFactor(0.75).lineLimit(1)
+            RoundedRectangle(cornerRadius: 2).fill(tint).frame(height: 3)
+        }.padding(16).frame(maxWidth: .infinity, alignment: .leading).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+    }
+}
+
+private struct NutritionScreen: View {
+    @ObservedObject var store: NativeStore
+    @State private var showAdd = false
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("Питание").font(.largeTitle.bold())
+                    if let data = store.data {
+                        let total = data.foodEntries.reduce(0) { $0 + $1.calories }
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("Калории сегодня").foregroundStyle(.secondary)
+                            Text("\(Int(total.rounded())) ккал").font(.system(size: 34, weight: .bold, design: .rounded))
+                            Text("\(data.foodEntries.count) записей").font(.caption).foregroundStyle(.secondary)
+                        }.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
+                        Text("Сегодня").font(.title3.bold()).padding(.top, 4)
+                        if data.foodEntries.isEmpty { EmptyCard(text: "Пока ничего не записано. Добавь блюдо, чтобы начать дневник.") }
+                        ForEach(data.foodEntries) { entry in
+                            HStack { Image(systemName: "fork.knife").foregroundStyle(violet).frame(width: 40,height:40).background(violet.opacity(0.14),in:RoundedRectangle(cornerRadius:13)); VStack(alignment:.leading,spacing:3){Text(entry.name).fontWeight(.medium);Text("\(Int(entry.grams)) г · \(mealTitle(entry.meal))").font(.caption).foregroundStyle(.secondary)};Spacer();Text("\(Int(entry.calories.rounded())) ккал").font(.subheadline.weight(.semibold)) }.padding(12).background(.white.opacity(0.05),in:RoundedRectangle(cornerRadius:17))
+                        }
+                    }
+                }.padding(18)
+            }.background(Color.black).refreshable { await store.refresh() }
+                .toolbar { ToolbarItem(placement:.topBarTrailing) { Button { showAdd = true } label:{Image(systemName:"plus")} } }
+                .sheet(isPresented:$showAdd) { AddFoodSheet(store:store) }
+        }
+    }
+}
+
+private struct AddFoodSheet: View {
+    @ObservedObject var store: NativeStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""; @State private var grams = "100"; @State private var kcal = ""; @State private var meal = "snack"; @State private var saving = false
+    private let meals: [(String,String)] = [("breakfast","Завтрак"),("lunch","Обед"),("dinner","Ужин"),("snack","Перекус")]
+    var body: some View { NavigationStack { Form {
+        Section("Блюдо") { TextField("Название",text:$name);TextField("Съедено, грамм",text:$grams).keyboardType(.decimalPad);TextField("Ккал на 100 грамм",text:$kcal).keyboardType(.decimalPad);Picker("Приём пищи",selection:$meal){ForEach(meals,id:\.0){Text($0.1).tag($0.0)}} }
+        Section { Button { Task { await save() } } label:{if saving{ProgressView()}else{Text("Добавить в дневник").frame(maxWidth:.infinity)}}.disabled(saving) }
+    }.scrollContentBackground(.hidden).background(Color.black).navigationTitle("Добавить еду").toolbar{ToolbarItem(placement:.topBarLeading){Button("Закрыть"){dismiss()}}} } }
+    private func save() async { guard let gramsValue=Double(grams.replacingOccurrences(of:",",with:".")),let kcalValue=Double(kcal.replacingOccurrences(of:",",with:".")),!name.trimmingCharacters(in:.whitespaces).isEmpty else{return};saving=true;await store.addFood(name:name,grams:gramsValue,kcalPer100:kcalValue,meal:meal);saving=false;if store.error == nil{dismiss()} }
+}
+
+private struct ExpenseRowView: View {
+    let item: Expense; let symbol: String
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon(item.category)).font(.system(size: 17,weight:.medium)).foregroundStyle(violet).frame(width: 42,height:42).background(violet.opacity(0.14),in:RoundedRectangle(cornerRadius:14))
+            VStack(alignment:.leading,spacing:3) { Text(item.note?.isEmpty == false ? item.note! : item.category).fontWeight(.medium); Text("\(item.category) · \(item.expenseDate)").font(.caption).foregroundStyle(.secondary) }
+            Spacer(minLength: 4); Text("−\(money(item.amount,symbol))").font(.subheadline.weight(.semibold))
+        }.padding(12).background(.white.opacity(0.045),in:RoundedRectangle(cornerRadius:17))
+    }
+}
+
+private struct SubscriptionsScreen: View {
+    @ObservedObject var store: NativeStore
+    var body: some View {
+        NavigationStack {
+            List {
+                if let data = store.data {
+                    Section { HStack { Text("В месяц").foregroundStyle(.secondary); Spacer(); Text(money(data.subscriptions.reduce(0){$0+$1.monthly},data.user.symbol)).font(.title3.bold()) }; HStack { Text("За текущий месяц").foregroundStyle(.secondary); Spacer(); Text(money(data.monthTotal,data.user.symbol)).fontWeight(.semibold) } }
+                    Section("Активные подписки") {
+                        ForEach(data.subscriptions) { item in
+                            HStack(spacing:12) { Text(String(item.name.prefix(1)).uppercased()).font(.headline).foregroundStyle(violet).frame(width:38,height:38).background(violet.opacity(0.14),in:RoundedRectangle(cornerRadius:12)); VStack(alignment:.leading,spacing:4){Text(item.name).fontWeight(.medium);Text(item.days <= 0 ? "Списание сегодня" : "Списание через \(item.days) дн.").font(.caption).foregroundStyle(.secondary)};Spacer();Text(money(item.amount,item.sym)).fontWeight(.semibold) }
+                        }.onDelete { offsets in for i in offsets { let item = data.subscriptions[i]; Task { await store.deleteSubscription(item) } } }
+                    }
+                }
+            }
+            .scrollContentBackground(.hidden).background(Color.black)
+            .navigationTitle("Подписки")
+            .toolbar { ToolbarItem(placement:.topBarTrailing) { Button { store.showAddSubscription = true } label:{Image(systemName:"plus")} } }
+            .sheet(isPresented:$store.showAddSubscription){AddSubscriptionSheet(store:store)}
+            .refreshable { await store.refresh() }
+        }
+    }
+}
+
+private struct FriendsScreen: View {
+    @ObservedObject var store: NativeStore
+    var body: some View {
+        NavigationStack {
+            List {
+                if let friends = store.data?.friends {
+                    Section("За этот месяц") {
+                        ForEach(Array(friends.enumerated()),id:\.element.id) { index, person in
+                            HStack(spacing:12){Text("\(index+1)").font(.headline.monospacedDigit()).foregroundStyle(index == 0 ? .yellow : .secondary).frame(width:26);Text(String(person.username.prefix(1)).uppercased()).font(.headline).frame(width:40,height:40).background(violet.opacity(0.16),in:Circle());Text(person.isMe ? "\(person.username) · вы" : person.username).fontWeight(person.isMe ? .semibold : .regular);Spacer();Text(money(person.total,store.data?.user.symbol ?? "₽")).font(.subheadline.monospacedDigit()) }
+                        }
+                    }
+                    if !store.data!.incoming.isEmpty { Section("Заявки в друзья") { ForEach(store.data!.incoming){ Text($0.username) } } }
+                }
+            }.scrollContentBackground(.hidden).background(Color.black).navigationTitle("Друзья").refreshable { await store.refresh() }
+        }
+    }
+}
+
+private struct ProfileScreen: View {
+    @ObservedObject var store: NativeStore
+    var body: some View {
+        NavigationStack {
+            List {
+                if let d = store.data {
+                    Section { VStack(spacing:10){Image(systemName:"person.crop.circle.fill").font(.system(size:72)).foregroundStyle(violet);Text(d.user.username).font(.title2.bold());Text(d.user.bio ?? "Твой профиль СпендТрекер").foregroundStyle(.secondary)}.frame(maxWidth:.infinity).padding(.vertical,12) }
+                    Section("Моя статистика") { LabeledContent("Всего потрачено",value:money(d.profile.allTimeTotal,d.user.symbol));LabeledContent("Записей",value:"\(d.profile.expenseCount)");LabeledContent("Валюта",value:d.user.currency);LabeledContent("Режим",value:d.user.appMode == "nutrition" ? "Питание" : "Расходы") }
+                    Section { Button(role:.destructive){Task{await store.logout()}} label:{Label("Выйти из аккаунта",systemImage:"rectangle.portrait.and.arrow.right")} }
+                }
+            }.scrollContentBackground(.hidden).background(Color.black).navigationTitle("Профиль").refreshable { await store.refresh() }
+        }
+    }
+}
+
+private struct SettingsScreen: View {
+    @ObservedObject var store: NativeStore
+    private let currencies = ["RUB", "KZT", "USD", "AED", "EUR", "KGS", "UZS"]
+    var body: some View {
+        NavigationStack {
+            Form {
+                if let user = store.data?.user {
+                    Section("Режим приложения") {
+                        Picker("Раздел", selection: Binding(get: { user.appMode }, set: { newValue in
+                            Task { await store.updateSettings(appMode:newValue,currency:user.currency,language:user.language) }
+                        })) {
+                            Text("Расходы").tag("expenses")
+                            Text("Питание").tag("nutrition")
+                        }
+                    }
+                    Section("Регион") {
+                        Picker("Валюта", selection: Binding(get: { user.currency }, set: { newValue in
+                            Task { await store.updateSettings(appMode:user.appMode,currency:newValue,language:user.language) }
+                        })) { ForEach(currencies,id:\.self){Text($0).tag($0)} }
+                        Picker("Язык", selection: Binding(get: { user.language }, set: { newValue in
+                            Task { await store.updateSettings(appMode:user.appMode,currency:user.currency,language:newValue) }
+                        })) { Text("Русский").tag("ru");Text("English").tag("en") }
+                    }
+                    Section { Button(role:.destructive){Task{await store.logout()}} label:{Label("Выйти из аккаунта",systemImage:"rectangle.portrait.and.arrow.right")} }
+                }
+            }
+            .scrollContentBackground(.hidden).background(Color.black).navigationTitle("Настройки")
+            .refreshable { await store.refresh() }
+        }
+    }
+}
+
+private struct AddExpenseSheet: View {
+    @ObservedObject var store: NativeStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var amount=""; @State private var note=""; @State private var category="Еда"; @State private var date=Date(); @State private var saving=false
+    private let choices=["Еда","Транспорт","Жильё","Развлечения","Здоровье","Одежда","Табак","Прочее"]
+    var body: some View {
+        NavigationStack { Form {
+            Section("Новая трата") { TextField("Сумма",text:$amount).keyboardType(.decimalPad);TextField("На что потратил?",text:$note);Picker("Категория",selection:$category){ForEach(choices,id:\.self){Text($0)}};DatePicker("Дата",selection:$date,in:...Date(),displayedComponents:.date) }
+            Section { Button { Task { await save() } } label: { if saving { ProgressView() } else { Text("Сохранить трату").frame(maxWidth:.infinity) } }.disabled(saving) }
+        }.scrollContentBackground(.hidden).background(Color.black).navigationTitle("Добавить трату").navigationBarTitleDisplayMode(.inline).toolbar{ToolbarItem(placement:.topBarLeading){Button("Закрыть"){dismiss()}}} }
+    }
+    private func save() async { guard let value=Double(amount.replacingOccurrences(of:",",with:".")),value>0 else{return};saving=true;await store.addExpense(amount:value,category:category,note:note,date:date);saving=false;if store.error == nil {dismiss()} }
+}
+
+private struct AddSubscriptionSheet: View {
+    @ObservedObject var store: NativeStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var name="";@State private var amount="";@State private var date=Calendar.current.date(byAdding:.day,value:7,to:Date()) ?? Date()
+    var body: some View { NavigationStack { Form { Section("Новая подписка"){TextField("Название",text:$name);TextField("Цена за месяц",text:$amount).keyboardType(.decimalPad);DatePicker("Следующее списание",selection:$date,in:Date.distantPast...,displayedComponents:.date)};Section{Button("Сохранить"){Task{guard let value=Double(amount.replacingOccurrences(of:",",with:".")),!name.isEmpty else{return};await store.addSubscription(name:name,amount:value,date:date);if store.error == nil{dismiss()}}}} }.scrollContentBackground(.hidden).background(Color.black).navigationTitle("Подписка").toolbar{ToolbarItem(placement:.topBarLeading){Button("Закрыть"){dismiss()}}} } }
+}
+
+private struct EmptyCard: View {
+    let text:String
+    var body:some View{VStack(spacing:10){Image(systemName:"sparkle").font(.title2).foregroundStyle(violet);Text(text).multilineTextAlignment(.center).foregroundStyle(.secondary)}.frame(maxWidth:.infinity).padding(24).background(.white.opacity(0.05),in:RoundedRectangle(cornerRadius:20))}
+}
+
+private func money(_ value: Double, _ symbol: String) -> String {
+    let number=NumberFormatter();number.numberStyle = .decimal;number.maximumFractionDigits=0;number.groupingSeparator=" ";return "\(number.string(from:NSNumber(value:value)) ?? "0") \(symbol)"
+}
+
+private func icon(_ category:String)->String { switch category {case "Еда":return "fork.knife";case "Транспорт":return "tram.fill";case "Жильё":return "house.fill";case "Развлечения":return "ticket.fill";case "Здоровье":return "heart.fill";case "Одежда":return "tshirt.fill";default:return "circle.grid.2x2.fill"} }
+private func mealTitle(_ meal:String)->String { switch meal {case "breakfast":return "Завтрак";case "lunch":return "Обед";case "dinner":return "Ужин";default:return "Перекус"} }
