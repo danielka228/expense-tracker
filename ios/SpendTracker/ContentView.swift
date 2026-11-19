@@ -4,17 +4,170 @@ import UIKit
 import AVFoundation
 import Speech
 import AuthenticationServices
+import Security
 
 struct ContentView: View {
+    @StateObject private var appState = NativeAppState()
+
     var body: some View {
-        SpendTrackerWebView()
-            .ignoresSafeArea(edges: .bottom)
-            .preferredColorScheme(.dark)
+        VStack(spacing: 0) {
+            SpendTrackerWebView(state: appState)
+                .overlay(alignment: .top) {
+                    GeometryReader { proxy in
+                        Rectangle()
+                            .fill(Color(red: 0.62, green: 0.53, blue: 1.0))
+                            .frame(width: proxy.size.width, height: 2)
+                            .opacity(appState.isLoading ? 1 : 0)
+                            .animation(.easeOut(duration: 0.18), value: appState.isLoading)
+                    }
+                    .frame(height: 2)
+                }
+
+            if !appState.tabs.isEmpty {
+                NativeTabBar(state: appState)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .background(Color.black)
+        .preferredColorScheme(.dark)
+    }
+}
+
+private struct NativeTab: Identifiable {
+    let id: String
+    let title: String
+    let href: String
+    let symbol: String
+    let selected: Bool
+}
+
+@MainActor
+private final class NativeAppState: ObservableObject {
+    @Published var tabs: [NativeTab] = []
+    @Published var selectedTab = ""
+    @Published var isLoading = true
+    weak var webView: WKWebView?
+    var restoringSession = false
+
+    func updateTabs(_ newTabs: [NativeTab]) {
+        guard !newTabs.isEmpty else { return }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
+            tabs = newTabs
+            if let active = newTabs.first(where: \.selected) { selectedTab = active.id }
+        }
+    }
+
+    func open(_ tab: NativeTab) {
+        guard let url = URL(string: tab.href),
+              url.scheme == "https", url.host == "traaaack.app" else { return }
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        selectedTab = tab.id
+        webView?.load(URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30))
+    }
+}
+
+private struct NativeTabBar: View {
+    @ObservedObject var state: NativeAppState
+    private let accent = Color(red: 0.64, green: 0.55, blue: 1.0)
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(state.tabs) { tab in
+                Button {
+                    state.open(tab)
+                } label: {
+                    VStack(spacing: 4) {
+                        Image(systemName: tab.symbol)
+                            .font(.system(size: 19, weight: state.selectedTab == tab.id ? .semibold : .regular))
+                            .frame(height: 22)
+                        Text(tab.title)
+                            .font(.system(size: 10, weight: .semibold))
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                    .foregroundStyle(state.selectedTab == tab.id ? accent : Color.white.opacity(0.58))
+                    .frame(maxWidth: .infinity, minHeight: 54)
+                    .background {
+                        if state.selectedTab == tab.id {
+                            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                .fill(accent.opacity(0.15))
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.top, 7)
+        .padding(.bottom, 3)
+        .background(.ultraThinMaterial)
+        .background(Color(red: 0.07, green: 0.075, blue: 0.09).opacity(0.72))
+        .overlay(alignment: .top) { Color.white.opacity(0.08).frame(height: 0.5) }
+        .background(.ultraThinMaterial.ignoresSafeArea(edges: .bottom))
+        .animation(.snappy(duration: 0.22), value: state.selectedTab)
+    }
+}
+
+private enum SessionVault {
+    private static let account = "web-session-cookie"
+    private static let service = Bundle.main.bundleIdentifier ?? "app.traaaack.spendtracker"
+
+    static func save(_ cookie: HTTPCookie) {
+        guard let properties = cookie.properties else { return }
+        let serializable = Dictionary(uniqueKeysWithValues: properties.map { ($0.key.rawValue, $0.value) })
+        guard let data = try? PropertyListSerialization.data(fromPropertyList: serializable, format: .binary, options: 0) else { return }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        let update = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
+        if update == errSecItemNotFound {
+            var insert = query
+            insert[kSecValueData as String] = data
+            insert[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+            SecItemAdd(insert as CFDictionary, nil)
+        }
+    }
+
+    static func load() -> HTTPCookie? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let data = result as? Data,
+              let object = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil),
+              let saved = object as? [String: Any] else { return nil }
+        let properties = Dictionary(uniqueKeysWithValues: saved.map { (HTTPCookiePropertyKey(rawValue: $0.key), $0.value) })
+        guard let cookie = HTTPCookie(properties: properties),
+              cookie.name == "session",
+              cookie.domain.hasSuffix("traaaack.app"),
+              cookie.expiresDate.map({ $0 > Date() }) ?? true else {
+            clear()
+            return nil
+        }
+        return cookie
+    }
+
+    static func clear() {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        SecItemDelete(query as CFDictionary)
     }
 }
 
 private struct SpendTrackerWebView: UIViewRepresentable {
     private static let siteURL = URL(string: "https://traaaack.app")!
+    let state: NativeAppState
 
     // iOS WKWebView does not expose SpeechRecognition on every OS release. This bridge
     // gives the existing site script a Web Speech-compatible interface backed by Apple Speech.
@@ -74,8 +227,42 @@ private struct SpendTrackerWebView: UIViewRepresentable {
     })();
     """#
 
+    private static let nativeShell = #"""
+    (function () {
+      var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.nativeSpeech;
+      var nav = document.querySelector('nav.tabbar');
+      if (nav) {
+        nav.style.display = 'none';
+        var tabs = Array.from(nav.querySelectorAll('a.tab')).map(function (link) {
+          var label = (link.innerText || '').trim();
+          var href = link.href;
+          var symbol = href.indexOf('/nutrition') >= 0 ? (href.indexOf('#food-purchases') >= 0 ? 'basket' : 'fork.knife')
+            : href.indexOf('/subs') >= 0 ? 'bag' : href.indexOf('/friends') >= 0 ? 'person.2'
+            : href.indexOf('/profile') >= 0 ? 'person.crop.circle' : href.indexOf('/settings') >= 0 ? 'gearshape'
+            : label.toLowerCase().indexOf('nutrition') >= 0 || label.indexOf('Питание') >= 0 ? 'fork.knife' : 'chart.bar';
+          return { id: href, title: label, href: href, symbol: symbol, selected: link.classList.contains('active') };
+        });
+        if (handler) handler.postMessage({ action: 'nativeTabs', tabs: JSON.stringify(tabs) });
+      }
+      var style = document.createElement('style');
+      style.textContent = 'nav.tabbar{display:none!important}.wrap{padding-bottom:calc(22px + env(safe-area-inset-bottom))!important}button,a,[role="button"],input[type="submit"]{-webkit-tap-highlight-color:transparent;transition:transform .16s ease,opacity .16s ease}button:active,a:active,[role="button"]:active,input[type="submit"]:active{transform:scale(.985);opacity:.86}';
+      (document.head || document.documentElement).appendChild(style);
+      document.addEventListener('click', function (event) {
+        var target = event.target && event.target.closest ? event.target.closest('button,a,[role="button"],input[type="submit"]') : null;
+        if (!target || target.closest('nav.tabbar')) return;
+        if (handler) handler.postMessage({ action: 'haptic' });
+        var href = target.getAttribute('href');
+        if (href === '/logout') { if (handler) handler.postMessage({ action: 'clearSession' }); }
+      }, true);
+      document.addEventListener('submit', function (event) {
+        var logout = event.target && event.target.querySelector('input[name="action"][value="logout_all"]');
+        if (logout && handler) handler.postMessage({ action: 'clearSession' });
+      }, true);
+    })();
+    """#
+
     func makeCoordinator() -> Coordinator {
-        Coordinator()
+        Coordinator(state: state)
     }
 
     func makeUIView(context: Context) -> WKWebView {
@@ -93,6 +280,11 @@ private struct SpendTrackerWebView: UIViewRepresentable {
         configuration.userContentController.addUserScript(WKUserScript(
             source: Self.authBridge,
             injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        ))
+        configuration.userContentController.addUserScript(WKUserScript(
+            source: Self.nativeShell,
+            injectionTime: .atDocumentEnd,
             forMainFrameOnly: true
         ))
 
@@ -113,22 +305,44 @@ private struct SpendTrackerWebView: UIViewRepresentable {
         configuration.userContentController.add(coordinator, name: "nativeSpeech")
         let webView = WKWebView(frame: .zero, configuration: configuration)
         coordinator.webView = webView
+        state.webView = webView
         webView.navigationDelegate = coordinator
         webView.uiDelegate = coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.scrollView.delaysContentTouches = false
+        webView.scrollView.keyboardDismissMode = .interactive
+        webView.scrollView.decelerationRate = .fast
         webView.isOpaque = false
         webView.backgroundColor = UIColor.black
         webView.scrollView.backgroundColor = UIColor.black
-        webView.load(URLRequest(url: Self.siteURL, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30))
+        let initialRequest = URLRequest(url: Self.siteURL, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30)
+        let cookieStore = configuration.websiteDataStore.httpCookieStore
+        cookieStore.getAllCookies { cookies in
+            Task { @MainActor in
+                if let backupCookie = SessionVault.load() {
+                    state.restoringSession = true
+                    cookieStore.setCookie(backupCookie) {
+                        Task { @MainActor in webView.load(initialRequest) }
+                    }
+                } else {
+                    if let existingCookie = cookies.first(where: { $0.name == "session" && $0.domain.hasSuffix("traaaack.app") }) {
+                        SessionVault.save(existingCookie)
+                    }
+                    webView.load(initialRequest)
+                }
+            }
+        }
         return webView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {}
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.state = state
+    }
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, ASWebAuthenticationPresentationContextProviding {
+        var state: NativeAppState
         weak var webView: WKWebView?
         private var speechRecognizer: SFSpeechRecognizer?
         private var recognitionRequest: SFSpeechAudioBufferRecognitionRequest?
@@ -137,17 +351,59 @@ private struct SpendTrackerWebView: UIViewRepresentable {
         private var speechSessionID = UUID()
         private var authSession: ASWebAuthenticationSession?
 
+        init(state: NativeAppState) {
+            self.state = state
+        }
+
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "nativeSpeech", let body = message.body as? [String: String] else { return }
-            if body["action"] == "telegramLogin" {
+            guard message.name == "nativeSpeech", let body = message.body as? [String: Any],
+                  let action = body["action"] as? String else { return }
+            if action == "nativeTabs", let json = body["tabs"] as? String,
+               let data = json.data(using: .utf8),
+               let items = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+                let tabs = items.compactMap { item -> NativeTab? in
+                    guard let id = item["id"] as? String, let title = item["title"] as? String,
+                          let href = item["href"] as? String, let symbol = item["symbol"] as? String else { return nil }
+                    return NativeTab(id: id, title: title, href: href, symbol: symbol, selected: item["selected"] as? Bool ?? false)
+                }
+                state.updateTabs(tabs)
+                return
+            }
+            if action == "haptic" {
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                return
+            }
+            if action == "clearSession" {
+                SessionVault.clear()
+                return
+            }
+            if action == "telegramLogin" {
                 startTelegramLogin()
                 return
             }
-            switch body["action"] {
-            case "start": startSpeech(language: body["language"] ?? "ru-RU")
+            switch action {
+            case "start": startSpeech(language: body["language"] as? String ?? "ru-RU")
             case "stop": stopSpeech(cancel: false)
             case "cancel": stopSpeech(cancel: true)
             default: break
+            }
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            state.isLoading = true
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            state.isLoading = false
+            if state.restoringSession, webView.url?.path == "/login" {
+                SessionVault.clear()
+                state.restoringSession = false
+            } else if state.restoringSession, webView.url?.host == "traaaack.app" {
+                state.restoringSession = false
+            }
+            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
+                guard let sessionCookie = cookies.first(where: { $0.name == "session" && $0.domain.hasSuffix("traaaack.app") }) else { return }
+                SessionVault.save(sessionCookie)
             }
         }
 
