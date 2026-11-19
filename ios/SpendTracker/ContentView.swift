@@ -104,7 +104,11 @@ private struct NativeTabBar: View {
         .background(.ultraThinMaterial)
         .background(Color(red: 0.07, green: 0.075, blue: 0.09).opacity(0.72))
         .overlay(alignment: .top) { Color.white.opacity(0.08).frame(height: 0.5) }
-        .background(.ultraThinMaterial.ignoresSafeArea(edges: .bottom))
+        .background {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea(edges: .bottom)
+        }
         .animation(.snappy(duration: 0.22), value: state.selectedTab)
     }
 }
@@ -566,29 +570,10 @@ private struct SpendTrackerWebView: UIViewRepresentable {
             return nil
         }
 
-        func webView(
-            _ webView: WKWebView,
-            decidePolicyFor navigationAction: WKNavigationAction,
-            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
-        ) {
-            guard let url = navigationAction.request.url, Self.isTelegramURL(url) else {
-                decisionHandler(.allow)
-                return
-            }
-
-            decisionHandler(.cancel)
+        func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
+            guard let url = navigationAction.request.url, Self.isTelegramURL(url) else { return .allow }
             openTelegram(url)
-        }
-
-        // Let WebKit show the system's one-time microphone/camera permission prompt.
-        func webView(
-            _ webView: WKWebView,
-            requestMediaCapturePermissionFor origin: WKSecurityOrigin,
-            initiatedByFrame frame: WKFrameInfo,
-            type: WKMediaCaptureType,
-            decisionHandler: @escaping (WKPermissionDecision) -> Void
-        ) {
-            decisionHandler(.prompt)
+            return .cancel
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
