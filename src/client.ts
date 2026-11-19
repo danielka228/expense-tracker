@@ -7,7 +7,8 @@ import { CATEGORY_RULES, parseExpense } from './parse';
 export const COMMON_JS = `
 (function () {
   document.documentElement.classList.remove('no-js');
-  var reduce = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var native = window.__spendTrackerNative === true;
+  var reduce = native || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches);
   function fmt(n) { return Math.round(n).toString().replace(/\\B(?=(\\d{3})+(?!\\d))/g, '\\u202f'); }
 
   // Уведомления-капсулы сами уезжают через 3 секунды
@@ -35,7 +36,7 @@ export const COMMON_JS = `
   }
 
   // Блоки проявляются при прокрутке (как на страницах Apple)
-  var io = 'IntersectionObserver' in window ? new IntersectionObserver(function (entries) {
+  var io = !native && 'IntersectionObserver' in window ? new IntersectionObserver(function (entries) {
     entries.forEach(function (e) {
       if (!e.isIntersecting) return;
       e.target.classList.add('in');
@@ -77,7 +78,8 @@ export const COMMON_JS = `
       if (seg.style.getPropertyValue('--i') == i) return;
       ev.preventDefault();
       seg.style.setProperty('--i', i);
-      setTimeout(function () { location.href = a.href; }, 230);
+      if (native) location.href = a.href;
+      else setTimeout(function () { location.href = a.href; }, 230);
     });
   });
 

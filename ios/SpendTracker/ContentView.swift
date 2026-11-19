@@ -48,21 +48,54 @@ private final class NativeAppState: ObservableObject {
     @Published var isLoading = true
     weak var webView: WKWebView?
     var restoringSession = false
+    private var recentPages: [ObjectIdentifier: Date] = [:]
+    private let feedback = UISelectionFeedbackGenerator()
+
+    func invalidatePages() { recentPages.removeAll() }
+
+    func rememberPage(_ webView: WKWebView) {
+        guard let item = webView.backForwardList.currentItem else { return }
+        recentPages = recentPages.filter { Date().timeIntervalSince($0.value) < 30 }
+        if recentPages[ObjectIdentifier(item)] == nil {
+            recentPages[ObjectIdentifier(item)] = Date()
+        }
+    }
 
     func updateTabs(_ newTabs: [NativeTab]) {
-        guard !newTabs.isEmpty else { return }
         withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
             tabs = newTabs
             if let active = newTabs.first(where: \.selected) { selectedTab = active.id }
+        }
+        if let home = newTabs.first, let path = URL(string: home.href)?.path,
+           path == "/dashboard" || path == "/nutrition" {
+            UserDefaults.standard.set(path, forKey: "homePath")
         }
     }
 
     func open(_ tab: NativeTab) {
         guard let url = URL(string: tab.href),
               url.scheme == "https", url.host == "traaaack.app" else { return }
-        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
+        guard let webView else { return }
+        feedback.selectionChanged()
         selectedTab = tab.id
-        webView?.load(URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30))
+        // Repeated taps must not discard the current form or restart a request.
+        if webView.url == url { return }
+        if let current = webView.url,
+           current.host == url.host, current.path == url.path, current.query == url.query {
+            // Nutrition and groceries are sections of the same document.
+            guard let data = try? JSONEncoder().encode(url.absoluteString),
+                  let value = String(data: data, encoding: .utf8) else { return }
+            webView.evaluateJavaScript("location.href = \(value)")
+            return
+        }
+        let history = Array(webView.backForwardList.backList.reversed()) + webView.backForwardList.forwardList
+        if let item = history.first(where: {
+            $0.url == url && recentPages[ObjectIdentifier($0)].map { Date().timeIntervalSince($0) < 30 } == true
+        }) {
+            webView.go(to: item)
+        } else {
+            webView.load(URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30))
+        }
     }
 }
 
@@ -101,12 +134,10 @@ private struct NativeTabBar: View {
         .padding(.horizontal, 8)
         .padding(.top, 7)
         .padding(.bottom, 3)
-        .background(.ultraThinMaterial)
-        .background(Color(red: 0.07, green: 0.075, blue: 0.09).opacity(0.72))
         .overlay(alignment: .top) { Color.white.opacity(0.08).frame(height: 0.5) }
         .background {
             Rectangle()
-                .fill(.ultraThinMaterial)
+                .fill(Color(red: 0.07, green: 0.075, blue: 0.09))
                 .ignoresSafeArea(edges: .bottom)
         }
         .animation(.snappy(duration: 0.22), value: state.selectedTab)
@@ -151,7 +182,7 @@ private enum SessionVault {
         let properties = Dictionary(uniqueKeysWithValues: saved.map { (HTTPCookiePropertyKey(rawValue: $0.key), $0.value) })
         guard let cookie = HTTPCookie(properties: properties),
               cookie.name == "session",
-              cookie.domain.hasSuffix("traaaack.app"),
+              (cookie.domain == "traaaack.app" || cookie.domain == ".traaaack.app"),
               cookie.expiresDate.map({ $0 > Date() }) ?? true else {
             clear()
             return nil
@@ -218,6 +249,17 @@ private struct SpendTrackerWebView: UIViewRepresentable {
 
     private static let authBridge = #"""
     (function () {
+      if (location.origin !== 'https://traaaack.app') return;
+      window.__spendTrackerNative = true;
+      var originalFetch = window.fetch;
+      window.fetch = function(input, options) {
+        var method = String(options && options.method || input && input.method || 'GET').toUpperCase();
+        var mutation = method !== 'GET' && method !== 'HEAD';
+        function invalidate() { window.webkit.messageHandlers.nativeSpeech.postMessage({action:'invalidatePages'}); }
+        if (mutation) invalidate();
+        var result = originalFetch.apply(this, arguments);
+        return mutation ? result.finally(invalidate) : result;
+      };
       document.addEventListener('click', function (event) {
         var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
         if (!link) return;
@@ -233,24 +275,39 @@ private struct SpendTrackerWebView: UIViewRepresentable {
 
     private static let nativeShell = #"""
     (function () {
+      if (location.origin !== 'https://traaaack.app') return;
       var handler = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.nativeSpeech;
+      function publishTabs() {
       var nav = document.querySelector('nav.tabbar');
       if (nav) {
         nav.style.display = 'none';
         var tabs = Array.from(nav.querySelectorAll('a.tab')).map(function (link) {
-          var label = (link.innerText || '').trim();
+          var label = (link.textContent || '').trim();
           var href = link.href;
           var symbol = href.indexOf('/nutrition') >= 0 ? (href.indexOf('#food-purchases') >= 0 ? 'basket' : 'fork.knife')
             : href.indexOf('/subs') >= 0 ? 'bag' : href.indexOf('/friends') >= 0 ? 'person.2'
             : href.indexOf('/profile') >= 0 ? 'person.crop.circle' : href.indexOf('/settings') >= 0 ? 'gearshape'
             : label.toLowerCase().indexOf('nutrition') >= 0 || label.indexOf('Питание') >= 0 ? 'fork.knife' : 'chart.bar';
-          return { id: href, title: label, href: href, symbol: symbol, selected: link.classList.contains('active') };
+          var active = link.classList.contains('active');
+          if (location.pathname === '/nutrition' && new URL(href).pathname === '/nutrition') {
+            active = (new URL(href).hash === '#food-purchases') === (location.hash === '#food-purchases');
+          }
+          return { id: href, title: label, href: href, symbol: symbol, selected: active };
         });
         if (handler) handler.postMessage({ action: 'nativeTabs', tabs: JSON.stringify(tabs) });
+      } else if (handler) {
+        handler.postMessage({ action: 'nativeTabs', tabs: '[]' });
       }
+      }
+      publishTabs();
+      window.addEventListener('pageshow', function(event) { if (event.persisted) publishTabs(); });
+      window.addEventListener('hashchange', publishTabs);
       var style = document.createElement('style');
       style.textContent = 'nav.tabbar{display:none!important}.wrap{padding-bottom:calc(22px + env(safe-area-inset-bottom))!important}button,a,[role="button"],input[type="submit"]{-webkit-tap-highlight-color:transparent;transition:transform .16s ease,opacity .16s ease}button:active,a:active,[role="button"]:active,input[type="submit"]:active{transform:scale(.985);opacity:.86}';
       (document.head || document.documentElement).appendChild(style);
+      var lightStyle = document.createElement('style');
+      lightStyle.textContent = '.reveal{opacity:1!important;transform:none!important;transition:none!important;animation:none!important}.nav,.flash{-webkit-backdrop-filter:none!important;backdrop-filter:none!important;background:#13151b!important}::view-transition-old(root),::view-transition-new(root){animation:none!important}.sheet{transition-duration:.2s!important}';
+      document.head.appendChild(lightStyle);
       document.addEventListener('click', function (event) {
         var target = event.target && event.target.closest ? event.target.closest('button,a,[role="button"],input[type="submit"]') : null;
         if (!target || target.closest('nav.tabbar')) return;
@@ -259,6 +316,7 @@ private struct SpendTrackerWebView: UIViewRepresentable {
         if (href === '/logout') { if (handler) handler.postMessage({ action: 'clearSession' }); }
       }, true);
       document.addEventListener('submit', function (event) {
+        if (handler) handler.postMessage({ action: 'invalidatePages' });
         var logout = event.target && event.target.querySelector('input[name="action"][value="logout_all"]');
         if (logout && handler) handler.postMessage({ action: 'clearSession' });
       }, true);
@@ -292,19 +350,6 @@ private struct SpendTrackerWebView: UIViewRepresentable {
             forMainFrameOnly: true
         ))
 
-        let fastInteractions = """
-        (function () {
-          var style = document.createElement('style');
-          style.textContent = 'button,a,[role="button"],.btn,.action,.tab{transition-duration:.16s!important}.sheet{transition-duration:.34s!important}';
-          document.head.appendChild(style);
-        })();
-        """
-        configuration.userContentController.addUserScript(WKUserScript(
-            source: fastInteractions,
-            injectionTime: .atDocumentEnd,
-            forMainFrameOnly: true
-        ))
-
         let coordinator = context.coordinator
         configuration.userContentController.add(coordinator, name: "nativeSpeech")
         let webView = WKWebView(frame: .zero, configuration: configuration)
@@ -320,20 +365,35 @@ private struct SpendTrackerWebView: UIViewRepresentable {
         webView.isOpaque = false
         webView.backgroundColor = UIColor.black
         webView.scrollView.backgroundColor = UIColor.black
-        let initialRequest = URLRequest(url: Self.siteURL, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30)
+        let refresh = UIRefreshControl()
+        refresh.tintColor = .lightGray
+        refresh.addTarget(coordinator, action: #selector(Coordinator.refreshPage), for: .valueChanged)
+        webView.scrollView.refreshControl = refresh
         let cookieStore = configuration.websiteDataStore.httpCookieStore
-        cookieStore.getAllCookies { cookies in
-            Task { @MainActor in
-                if let backupCookie = SessionVault.load() {
-                    state.restoringSession = true
-                    cookieStore.setCookie(backupCookie) {
-                        Task { @MainActor in webView.load(initialRequest) }
+        let storedPath = UserDefaults.standard.string(forKey: "homePath")
+        let homePath = storedPath == "/nutrition" ? "/nutrition" : "/dashboard"
+        let homeRequest = URLRequest(url: URL(string: homePath, relativeTo: Self.siteURL)!.absoluteURL,
+                                     cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30)
+        let loginRequest = URLRequest(url: URL(string: "/login", relativeTo: Self.siteURL)!.absoluteURL,
+                                      cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30)
+        // A saved session needs just one cookie write, not a preceding cookie enumeration.
+        if let backupCookie = SessionVault.load() {
+            state.restoringSession = true
+            coordinator.lastSessionValue = backupCookie.value
+            coordinator.lastSessionExpires = backupCookie.expiresDate
+            cookieStore.setCookie(backupCookie) {
+                Task { @MainActor in webView.load(homeRequest) }
+            }
+        } else {
+            cookieStore.getAllCookies { cookies in
+                Task { @MainActor in
+                    let existing = cookies.first(where: { $0.name == "session" && ($0.domain == "traaaack.app" || $0.domain == ".traaaack.app") })
+                    if let existing {
+                        SessionVault.save(existing)
+                        coordinator.lastSessionValue = existing.value
+                        coordinator.lastSessionExpires = existing.expiresDate
                     }
-                } else {
-                    if let existingCookie = cookies.first(where: { $0.name == "session" && $0.domain.hasSuffix("traaaack.app") }) {
-                        SessionVault.save(existingCookie)
-                    }
-                    webView.load(initialRequest)
+                    webView.load(existing != nil ? homeRequest : loginRequest)
                 }
             }
         }
@@ -354,13 +414,31 @@ private struct SpendTrackerWebView: UIViewRepresentable {
         private var audioEngine: AVAudioEngine?
         private var speechSessionID = UUID()
         private var authSession: ASWebAuthenticationSession?
+        var lastSessionValue: String?
+        var lastSessionExpires: Date?
+        private var historyNavigation = false
+        private var mainRequestIsGet = true
+        private let feedback = UIImpactFeedbackGenerator(style: .light)
+
+        @objc func refreshPage() {
+            guard let webView, let url = webView.url,
+                  url.host == "traaaack.app", !url.path.hasPrefix("/auth/") else {
+                webView?.scrollView.refreshControl?.endRefreshing()
+                return
+            }
+            state.invalidatePages()
+            webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
+        }
+
 
         init(state: NativeAppState) {
             self.state = state
         }
 
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard message.name == "nativeSpeech", let body = message.body as? [String: Any],
+            guard message.frameInfo.isMainFrame,
+                  message.frameInfo.securityOrigin.host == "traaaack.app",
+                  message.name == "nativeSpeech", let body = message.body as? [String: Any],
                   let action = body["action"] as? String else { return }
             if action == "nativeTabs", let json = body["tabs"] as? String,
                let data = json.data(using: .utf8),
@@ -374,11 +452,17 @@ private struct SpendTrackerWebView: UIViewRepresentable {
                 return
             }
             if action == "haptic" {
-                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                feedback.impactOccurred()
+                return
+            }
+            if action == "invalidatePages" {
+                state.invalidatePages()
                 return
             }
             if action == "clearSession" {
                 SessionVault.clear()
+                lastSessionValue = nil
+                state.invalidatePages()
                 return
             }
             if action == "telegramLogin" {
@@ -399,15 +483,27 @@ private struct SpendTrackerWebView: UIViewRepresentable {
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             state.isLoading = false
-            if state.restoringSession, webView.url?.path == "/login" {
+            webView.scrollView.refreshControl?.endRefreshing()
+            guard webView.url?.host == "traaaack.app" else { return }
+            state.restoringSession = false
+            if webView.url?.path == "/login" || webView.url?.path == "/register" {
                 SessionVault.clear()
-                state.restoringSession = false
-            } else if state.restoringSession, webView.url?.host == "traaaack.app" {
-                state.restoringSession = false
+                lastSessionValue = nil
+                state.invalidatePages()
+                state.updateTabs([])
+                return
             }
-            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { cookies in
-                guard let sessionCookie = cookies.first(where: { $0.name == "session" && $0.domain.hasSuffix("traaaack.app") }) else { return }
-                SessionVault.save(sessionCookie)
+            if !historyNavigation && mainRequestIsGet { state.rememberPage(webView) }
+            if historyNavigation && lastSessionValue != nil { return }
+            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] cookies in
+                Task { @MainActor in
+                    guard let self,
+                          let cookie = cookies.first(where: { $0.name == "session" && ($0.domain == "traaaack.app" || $0.domain == ".traaaack.app") }),
+                          cookie.value != self.lastSessionValue || cookie.expiresDate != self.lastSessionExpires else { return }
+                    SessionVault.save(cookie)
+                    self.lastSessionValue = cookie.value
+                    self.lastSessionExpires = cookie.expiresDate
+                }
             }
         }
 
@@ -571,18 +667,30 @@ private struct SpendTrackerWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
-            guard let url = navigationAction.request.url, Self.isTelegramURL(url) else { return .allow }
-            openTelegram(url)
-            return .cancel
+            guard let url = navigationAction.request.url else { return .allow }
+            if navigationAction.targetFrame?.isMainFrame == true {
+                historyNavigation = navigationAction.navigationType == .backForward
+                mainRequestIsGet = (navigationAction.request.httpMethod ?? "GET") == "GET"
+                if navigationAction.request.httpMethod != "GET" || url.path == "/logout" {
+                    state.invalidatePages()
+                }
+            }
+            if Self.isTelegramURL(url) {
+                openTelegram(url)
+                return .cancel
+            }
+            return .allow
         }
 
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
             guard (error as NSError).code != NSURLErrorCancelled else { return }
+            webView.scrollView.refreshControl?.endRefreshing()
             showLoadError(in: webView)
         }
 
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
             guard (error as NSError).code != NSURLErrorCancelled else { return }
+            webView.scrollView.refreshControl?.endRefreshing()
             showLoadError(in: webView)
         }
 
