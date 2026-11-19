@@ -297,7 +297,7 @@ const loginRequired = async (c: C, next: () => Promise<void>) => {
   await next();
 };
 
-for (const p of ['/nutrition', '/nutrition/*', '/dashboard', '/subs', '/subs/*', '/wrapped', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/admin', '/api/product/*', '/api/stores']) {
+for (const p of ['/nutrition', '/nutrition/*', '/dashboard', '/subs', '/subs/*', '/wrapped', '/month', '/month/*', '/delete/*', '/friends', '/friends/*', '/profile', '/profile/*', '/avatar/*', '/settings', '/settings/*', '/admin', '/api/product/*', '/api/stores', '/api/native/*']) {
   app.use(p, loginRequired);
 }
 
@@ -933,6 +933,103 @@ async function leaderboard(db: D1Database, userId: number, since: string) {
     .map((r) => ({ id: r.id, username: r.username, total: convert(r.total, r.currency, mine), is_me: r.id === userId }))
     .sort((a, b) => b.total - a.total);
 }
+
+// Native iOS client bootstrap: return the data it needs, without rendering HTML.
+app.get('/api/native/bootstrap', async (c) => {
+  const user = c.get('user');
+  const db = c.env.DB;
+  const [overview, subscriptions, monthTotal, board, incoming, expenseCount, allTimeTotal] = await Promise.all([
+    spendingOverview(db, user.id, 20),
+    loadSubs(db, user),
+    spentSince(db, user.id, periodStart('month')),
+    leaderboard(db, user.id, periodStart('month')),
+    db.prepare(`SELECT f.id, u.username FROM friendships f JOIN users u ON u.id = f.from_user_id
+      WHERE f.to_user_id = ? AND f.status = 'pending' ORDER BY f.id`).bind(user.id).all(),
+    db.prepare('SELECT COUNT(*) AS n FROM expenses WHERE user_id = ?').bind(user.id).first<{ n: number }>(),
+    spentSince(db, user.id, '2000-01-01'),
+  ]);
+  const foodEntries = user.app_mode === 'nutrition'
+    ? await db.prepare('SELECT id, name, grams, kcal_per_100, meal, entry_date, kind FROM food_entries WHERE user_id = ? AND entry_date = ? ORDER BY id DESC')
+      .bind(user.id, periodStart('day')).all()
+    : { results: [] };
+  return c.json({
+    user: { id: user.id, username: user.username, currency: user.currency, symbol: symbol(user),
+      appMode: user.app_mode, language: langOf(user.lang), bio: user.bio, createdAt: user.created_at },
+    overview, subscriptions, monthTotal, friends: board,
+    incoming: incoming.results,
+    foodEntries: foodEntries.results,
+    profile: { expenseCount: expenseCount?.n ?? 0, allTimeTotal },
+    categories: CATEGORIES,
+  });
+});
+
+app.post('/api/native/food', async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json<Record<string, unknown>>(); }
+  catch { return c.json({ error: 'bad_json' }, 400); }
+  const user = c.get('user');
+  const name = String(body.name ?? '').trim().slice(0, 80);
+  const grams = Number(body.grams);
+  const kcal = Number(body.kcalPer100);
+  const meal = String(body.meal ?? 'snack');
+  if (!name || !Number.isFinite(grams) || grams <= 0 || grams > 100000 || !Number.isFinite(kcal) || kcal < 0 || kcal > 1000 || !['breakfast', 'lunch', 'dinner', 'snack'].includes(meal)) {
+    return c.json({ error: 'invalid_food' }, 400);
+  }
+  const key = typeof body.requestKey === 'string' && /^[a-zA-Z0-9-]{16,64}$/.test(body.requestKey) ? body.requestKey : crypto.randomUUID();
+  await c.env.DB.prepare('INSERT OR IGNORE INTO food_entries (user_id,name,grams,kcal_per_100,meal,entry_date,kind,expense_id,source,request_key) VALUES (?,?,?,?,?,?,?,?,?,?)')
+    .bind(user.id, name, grams, kcal, meal, periodStart('day'), 'meal', null, 'manual', key).run();
+  return c.json({ ok: true });
+});
+
+app.post('/api/native/expenses', async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json<Record<string, unknown>>(); }
+  catch { return c.json({ error: 'bad_json' }, 400); }
+  const user = c.get('user');
+  const raw = String(body.amount ?? '').replace(/,/g, '.').trim();
+  const amount = raw ? Number(raw) : NaN;
+  const category = String(body.category ?? 'Прочее');
+  const note = String(body.note ?? '').trim().slice(0, 240);
+  const date = String(body.date ?? periodStart('day'));
+  if (!Number.isFinite(amount) || amount <= 0 || amount > 1e9 || !CATEGORIES.includes(category) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return c.json({ error: 'invalid_expense' }, 400);
+  }
+  await c.env.DB.prepare('INSERT INTO expenses (user_id, amount, category, note, expense_date) VALUES (?, ?, ?, ?, ?)')
+    .bind(user.id, amount, category, note, date).run();
+  return c.json({ ok: true });
+});
+
+app.post('/api/native/subscriptions', async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json<Record<string, unknown>>(); }
+  catch { return c.json({ error: 'bad_json' }, 400); }
+  const user = c.get('user');
+  const s = subFromForm(body, user);
+  if (!s || (await insertSub(c.env.DB, user.id, s)) === null) return c.json({ error: 'invalid_subscription' }, 400);
+  await chargeDue(c.env.DB, periodStart('day'), user.id);
+  return c.json({ ok: true });
+});
+
+app.delete('/api/native/subscriptions/:id{[0-9]+}', async (c) => {
+  const result = await c.env.DB.prepare('DELETE FROM subscriptions WHERE id = ? AND user_id = ?')
+    .bind(Number(c.req.param('id')), c.get('user').id).run();
+  return c.json({ ok: result.meta.changes > 0 });
+});
+
+app.put('/api/native/settings', async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json<Record<string, unknown>>(); }
+  catch { return c.json({ error: 'bad_json' }, 400); }
+  const user = c.get('user');
+  const mode = String(body.appMode ?? user.app_mode);
+  const currency = String(body.currency ?? user.currency);
+  const language = String(body.language ?? user.lang);
+  if (!['expenses', 'nutrition'].includes(mode) || !(currency in CURRENCIES) || !['ru', 'en'].includes(language)) {
+    return c.json({ error: 'invalid_settings' }, 400);
+  }
+  await c.env.DB.prepare('UPDATE users SET app_mode = ?, currency = ?, lang = ? WHERE id = ?').bind(mode, currency, language, user.id).run();
+  return c.json({ ok: true });
+});
 
 app.get('/friends', async (c) => {
   const user = c.get('user');
