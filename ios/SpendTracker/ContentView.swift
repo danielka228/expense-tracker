@@ -183,12 +183,12 @@ private final class NativeStore: NSObject, ObservableObject, ASWebAuthentication
 
     func addExpense(amount: Double, category: String, note: String, date: Date) async {
         let payload: [String: Any] = ["amount": amount, "category": category, "note": note,
-                                      "date": ISO8601DateFormatter.nativeDate.string(from: date)]
+                                      "date": nativeDateString(date)]
         await mutate(path: "/api/native/expenses", method: "POST", payload: payload)
     }
 
     func addSubscription(name: String, amount: Double, date: Date) async {
-        let payload: [String: Any] = ["name": name, "amount": String(amount), "next_date": ISO8601DateFormatter.nativeDate.string(from: date),
+        let payload: [String: Any] = ["name": name, "amount": String(amount), "next_date": nativeDateString(date),
                                       "period": "month", "currency": data?.user.currency ?? "RUB", "category": "Развлечения"]
         await mutate(path: "/api/native/subscriptions", method: "POST", payload: payload)
     }
@@ -297,10 +297,8 @@ private enum SessionVault {
     }
 }
 
-private extension ISO8601DateFormatter {
-    static let nativeDate: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withFullDate]; f.timeZone = TimeZone(secondsFromGMT: 0); return f
-    }()
+private func nativeDateString(_ date: Date) -> String {
+    date.formatted(.iso8601.year().month().day().dateSeparator(.dash).timeZone(separator: .omitted))
 }
 
 private struct NativeLogin: View {
