@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLSchemes</key>
+			<array><string>spendtracker</string></array>
+			<key>CFBundleURLName</key>
+			<string>app.traaaack.spendtracker.auth</string>
+		</dict>
+	</array>
+	<key>CFBundleDisplayName</key>
+	<string>СпендТрекер</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Камера нужна, чтобы сканировать штрихкоды и фотографировать еду или упаковки.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Микрофон нужен, чтобы добавлять траты голосом.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Распознавание речи нужно, чтобы превращать голос в текст траты.</string>
+</dict>
+</plist>
