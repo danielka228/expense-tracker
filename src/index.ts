@@ -4,7 +4,9 @@ import { nutritionRoutes } from './nutrition';
 import { deleteCookie, getCookie, getSignedCookie, setCookie, setSignedCookie } from 'hono/cookie';
 import { Buffer } from 'node:buffer';
 import { randomBytes } from 'node:crypto';
-import { recognizeFood, recognizeProduct, takeAiQuota } from './vision';
+import { recognizeProduct, takeAiQuota } from './vision';
+import { recognizeFood } from './nutrition-ai';
+import { CATEGORY_RULES, parseExpense } from './parse';
 import { cleanupLimits, hit } from './limits';
 import { lookupProduct, nearbyStores, priceHistory, rememberPlace, rememberProduct } from './lookup';
 import { checkPassword, hashPassword, needsRehash } from './passwords';
@@ -810,14 +812,26 @@ app.post('/api/native/recognize-photo', async (c) => {
   if (!(await takeAiQuota(c.env.DB, user.id))) return c.json({ ok: false, error: 'limit' }, 429);
   const mode = c.req.query('mode');
   if (mode === 'nutrition') {
-    const food = await recognizeFood(c.env.AI, bytes, uiLang(c));
-    return food ? c.json({ ok: true, ...food }) : c.json({ ok: false, error: 'unknown' }, 422);
+    const encodedContext = c.req.header('X-Food-Context-B64') ?? '';
+    let context = '';
+    try { context = encodedContext ? new TextDecoder().decode(Uint8Array.from(atob(encodedContext), ch => ch.charCodeAt(0))) : ''; } catch { return c.json({ ok: false, error: 'invalid_context' }, 400); }
+    if (context.length > 6000) return c.json({ ok: false, error: 'invalid_context' }, 400);
+    const food = await recognizeFood(c.env.AI, bytes, context, langOf(c.get('user').lang));
+    return food ? c.json({ ok: true, guess: food }) : c.json({ ok: false, error: 'unknown' }, 422);
   }
   if (mode === 'expense') {
     const product = await recognizeProduct(c.env.AI, bytes, true, uiLang(c));
     return product ? c.json({ ok: true, ...product }) : c.json({ ok: false, error: 'unknown' }, 422);
   }
   return c.json({ ok: false, error: 'bad_mode' }, 400);
+});
+
+app.post('/api/native/voice-parse', async (c) => {
+  let body: Record<string, unknown>;
+  try { body = await c.req.json<Record<string, unknown>>(); } catch { return c.json({ error: 'bad_json' }, 400); }
+  const text = String(body.text ?? '').trim();
+  if (!text || text.length > 500) return c.json({ error: 'invalid_text' }, 400);
+  return c.json(parseExpense(text, periodStart('day'), CATEGORY_RULES));
 });
 
 app.get('/api/stores', async (c) => {
@@ -968,7 +982,7 @@ app.get('/api/native/bootstrap', async (c) => {
     spentSince(db, user.id, '2000-01-01'),
   ]);
   const foodEntries = user.app_mode === 'nutrition'
-    ? await db.prepare('SELECT id, name, grams, kcal_per_100, meal, entry_date, kind FROM food_entries WHERE user_id = ? AND entry_date = ? ORDER BY id DESC')
+    ? await db.prepare('SELECT id, name, grams, kcal_per_100, meal, entry_date, kind, source FROM food_entries WHERE user_id = ? AND entry_date = ? ORDER BY id DESC')
       .bind(user.id, periodStart('day')).all()
     : { results: [] };
   const avatarIds = [...new Set([...board.map((f) => f.id), user.id])];
@@ -996,12 +1010,25 @@ app.post('/api/native/food', async (c) => {
   const grams = Number(body.grams);
   const kcal = Number(body.kcalPer100);
   const meal = String(body.meal ?? 'snack');
-  if (!name || !Number.isFinite(grams) || grams <= 0 || grams > 100000 || !Number.isFinite(kcal) || kcal < 0 || kcal > 1000 || !['breakfast', 'lunch', 'dinner', 'snack'].includes(meal)) {
+  const kind = String(body.kind ?? 'meal');
+  const source = ['estimate', 'label'].includes(String(body.source)) ? String(body.source) : 'manual';
+  const amount = body.amount === undefined || body.amount === null || body.amount === '' ? null : Number(body.amount);
+  if (!name || !Number.isFinite(grams) || grams <= 0 || grams > 100000 || !Number.isFinite(kcal) || kcal < 0 || kcal > 1000 || !['breakfast', 'lunch', 'dinner', 'snack'].includes(meal) || !['meal', 'purchase'].includes(kind) || (kind === 'purchase' && (!Number.isFinite(amount) || (amount ?? 0) <= 0 || (amount ?? 0) > 1e9))) {
     return c.json({ error: 'invalid_food' }, 400);
   }
   const key = typeof body.requestKey === 'string' && /^[a-zA-Z0-9-]{16,64}$/.test(body.requestKey) ? body.requestKey : crypto.randomUUID();
-  await c.env.DB.prepare('INSERT OR IGNORE INTO food_entries (user_id,name,grams,kcal_per_100,meal,entry_date,kind,expense_id,source,request_key) VALUES (?,?,?,?,?,?,?,?,?,?)')
-    .bind(user.id, name, grams, kcal, meal, periodStart('day'), 'meal', null, 'manual', key).run();
+  const date = periodStart('day');
+  const insert = c.env.DB.prepare('INSERT OR IGNORE INTO food_entries (user_id,name,grams,kcal_per_100,meal,entry_date,kind,expense_id,source,request_key) VALUES (?,?,?,?,?,?,?,NULL,?,?)')
+    .bind(user.id, name, grams, kcal, meal, date, kind, source, key);
+  if (kind === 'purchase' && amount !== null) {
+    await c.env.DB.batch([
+      insert,
+      c.env.DB.prepare("INSERT INTO expenses (user_id,amount,category,note,expense_date) SELECT ?,?,'Еда',?,? WHERE changes()=1")
+        .bind(user.id, amount, name, date),
+      c.env.DB.prepare('UPDATE food_entries SET expense_id=last_insert_rowid() WHERE user_id=? AND request_key=? AND expense_id IS NULL AND changes()=1')
+        .bind(user.id, key),
+    ]);
+  } else await insert.run();
   return c.json({ ok: true });
 });
 
@@ -1015,11 +1042,13 @@ app.post('/api/native/expenses', async (c) => {
   const category = String(body.category ?? 'Прочее');
   const note = String(body.note ?? '').trim().slice(0, 240);
   const date = String(body.date ?? periodStart('day'));
+  const barcode = /^\d{8,14}$/.test(String(body.barcode ?? '')) ? String(body.barcode) : null;
   if (!Number.isFinite(amount) || amount <= 0 || amount > 1e9 || !CATEGORIES.includes(category) || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return c.json({ error: 'invalid_expense' }, 400);
   }
-  await c.env.DB.prepare('INSERT INTO expenses (user_id, amount, category, note, expense_date) VALUES (?, ?, ?, ?, ?)')
-    .bind(user.id, amount, category, note, date).run();
+  await c.env.DB.prepare('INSERT INTO expenses (user_id, amount, category, note, expense_date, barcode) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(user.id, amount, category, note, date, barcode).run();
+  if (barcode && note) await rememberProduct(c.env.DB, barcode, note, category);
   return c.json({ ok: true });
 });
 
