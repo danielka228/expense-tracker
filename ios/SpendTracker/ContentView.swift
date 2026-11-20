@@ -530,8 +530,8 @@ private struct NutritionScreen: View {
                         }.padding(18).frame(maxWidth: .infinity, alignment: .leading).background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 20))
                         Text("Сегодня").font(.title3.bold()).padding(.top, 4)
                         if data.foodEntries.isEmpty { EmptyCard(text: "Пока ничего не записано. Добавь блюдо, чтобы начать дневник.") }
-                        ForEach(eaten) { entry in FoodEntryRow(entry:entry,store:store) }
-                        if !purchases.isEmpty { Text("Покупки продуктов").font(.title3.bold()).padding(.top,8);Text("Покупки синхронизируются с расходами. Запиши порцию отдельно, когда съешь.").font(.caption).foregroundStyle(.secondary);ForEach(purchases){FoodEntryRow(entry:$0,store:store)} }
+                        ForEach(eaten) { entry in FoodEntryRow(store:store,entry:entry) }
+                        if !purchases.isEmpty { Text("Покупки продуктов").font(.title3.bold()).padding(.top,8);Text("Покупки синхронизируются с расходами. Запиши порцию отдельно, когда съешь.").font(.caption).foregroundStyle(.secondary);ForEach(purchases){FoodEntryRow(store:store,entry:$0)} }
                     }
                 }.padding(18)
             }.background(Color.black).refreshable { await store.refresh() }
@@ -859,7 +859,7 @@ private struct ScannedProductSheet: View {
             Task { @MainActor in
                 guard let self else{return}
                 guard status == .authorized else { self.message="Разреши распознавание речи в настройках iPhone";return }
-                AVAudioSession.sharedInstance().requestRecordPermission { allowed in
+                AVAudioApplication.requestRecordPermission { allowed in
                     Task { @MainActor in
                         guard allowed else { self.message="Разреши доступ к микрофону в настройках iPhone";return }
                         self.begin(language:language)
