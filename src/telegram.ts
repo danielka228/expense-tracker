@@ -139,9 +139,17 @@ export async function webhookSecret(token: string) {
 /**
  * Проверка данных, с которыми Telegram открывает сайт как Mini App (Telegram.WebApp.initData).
  * Подпись: HMAC-SHA256(ключ = HMAC-SHA256("WebAppData", токен бота), строка «ключ=значение» по алфавиту).
- * Возвращает id пользователя Telegram или null.
+ * Возвращает проверенную личность Telegram или null. Поля профиля входят
+ * в подписанный user JSON, поэтому фото можно безопасно синхронизировать.
  */
-export async function verifyInitData(initData: string, token: string, maxAgeSec = 86400): Promise<number | null> {
+export interface TelegramMiniAppIdentity {
+  id: number;
+  username: string | null;
+  name: string | null;
+  picture: string | null;
+}
+
+export async function verifyInitData(initData: string, token: string, maxAgeSec = 86400): Promise<TelegramMiniAppIdentity | null> {
   const params = new URLSearchParams(initData);
   const hash = params.get('hash');
   if (!hash) return null;
@@ -158,8 +166,13 @@ export async function verifyInitData(initData: string, token: string, maxAgeSec 
   const authDate = Number(params.get('auth_date'));
   if (!authDate || Date.now() / 1000 - authDate > maxAgeSec) return null;
   try {
-    const id = (JSON.parse(params.get('user') ?? 'null') as { id?: number } | null)?.id;
-    return typeof id === 'number' ? id : null;
+    const user = JSON.parse(params.get('user') ?? 'null') as {
+      id?: number; username?: string; first_name?: string; last_name?: string; photo_url?: string;
+    } | null;
+    if (typeof user?.id !== 'number' || !Number.isSafeInteger(user.id) || user.id <= 0) return null;
+    const clean = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : null;
+    const name = [clean(user.first_name), clean(user.last_name)].filter(Boolean).join(' ') || null;
+    return { id: user.id, username: clean(user.username), name, picture: clean(user.photo_url) };
   } catch {
     return null;
   }

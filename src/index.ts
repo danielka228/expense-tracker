@@ -1102,6 +1102,14 @@ app.get('/friends', async (c) => {
       .bind(user.id)
       .all(),
   ]);
+  const incoming = incomingRes.results as { id: number; user_id: number; username: string }[];
+  const avatarIds = [...new Set([...board.map((row) => row.id), ...incoming.map((row) => row.user_id)])];
+  const avatarRows = avatarIds.length
+    ? await db.prepare('SELECT user_id, updated_at FROM avatars WHERE user_id IN (SELECT value FROM json_each(?))')
+      .bind(JSON.stringify(avatarIds)).all<{ user_id: number; updated_at: string }>()
+    : { results: [] as { user_id: number; updated_at: string }[] };
+  const avatarVersions = Object.fromEntries(avatarRows.results.map((row) => [row.user_id,
+    String(Date.parse(row.updated_at.replace(' ', 'T') + 'Z') / 1000 || 0)]));
 
   return c.html(
     friendsPage({ appMode: user.app_mode,
@@ -1109,8 +1117,8 @@ app.get('/friends', async (c) => {
       lang: langOf(c.get('user').lang),
       sym: symbol(user),
       period,
-      board,
-      incoming: incomingRes.results as { id: number; user_id: number; username: string }[],
+      board: board.map((row) => ({ ...row, avatarV: avatarVersions[row.id] ?? null })),
+      incoming: incoming.map((row) => ({ ...row, avatarV: avatarVersions[row.user_id] ?? null })),
     }),
   );
 });
@@ -1357,19 +1365,36 @@ async function linkPendingTelegram(c: C, userId: number): Promise<boolean> {
     return false;
   }
   await linkTelegram(c.env.DB, userId, tg);
+  await saveTelegramPhoto(c.env.DB, userId, tg.picture);
   flash(c, flashT(c).tgConnected, 'success');
   return !!tg.app;
 }
 
 // Фото из Telegram становится аватаркой нового аккаунта (только JPEG, как и при обычной загрузке)
 async function saveTelegramPhoto(db: D1Database, userId: number, url: string | null) {
-  if (!url || !url.startsWith('https://')) return;
+  if (!url) return;
   try {
-    const res = await fetch(url);
+    const isTelegramPhotoHost = (host: string) => host === 't.me' || host === 'telegram.org' || host.endsWith('.telegram.org') ||
+      host.endsWith('.telegram-cdn.org') || host.endsWith('.cdn-telegram.org');
+    let target = new URL(url);
+    let res: Response | undefined;
+    // Telegram may redirect userpic URLs to its CDN; validate every hop to avoid fetching arbitrary URLs.
+    for (let hop = 0; hop <= 3; hop++) {
+      if (target.protocol !== 'https:' || (target.port && target.port !== '443') || !isTelegramPhotoHost(target.hostname.toLowerCase())) return;
+      res = await fetch(target, { redirect: 'manual' });
+      if (![301, 302, 303, 307, 308].includes(res.status)) break;
+      const location = res.headers.get('location');
+      if (!location || hop === 3) return;
+      target = new URL(location, target);
+    }
+    if (!res?.ok) return;
+    const contentLength = Number(res.headers.get('content-length') ?? 0);
+    if (contentLength > MAX_AVATAR_BYTES) return;
     const bytes = new Uint8Array(await res.arrayBuffer());
     const isJpeg = bytes.length > 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
-    if (!res.ok || !isJpeg || bytes.length > MAX_AVATAR_BYTES) return;
-    await db.prepare('INSERT OR REPLACE INTO avatars (user_id, data) VALUES (?, ?)').bind(userId, bytes).run();
+    if (!isJpeg || bytes.length > MAX_AVATAR_BYTES) return;
+    await db.prepare(`INSERT INTO avatars (user_id, data, updated_at) VALUES (?, ?, datetime('now'))
+      ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`).bind(userId, bytes).run();
   } catch (e) {
     console.error('telegram photo failed', e);
   }
@@ -1430,6 +1455,7 @@ app.get('/auth/telegram/callback', async (c) => {
     if (link && link.user_id !== uid) flash(c, flashT(c).tgOtherAccount, 'error');
     else {
       await linkTelegram(db, uid, tg);
+      await saveTelegramPhoto(db, uid, tg.picture);
       flash(c, flashT(c).tgLinked, 'success');
     }
     return c.redirect(linkBack);
@@ -1437,6 +1463,7 @@ app.get('/auth/telegram/callback', async (c) => {
   if (link) {
     await login(c, link.user_id);
     if (tg.username) await db.prepare('UPDATE telegram_links SET tg_username = ? WHERE user_id = ?').bind(tg.username, link.user_id).run();
+    await saveTelegramPhoto(db, link.user_id, tg.picture);
     if (saved.app) return appAuthReturn(c, link.user_id);
     return c.redirect('/dashboard');
   }
@@ -1459,6 +1486,7 @@ app.post('/auth/telegram/new', async (c) => {
   const link = await db.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tg.id).first<{ user_id: number }>();
   if (link) {
     await login(c, link.user_id);
+    await saveTelegramPhoto(db, link.user_id, tg.picture);
     if (tg.app) return appAuthReturn(c, link.user_id);
     return c.redirect('/dashboard');
   }
@@ -1489,10 +1517,11 @@ app.post('/tg/auth', async (c) => {
   const token = c.env.TELEGRAM_BOT_TOKEN;
   if (!token) return c.json({ ok: false, error: 'no_bot' }, 404);
   const body = await c.req.json<{ initData?: string }>().catch(() => ({}) as { initData?: string });
-  const tgId = body.initData ? await verifyInitData(body.initData, token) : null;
-  if (!tgId) return c.json({ ok: false, error: 'bad_signature' }, 401);
-  const link = await c.env.DB.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tgId).first<{ user_id: number }>();
+  const tg = body.initData ? await verifyInitData(body.initData, token) : null;
+  if (!tg) return c.json({ ok: false, error: 'bad_signature' }, 401);
+  const link = await c.env.DB.prepare('SELECT user_id FROM telegram_links WHERE chat_id = ?').bind(tg.id).first<{ user_id: number }>();
   if (!link) return c.json({ ok: false, error: 'not_linked' });
+  await saveTelegramPhoto(c.env.DB, link.user_id, tg.picture);
   await login(c, link.user_id);
   return c.json({ ok: true });
 });
