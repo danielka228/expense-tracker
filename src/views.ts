@@ -282,15 +282,17 @@ const TG_CSS = `
 export function authPage(
   kind: 'login' | 'register',
   flashes: Flash[],
-  opts: { demo?: boolean; tgLogin?: boolean; tgPending?: boolean; origin?: string; lang?: Lang } = {},
+  opts: { demo?: boolean; tgLogin?: boolean; tgPending?: boolean; appAuth?: boolean; origin?: string; lang?: Lang } = {},
 ) {
   const isLogin = kind === 'login';
   const demo = !!opts.demo;
   const lang = opts.lang ?? 'ru';
   const A = tr(lang).auth;
+  const loginPath = `/login${opts.appAuth ? '?app=1' : ''}`;
+  const registerPath = `/register${opts.appAuth ? '?app=1' : ''}`;
   return layout(
     { title: isLogin ? A.titleLogin : A.titleRegister, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS + TG_CSS, share: opts.origin },
-    html`<div style="position:absolute; top:max(14px, env(safe-area-inset-top)); right:16px">${langToggle(lang, isLogin ? '/login' : '/register')}</div>
+    html`<div style="position:absolute; top:max(14px, env(safe-area-inset-top)); right:16px">${langToggle(lang, isLogin ? loginPath : registerPath)}</div>
 <div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
 <div class="reveal" style="text-align:center; margin:0 auto 18px"><img class="auth-brand-icon" src="/apple-touch-icon.png" alt="${tr(lang).brand}" width="96" height="96"></div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? A.headLogin : A.headRegister}</h1>
@@ -298,7 +300,7 @@ export function authPage(
 ${opts.tgPending
   ? html`<p class="tg-note reveal" style="--d:.12s">${isLogin ? A.pendingLogin : A.pendingRegister}</p>`
   : opts.tgLogin
-    ? html`<a class="btn btn-tg reveal" style="--d:.12s" href="/auth/telegram">${raw(TG_ICON)}${isLogin ? A.tgLogin : A.tgContinue}</a>
+    ? html`<a class="btn btn-tg reveal" style="--d:.12s" href="/auth/telegram${opts.appAuth ? '?app=1' : ''}">${raw(TG_ICON)}${isLogin ? A.tgLogin : A.tgContinue}</a>
 <div class="auth-or reveal" style="--d:.14s">${A.orLogin}</div>`
     : ''}
 <form method="POST" class="reveal" style="--d:.15s">
@@ -313,8 +315,8 @@ ${demo
   : ''}
 ${isLogin
   ? html`<div class="footer-link reveal" style="--d:.22s"><a href="/forgot">${A.forgot}</a></div>
-<div class="footer-link reveal" style="--d:.25s">${A.noAccount} <a href="/register">${A.registerLink}</a></div>`
-  : html`<div class="footer-link reveal" style="--d:.25s">${A.haveAccount} <a href="/login">${A.loginLink}</a></div>`}`,
+<div class="footer-link reveal" style="--d:.25s">${A.noAccount} <a href="${registerPath}">${A.registerLink}</a></div>`
+  : html`<div class="footer-link reveal" style="--d:.25s">${A.haveAccount} <a href="${loginPath}">${A.loginLink}</a></div>`}`,
   );
 }
 

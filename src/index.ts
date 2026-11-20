@@ -335,7 +335,7 @@ app.get('/', async (c) => {
   return c.html(landingPage({ demo: c.env.DEMO === '1', origin: new URL(c.req.url).origin, lang: pageLang(c) }));
 });
 
-const authOpts = async (c: C) => ({ origin: new URL(c.req.url).origin, demo: c.env.DEMO === '1', tgLogin: !!tgLoginConfig(c), tgPending: !!(await readTgPending(c)), lang: pageLang(c) });
+const authOpts = async (c: C) => ({ origin: new URL(c.req.url).origin, demo: c.env.DEMO === '1', tgLogin: !!tgLoginConfig(c), tgPending: !!(await readTgPending(c)), appAuth: c.req.query('app') === '1', lang: pageLang(c) });
 app.get('/register', async (c) => c.html(authPage('register', popFlashes(c), await authOpts(c))));
 app.post('/register', async (c) => {
   const form = await c.req.parseBody();
@@ -356,6 +356,7 @@ app.post('/register', async (c) => {
     .first<{ id: number }>();
   await login(c, row!.id);
   if (await linkPendingTelegram(c, row!.id)) return appAuthReturn(c, row!.id);
+  if (c.req.query('app') === '1') return appAuthReturn(c, row!.id);
   flash(c, tr(pageLang(c)).fe.regSuccess, 'success');
   return c.redirect('/dashboard');
 });
@@ -378,6 +379,7 @@ app.post('/login', async (c) => {
     }
     await login(c, user.id);
     if (await linkPendingTelegram(c, user.id)) return appAuthReturn(c, user.id);
+    if (c.req.query('app') === '1') return appAuthReturn(c, user.id);
     return c.redirect('/dashboard');
   }
   return c.html(authPage('login', [...popFlashes(c), ['error', tr(pageLang(c)).fe.badCreds]], await authOpts(c)));

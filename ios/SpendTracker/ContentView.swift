@@ -182,8 +182,16 @@ private final class NativeStore: NSObject, ObservableObject, ASWebAuthentication
     }
 
     func signInWithTelegram() {
+        signIn(path: "/auth/telegram?app=1")
+    }
+
+    func signInWithPassword() {
+        signIn(path: "/login?app=1")
+    }
+
+    private func signIn(path: String) {
         error = nil
-        guard let url = URL(string: "/auth/telegram?app=1", relativeTo: site) else { return }
+        guard let url = URL(string: path, relativeTo: site) else { return }
         let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "spendtracker") { [weak self] callback, authError in
             Task { @MainActor in
                 guard let self else { return }
@@ -416,15 +424,30 @@ private struct NativeLogin: View {
     var body: some View {
         VStack(spacing: 20) {
             Spacer()
-            Image(systemName: "chart.bar.xaxis").font(.system(size: 38, weight: .semibold)).foregroundStyle(.white)
-                .frame(width: 88, height: 88).background(LinearGradient(colors: [violet, Color.blue], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 24))
+            if let icon = UIImage(contentsOfFile: Bundle.main.bundleURL.appendingPathComponent("AppIcon.png").path) {
+                Image(uiImage: icon).resizable().scaledToFill()
+                    .frame(width: 96, height: 96).clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 26, style: .continuous).stroke(.white.opacity(0.12), lineWidth: 1))
+                    .shadow(color: violet.opacity(0.24), radius: 18, y: 8)
+            } else {
+                Image(systemName: "chart.bar.xaxis").font(.system(size: 38, weight: .semibold)).foregroundStyle(.white)
+                    .frame(width: 96, height: 96).background(LinearGradient(colors: [violet, Color.blue], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            }
             Text("СпендТрекер").font(.system(size: 30, weight: .bold))
             Text("Твои расходы — под контролем").foregroundStyle(.white.opacity(0.62))
             Button(action: store.signInWithTelegram) {
                 Label("Войти через Telegram", systemImage: "paperplane.fill")
-                    .font(.system(size: 17, weight: .semibold)).frame(maxWidth: .infinity).frame(height: 54)
+                    .font(.system(size: 17, weight: .semibold)).frame(maxWidth: .infinity).frame(height: 56)
+                    .background(Color(red: 0.12, green: 0.65, blue: 0.9), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
-            .buttonStyle(.borderedProminent).tint(Color(red: 0.12, green: 0.65, blue: 0.9)).padding(.top, 12)
+            .buttonStyle(.plain).padding(.top, 12)
+            Button(action: store.signInWithPassword) {
+                Label("Войти по логину или создать аккаунт", systemImage: "person.crop.circle")
+                    .font(.system(size: 16, weight: .medium)).frame(maxWidth: .infinity).frame(height: 54)
+                    .background(Color.white.opacity(0.09), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(.white.opacity(0.08), lineWidth: 1))
+            }
+            .buttonStyle(.plain)
             if store.loading { ProgressView().tint(violet) }
             if let error = store.error { Text(error).font(.footnote).foregroundStyle(.red).multilineTextAlignment(.center) }
             Spacer()
