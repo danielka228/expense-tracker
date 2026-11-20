@@ -598,7 +598,7 @@ private struct FoodEntryRow:View {
             Image(systemName:entry.kind == "purchase" ? "basket.fill":"fork.knife").foregroundStyle(violet).frame(width:40,height:40).background(violet.opacity(0.14),in:RoundedRectangle(cornerRadius:13))
             VStack(alignment:.leading,spacing:3){Text(entry.name).fontWeight(.medium);Text("\(Int(entry.grams)) г · \(entry.kind == "purchase" ? "Покупка" : mealTitle(entry.meal)) · \(Int(entry.kcalPer100)) ккал / 100 г").font(.caption).foregroundStyle(.secondary);if entry.source == "estimate" { Text("Оценка ИИ · проверь точность").font(.caption2).foregroundStyle(.orange) } else if entry.source == "label" { Text("Считано с этикетки").font(.caption2).foregroundStyle(.green) } }
             Spacer();if entry.kind == "meal" { Text("\(Int(entry.calories.rounded())) ккал").font(.subheadline.weight(.semibold)) }
-        }.padding(12).background(.white.opacity(.05),in:RoundedRectangle(cornerRadius:17))
+        }.padding(12).background(.white.opacity(0.05),in:RoundedRectangle(cornerRadius:17))
         if entry.kind == "purchase" { Button { showPortion=true } label:{Label("Записать съеденную порцию",systemImage:"plus.circle").font(.subheadline)}.padding(.leading,54).sheet(isPresented:$showPortion){LogPortionSheet(store:store,entry:entry)} }
     }
 }
