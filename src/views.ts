@@ -271,8 +271,10 @@ export function landingPage(d: { demo: boolean; origin: string; lang: Lang }) {
 const TG_ICON =
   '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M21.9 4.3 18.7 19.4c-.2 1.1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9.1-8.2c.4-.4-.1-.6-.6-.2L6.2 13 1.4 11.5c-1-.3-1.1-1 .2-1.5L20.5 2.8c.9-.3 1.6.2 1.4 1.5z"/></svg>';
 const TG_CSS = `
-  .btn-tg { display: flex; align-items: center; justify-content: center; gap: 9px; background: #2aabee; color: #fff; }
+  .btn-tg { display: flex; align-items: center; justify-content: center; gap: 9px; min-height: 56px; padding: 0 20px; border-radius: 18px; background: #2aabee; color: #fff; box-shadow: 0 8px 22px rgba(42,171,238,.18); }
   .btn-tg:hover { background: #229ed9; }
+  .btn-tg:active { transform: scale(.985); }
+  .auth-brand-icon { display: block; width: 96px; height: 96px; margin: 0 auto; object-fit: cover; border-radius: 23px; box-shadow: 0 14px 34px rgba(113,72,255,.24); }
   .auth-or { display: flex; align-items: center; gap: 12px; color: var(--text-3, var(--text-2)); font-size: 13px; margin: 18px 4px; }
   .auth-or::before, .auth-or::after { content: ''; flex: 1; height: 1px; background: var(--separator, rgba(128,128,128,.3)); }
   .tg-note { text-align: center; color: var(--text-2); font-size: 14px; margin: -12px 0 20px; }`;
@@ -290,7 +292,7 @@ export function authPage(
     { title: isLogin ? A.titleLogin : A.titleRegister, flashes, loggedIn: false, lang, center: true, extraCss: DASHBOARD_CSS + TG_CSS, share: opts.origin },
     html`<div style="position:absolute; top:max(14px, env(safe-area-inset-top)); right:16px">${langToggle(lang, isLogin ? '/login' : '/register')}</div>
 <div style="height: max(8vh, calc(24px + env(safe-area-inset-top)))"></div>
-<div class="reveal" style="text-align:center; margin:0 auto 14px">${raw(mascot(isLogin ? 'wave' : 'happy', 104, '', lang))}</div>
+<div class="reveal" style="text-align:center; margin:0 auto 18px"><img class="auth-brand-icon" src="/apple-touch-icon.png" alt="${tr(lang).brand}" width="96" height="96"></div>
 <h1 class="reveal" style="--d:.05s; text-align:center; font-size:34px; letter-spacing:.2px">${isLogin ? A.headLogin : A.headRegister}</h1>
 <p class="reveal" style="--d:.1s; text-align:center; color:var(--text-2); margin:6px 0 26px">${isLogin ? A.subLogin : A.subRegister}</p>
 ${opts.tgPending
@@ -974,16 +976,16 @@ function subsTeaser(t: { count: number; monthly: number; next: { name: string; d
 
 // ---------- друзья ----------
 
-function av(uid: number, name: string) {
-  return html`<div class="av">${(name ? [...name][0] : '?').toUpperCase()}<img src="/avatar/${uid}" alt="" onerror="this.remove()"></div>`;
+function av(uid: number, name: string, version: string | null = null) {
+  return html`<div class="av">${(name ? [...name][0] : '?').toUpperCase()}<img src="/avatar/${uid}?v=${version ?? 0}" alt="" onerror="this.remove()"></div>`;
 }
 
 export function friendsPage(d: { appMode?: 'expenses' | 'nutrition';
   flashes: Flash[];
   sym: string;
   period: string;
-  board: { id: number; username: string; is_me: boolean; total: number }[];
-  incoming: { id: number; user_id: number; username: string }[];
+  board: { id: number; username: string; is_me: boolean; total: number; avatarV: string | null }[];
+  incoming: { id: number; user_id: number; username: string; avatarV: string | null }[];
   lang: Lang;
 }) {
   const S = tr(d.lang);
@@ -1008,7 +1010,7 @@ export function friendsPage(d: { appMode?: 'expenses' | 'nutrition';
     ? d.board.map(
         (row, i) => html`<a class="board-row ${i === 0 ? 'rank-1' : ''} ${row.is_me ? 'me' : ''}" href="${row.is_me ? '/profile' : `/friends/${row.id}`}">
       <div class="rank">${i + 1}</div>
-      ${av(row.id, row.username)}
+      ${av(row.id, row.username, row.avatarV)}
       <div class="name">${row.is_me ? A.you : row.username}</div>
       <div class="amount">${fmt0(row.total)} ${d.sym}</div>
       ${CHEV}
@@ -1022,7 +1024,7 @@ ${d.incoming.length
   ${d.incoming.map(
     (r) => html`<div class="friend-req-row">
     <div style="display:flex; align-items:center; gap:12px; min-width:0;">
-      ${av(r.user_id, r.username)}
+      ${av(r.user_id, r.username, r.avatarV)}
       <div style="font-weight:500;">${r.username}</div>
     </div>
     <div class="req-actions">
